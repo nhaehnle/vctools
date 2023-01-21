@@ -119,9 +119,13 @@ The exact details of this algorithm are subject to change.
 
 ## Contributing and License
 
-Contributions are welcome! And please integrate this feature into as many
-development tools as you can find. To that end, I am releasing this project
-under the MIT license.
+Contributions are welcome! Please send patches by email to
+[~nhaehnle/diff-modulo-base@lists.sr.ht](mailto:~nhaehnle/diff-modulo-base@lists.sr.ht).
+See the guide at https://git-send-email.io/ if you're unfamiliar with the
+process.
+
+Please integrate this feature into as many development tools as you can find.
+To that end, the project is released under the MIT license.
 
 ## To do
 
