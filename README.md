@@ -18,7 +18,7 @@ Rust. Two binaries are installed:
   algorithm available
 * `git-diff-modulo-base` directly compares Git commits or branches
 
-## Basic usage
+## Usage
 
 This utility allows you to compare the relevant changes of two versions of a
 rebased branch given three input diffs: two *base* diffs that show the changes
@@ -69,6 +69,24 @@ have been involved in textual conflicts during rebase. Similarly, a change in
 the base version is considered unimportant if it is not near any changes in the
 base diffs.
 
+### Advanced git usage
+
+Make sure to look at the available command-line options to see some alternative
+modes of usage. For example, it is possible to compare two individual commits.
+This occasionally comes up after cherry-picking:
+```bash
+git diff-modulo-base ${original-commit-hash} ${cherry-picked-commit-hash}
+```
+If you're working with repositories hosted on GitHub, it may be convenient to
+automatically fetch pull request branches by adding a line such as the
+following to the relevant `remote` section of your local repository's
+`.git/config`:
+```
+fetch = +refs/pull/*:refs/remotes/origin/pull/*
+```
+
+### Usage on raw diffs
+
 Very similar output can also be obtained by invoking the underlying (not
 Git-aware) `diff-modulo-base` with the relevant diffs:
 ```bash
@@ -77,16 +95,6 @@ diff-modulo-base <(git diff A..origin/feature@{1}) <(git diff B..origin/feature)
 This produces the same kind of diff output, albeit not split according to
 individual commits on the feature branch. The same effect can be achieved using
 the `--combined` flag of `git diff-modulo-base`.
-
-### Tip: Fetching pull request branches from GitHub
-
-If you're working with repositories hosted on GitHub, it may be convenient to
-automatically fetch pull request branches by adding a line such as the
-following to the relevant `remote` section of your local repository's
-`.git/config`:
-```
-fetch = +refs/pull/*:refs/remotes/origin/pull/*
-```
 
 ## Details
 
