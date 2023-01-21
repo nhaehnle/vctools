@@ -1,0 +1,17 @@
+[package]
+name = "diff-modulo-base"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+categories = ["command-line-utilities"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+# Output verbose information from the internals of the diff algorithms.
+debug-diff = []
+
+[dependencies]
+clap = { version = "3.2", features = ["derive"] }
+lazy_static = { version = "1.4" }
+regex = { version = "1.7", default-features = false, features = ["std", "perf"] }

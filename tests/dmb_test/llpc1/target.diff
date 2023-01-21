@@ -1,0 +1,255 @@
+diff --git a/lgc/builder/DescBuilder.cpp b/lgc/builder/DescBuilder.cpp
+index bde7370ae..b28c29a5d 100644
+--- a/lgc/builder/DescBuilder.cpp
++++ b/lgc/builder/DescBuilder.cpp
+@@ -38,63 +38,60 @@
+ #include "llvm/IR/IntrinsicsAMDGPU.h"
+ 
+ #define DEBUG_TYPE "lgc-builder-impl-desc"
+ 
+ using namespace lgc;
+ using namespace llvm;
+ 
+ // =====================================================================================================================
+ // Create a load of a buffer descriptor.
+ //
++// If descSet = -1, this is an internal user data, which is a plain 64-bit pointer, flags must be 'BufferFlagAddress'
++// i64 address is returned.
++//
+ // @param descSet : Descriptor set
+ // @param binding : Descriptor binding
+ // @param descIndex : Descriptor index
+ // @param flags : BufferFlag* bit settings
+ // @param pointeeTy : Type that the returned pointer should point to.
+ // @param instName : Name to give instruction(s)
+ Value *DescBuilder::CreateLoadBufferDesc(unsigned descSet, unsigned binding, Value *descIndex, unsigned flags,
+                                          Type *const pointeeTy, const Twine &instName) {
+-  // Convert descriptor to pointer
+-  auto convert64Address = [&](Value *desc) {
+-    auto int64ptr = CreateBitCast(desc, getInt64Ty());
+-    return CreateIntToPtr(int64ptr, PointerType::get(pointeeTy, ADDR_SPACE_CONST));
+-  };
+-
+   Value *desc = nullptr;
++  bool return64Address = false;
+   descIndex = scalarizeIfUniform(descIndex, flags & BufferFlagNonUniform);
+ 
+   // Mark the shader as reading and writing (if applicable) a resource.
+   auto resUsage = getPipelineState()->getShaderResourceUsage(m_shaderStage);
+   resUsage->resourceRead = true;
+   if (flags & BufferFlagWritten)
+     resUsage->resourceWrite = true;
++  else if (flags & BufferFlagAddress)
++    return64Address = true;
+ 
+   // Find the descriptor node. If doing a shader compilation with no user data layout provided, don't bother to
+   // look. Later code will use relocs.
+   const ResourceNode *topNode = nullptr;
+   const ResourceNode *node = nullptr;
+   if (!m_pipelineState->isUnlinked() || !m_pipelineState->getUserDataNodes().empty()) {
+     // We have the user data layout. Find the node.
+-    bool return64Address = false;
+     ResourceNodeType abstractType = ResourceNodeType::Unknown;
+     if (flags & BufferFlagConst)
+       abstractType = ResourceNodeType::DescriptorConstBuffer;
+     else if (flags & BufferFlagNonConst)
+       abstractType = ResourceNodeType::DescriptorBuffer;
+     else if (flags & BufferFlagShaderResource)
+       abstractType = ResourceNodeType::DescriptorResource;
+     else if (flags & BufferFlagSampler)
+       abstractType = ResourceNodeType::DescriptorSampler;
+-    else if (flags & BufferFlagAddress) {
+-      return64Address = true;
++    else if (flags & BufferFlagAddress)
+       abstractType = ResourceNodeType::DescriptorBufferCompact;
+-    }
+ 
+     std::tie(topNode, node) = m_pipelineState->findResourceNode(abstractType, descSet, binding);
+     assert(node && "missing resource node");
+ 
+     if (node == topNode && isa<Constant>(descIndex) && node->concreteType != ResourceNodeType::InlineBuffer) {
+       // Handle a descriptor in the root table (a "dynamic descriptor") specially, as long as it is not variably
+       // indexed and is not an InlineBuffer. This lgc.root.descriptor call is by default lowered in
+       // PatchEntryPointMutate into a load from the spill table, but it might be able to "unspill" it to
+       // directly use shader entry SGPRs.
+       // TODO: Handle root InlineBuffer specially in a similar way to PushConst. The default handling is
+@@ -107,21 +104,21 @@ Value *DescBuilder::CreateLoadBufferDesc(unsigned descSet, unsigned binding, Val
+       if (dwordOffset + dwordSize > node->sizeInDwords) {
+         // Index out of range
+         desc = UndefValue::get(descTy);
+       } else {
+         dwordOffset += node->offsetInDwords;
+         dwordOffset += (binding - node->binding) * node->stride;
+         desc = CreateNamedCall(callName, descTy, getInt32(dwordOffset), Attribute::ReadNone);
+       }
+       if (return64Address) {
+         assert(node->concreteType == ResourceNodeType::DescriptorBufferCompact);
+-        return convert64Address(desc);
++        return CreateBitCast(desc, getInt64Ty());
+       }
+     } else if (node->concreteType == ResourceNodeType::InlineBuffer) {
+       // Handle an inline buffer specially. Get a pointer to it, then expand to a descriptor.
+       Value *descPtr = getDescPtr(node->concreteType, node->abstractType, descSet, binding, topNode, node);
+       desc = buildInlineBufferDesc(descPtr);
+     }
+   }
+ 
+   if (!desc) {
+     if (node) {
+@@ -155,21 +152,22 @@ Value *DescBuilder::CreateLoadBufferDesc(unsigned descSet, unsigned binding, Val
+       }
+ 
+       auto descPtrLo = CreateBitCast(descPtr, FixedVectorType::get(getInt32Ty(), 2)->getPointerTo(ADDR_SPACE_CONST));
+       // The first load
+       auto descLo = CreateLoad(FixedVectorType::get(getInt32Ty(), 2), descPtrLo);
+       auto compactBufferDesc = buildBufferCompactDesc(descLo);
+ 
+       // If descriptor set is -1, this is a internal resource node, it is a root node
+       // and its type is ResourceNodeType::DescriptorBufferCompact.
+       if (descSet == -1) {
+-        return convert64Address(descLo);
++        assert(return64Address);
++        return CreateBitCast(descLo, getInt64Ty());
+       } else {
+         // Add offset
+         Value *descPtrHi = CreateAddByteOffset(descPtr, getInt32(8));
+         auto reloc = CreateRelocationConstant(reloc::CompactBuffer + Twine(descSet) + "_" + Twine(binding));
+         auto isCompactBuffer = CreateICmpNE(reloc, getInt32(0));
+         // Select the address
+         descPtrHi = CreateSelect(isCompactBuffer, descPtr, descPtrHi);
+         descPtrHi = CreateBitCast(descPtrHi, FixedVectorType::get(getInt32Ty(), 2)->getPointerTo(ADDR_SPACE_CONST));
+         // The second load
+         auto descHi = CreateLoad(FixedVectorType::get(getInt32Ty(), 2), descPtrHi);
+diff --git a/lgc/interface/lgc/Builder.h b/lgc/interface/lgc/Builder.h
+index c4c1043d6..7a050e4b0 100644
+--- a/lgc/interface/lgc/Builder.h
++++ b/lgc/interface/lgc/Builder.h
+@@ -706,20 +706,23 @@ public:
+     BufferFlagShaderResource = 16, // Flag to find a Descriptor Resource
+     BufferFlagSampler = 32,        // Flag to find Descriptor Sampler
+     BufferFlagAddress = 64         // Flag to return an i64 address of the descriptor
+   };
+ 
+   // Get the type of pointer returned by CreateLoadBufferDesc.
+   llvm::PointerType *getBufferDescTy(llvm::Type *pointeeTy);
+ 
+   // Create a load of a buffer descriptor.
+   //
++  // If descSet = -1, this is an internal user data, which is a plain 64-bit pointer, flags must be 'BufferFlagAddress'
++  // i64 address is returned.
++  //
+   // @param descSet : Descriptor set
+   // @param binding : Descriptor binding
+   // @param descIndex : Descriptor index
+   // @param flags : BufferFlag* bit settings
+   // @param pointeeTy : Type that the returned pointer should point to.
+   // @param instName : Name to give instruction(s)
+   virtual llvm::Value *CreateLoadBufferDesc(unsigned descSet, unsigned binding, llvm::Value *descIndex, unsigned flags,
+                                             llvm::Type *pointeeTy, const llvm::Twine &instName = "") = 0;
+ 
+   // Get the type of a descriptor
+diff --git a/lgc/patch/VertexFetch.cpp b/lgc/patch/VertexFetch.cpp
+index 8d6e02004..6d5ab3e20 100644
+--- a/lgc/patch/VertexFetch.cpp
++++ b/lgc/patch/VertexFetch.cpp
+@@ -85,21 +85,21 @@ class VertexFetchImpl : public VertexFetch {
+ public:
+   VertexFetchImpl(LgcContext *lgcContext);
+   VertexFetchImpl(const VertexFetchImpl &) = delete;
+   VertexFetchImpl &operator=(const VertexFetchImpl &) = delete;
+ 
+   // Generate code to fetch a vertex value
+   Value *fetchVertex(Type *inputTy, const VertexInputDescription *description, unsigned location, unsigned compIdx,
+                      BuilderBase &builder) override;
+ 
+   // Generate code to fetch a vertex value for uber shader
+-  Value *fetchVertex(llvm::CallInst *callInst, Value *inputDesc, BuilderBase &builder);
++  Value *fetchVertex(llvm::CallInst *callInst, Value *descPtr, BuilderBase &builder);
+ 
+ private:
+   void initialize(PipelineState *pipelineState);
+ 
+   static VertexFormatInfo getVertexFormatInfo(const VertexInputDescription *description);
+ 
+   // Gets variable corresponding to vertex index
+   Value *getVertexIndex() { return m_vertexIndex; }
+ 
+   // Gets variable corresponding to instance index
+@@ -404,23 +404,27 @@ bool LowerVertexFetch::runImpl(Module &module, PipelineState *pipelineState) {
+     return false;
+ 
+   if (pipelineState->getOptions().enableUberFetchShader) {
+     std::unique_ptr<lgc::Builder> desBuilder(Builder::createBuilderImpl(pipelineState->getLgcContext(), pipelineState));
+     desBuilder->setShaderStage(ShaderStageVertex);
+     desBuilder->SetInsertPoint(&(*vertexFetches[0]->getFunction()->front().getFirstInsertionPt()));
+     auto desc =
+         desBuilder->CreateLoadBufferDesc(InternalDescriptorSetId, FetchShaderInternalBufferBinding,
+                                          desBuilder->getInt32(0), Builder::BufferFlagAddress, desBuilder->getInt8Ty());
+ 
++    // The size of each input descriptor is sizeof(UberFetchShaderAttribInfo). vector4
++    auto uberFetchAttrType = FixedVectorType::get(builder.getInt32Ty(), 4);
++    auto descPtr = desBuilder->CreateIntToPtr(desc, PointerType::get(uberFetchAttrType, ADDR_SPACE_CONST));
++
+     for (CallInst *call : vertexFetches) {
+       builder.SetInsertPoint(call);
+-      Value *vertex = vertexFetch->fetchVertex(call, desc, builder);
++      Value *vertex = vertexFetch->fetchVertex(call, descPtr, builder);
+       // Replace and erase this call.
+       call->replaceAllUsesWith(vertex);
+       call->eraseFromParent();
+     }
+     return true;
+   }
+ 
+   if (!pipelineState->isUnlinked() || !pipelineState->getVertexInputDescriptions().empty()) {
+     // Whole-pipeline compilation (or shader compilation where we were given the vertex input descriptions).
+     // Lower each vertex fetch.
+@@ -737,24 +741,24 @@ Function *VertexFetchImpl::generateFetchFunction(bool is64bitFetch, Module *modu
+   if (!m_fetchVertex32)
+     m_fetchVertex32 = createFunction();
+   return m_fetchVertex32;
+ }
+ 
+ // =====================================================================================================================
+ // This is an lgc.input.import.vertex operation.
+ // Executes vertex fetch operations based on the uber shader buffer
+ //
+ // @param callInst : call instruction
+-// @param inputDesc : buffer descriptor
++// @param descPtr : 64bit address of buffer
+ // @param builder : Builder to use to insert vertex fetch instructions
+ // @returns : vertex
+-Value *VertexFetchImpl::fetchVertex(CallInst *callInst, llvm::Value *inputDesc, BuilderBase &builder) {
++Value *VertexFetchImpl::fetchVertex(CallInst *callInst, llvm::Value *descPtr, BuilderBase &builder) {
+   unsigned location = cast<ConstantInt>(callInst->getArgOperand(0))->getZExtValue();
+   unsigned compIdx = cast<ConstantInt>(callInst->getArgOperand(1))->getZExtValue();
+   auto zero = builder.getInt32(0);
+ 
+   if (!m_vertexIndex) {
+     auto savedInsertPoint = builder.saveIP();
+     builder.SetInsertPoint(&*callInst->getFunction()->front().getFirstInsertionPt());
+     m_vertexIndex = ShaderInputs::getVertexIndex(builder, *m_lgcContext);
+     builder.restoreIP(savedInsertPoint);
+   }
+@@ -771,21 +775,20 @@ Value *VertexFetchImpl::fetchVertex(CallInst *callInst, llvm::Value *inputDesc,
+   if (!m_vertexBufTablePtr) {
+     auto savedInsertPoint = builder.saveIP();
+     builder.SetInsertPoint(&*callInst->getFunction()->front().getFirstInsertionPt());
+     m_vertexBufTablePtr =
+         ShaderInputs::getSpecialUserDataAsPointer(UserDataMapping::VertexBufferTable, vbDescTy, builder);
+     builder.restoreIP(savedInsertPoint);
+   }
+ 
+   // The size of each input descriptor is sizeof(UberFetchShaderAttribInfo). vector4
+   auto uberFetchAttrType = FixedVectorType::get(Type::getInt32Ty(*m_context), 4);
+-  auto descPtr = builder.CreateBitCast(inputDesc, PointerType::get(uberFetchAttrType, ADDR_SPACE_CONST));
+   descPtr = builder.CreateGEP(uberFetchAttrType, descPtr, {builder.getInt32(location)});
+   auto uberFetchAttr = builder.CreateLoad(vbDescTy, descPtr);
+ 
+   // The first DWord
+   auto attr = builder.CreateExtractElement(uberFetchAttr, uint64_t(0));
+ 
+   // The second DWord
+   auto byteOffset = builder.CreateExtractElement(uberFetchAttr, 1);
+ 
+   // The third DWord

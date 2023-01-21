@@ -1,0 +1,52 @@
+--- uninteresting3/old
++++ uninteresting3/new
+@@ -1,4 +1,23 @@
+-Test that we make some attempt to match blocks of frequent lines.
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
++y
+ x
+ x
+ x
+@@ -39,24 +58,3 @@
+ x
+ x
+ x
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-y
+-footer

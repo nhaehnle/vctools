@@ -1,0 +1,349 @@
+diff --git a/lgc/elfLinker/ElfLinker.cpp b/lgc/elfLinker/ElfLinker.cpp
+index 074eb63c0..267558402 100644
+--- a/lgc/elfLinker/ElfLinker.cpp
++++ b/lgc/elfLinker/ElfLinker.cpp
+@@ -93,45 +93,45 @@ public:
+   void addSymbol(const object::ELFSymbolRef &elfSymRef, unsigned inputSectIdx);
+ 
+   // Add a relocation to the output elf
+   void addRelocation(object::ELFRelocationRef relocRef, StringRef id, unsigned int relocSectionOffset,
+                      unsigned int targetSectionOffset);
+ 
+   // Get the output file offset of a particular input section in the output section
+   uint64_t getOutputOffset(unsigned inputIdx) { return m_offset + m_inputSections[inputIdx].offset; }
+ 
+   // Get the overall alignment requirement, after calling layout().
+-  uint64_t getAlignment() const { return m_alignment; }
++  Align getAlignment() const { return m_alignment; }
+ 
+   // Write the output section
+   void write(raw_pwrite_stream &outStream, ELF::Elf64_Shdr *shdr);
+ 
+ private:
+   // Flag that we want to reduce alignment on the given input section, for gluing code together.
+   void setReduceAlign(const InputSection &inputSection) {
+     m_reduceAlign |= 1ULL << (&inputSection - &m_inputSections[0]);
+   }
+ 
+   // See if the given input section has the reduce align flag set.
+   bool getReduceAlign(const InputSection &inputSection) const {
+     return (m_reduceAlign >> (&inputSection - &m_inputSections[0])) & 1;
+   }
+ 
+   // Get alignment for an input section. This takes into account the reduceAlign flag.
+-  uint64_t getAlignment(const InputSection &inputSection);
++  Align getAlignment(const InputSection &inputSection);
+ 
+   ElfLinkerImpl *m_linker;
+   StringRef m_name;                             // Section name
+   unsigned m_type;                              // Section type (SHT_* value)
+   uint64_t m_offset = 0;                        // File offset of this output section
+   SmallVector<InputSection, 4> m_inputSections; // Input sections contributing to this output section
+-  uint64_t m_alignment = 0;                     // Overall alignment required for the section
++  Align m_alignment;                            // Overall alignment required for the section
+   unsigned m_reduceAlign = 0;                   // Bitmap of input sections to reduce alignment for
+ };
+ 
+ // =====================================================================================================================
+ // Internal implementation of the LGC interface for ELF linking.
+ class ElfLinkerImpl final : public ElfLinker {
+ public:
+   // Constructor given PipelineState and ELFs to link
+   ElfLinkerImpl(PipelineState *pipelineState, ArrayRef<MemoryBufferRef> elfs);
+ 
+@@ -549,22 +549,22 @@ bool ElfLinkerImpl::link(raw_pwrite_stream &outStream) {
+   // Output each section, and let it set its section table entry.
+   // Ensure each section is aligned in the file by the minimum of 4 and its address alignment requirement.
+   // I am not sure if that is actually required by the ELF standard, but vkgcPipelineDumper.cpp relies on
+   // it when dumping .note records.
+   // The .note section will be emitted later.  We must wait until after processing the relocation to have all of the
+   // metadata needed for the .note section.
+   for (unsigned sectionIndex = 0; sectionIndex != shdrs.size(); ++sectionIndex) {
+     if (sectionIndex == noteSectionIdx)
+       continue;
+     OutputSection &outputSection = m_outputSections[sectionIndex];
+-    unsigned align = std::min(unsigned(outputSection.getAlignment()), 4U);
+-    outStream << StringRef("\0\0\0", 3).slice(0, -outStream.tell() & align - 1);
++    Align align = std::min(outputSection.getAlignment(), Align(4));
++    outStream << StringRef("\0\0\0", 3).slice(0, offsetToAlignment(outStream.tell(), align));
+     shdrs[sectionIndex].sh_offset = outStream.tell();
+     outputSection.write(outStream, &shdrs[sectionIndex]);
+   }
+ 
+   // Apply the relocs
+   for (auto &elfInput : m_elfInputs) {
+     for (const object::SectionRef section : elfInput.objectFile->sections()) {
+       unsigned sectType = object::ELFSectionRef(section).getType();
+       if (sectType == ELF::SHT_REL || sectType == ELF::SHT_RELA) {
+         for (object::RelocationRef reloc : section.relocations()) {
+@@ -605,22 +605,22 @@ bool ElfLinkerImpl::link(raw_pwrite_stream &outStream) {
+ 
+   // Write ISA name into the .note section.
+   writeIsaName();
+ 
+   // Write the PAL metadata out into the .note section.  The relocations can change the metadata, so we cannot write the
+   // PAL metadata any earlier.
+   writePalMetadata();
+ 
+   // Output the note section now that the metadata has been finalized.
+   OutputSection &noteOutputSection = m_outputSections[noteSectionIdx];
+-  unsigned align = std::min(unsigned(noteOutputSection.getAlignment()), 4U);
+-  outStream << StringRef("\0\0\0", 3).slice(0, -outStream.tell() & align - 1);
++  Align align = std::min(noteOutputSection.getAlignment(), Align(4));
++  outStream << StringRef("\0\0\0", 3).slice(0, offsetToAlignment(outStream.tell(), align));
+   shdrs[noteSectionIdx].sh_offset = outStream.tell();
+   noteOutputSection.write(outStream, &shdrs[noteSectionIdx]);
+ 
+   // Go back and write the now-complete ELF header and section table.
+   outStream.pwrite(reinterpret_cast<const char *>(&m_ehdr), sizeof(m_ehdr), 0);
+   outStream.pwrite(reinterpret_cast<const char *>(shdrs.data()), sizeof(ELF::Elf64_Shdr) * shdrs.size(),
+                    sizeof(m_ehdr));
+ 
+   return m_pipelineState->getLastError() == "";
+ }
+@@ -941,43 +941,43 @@ void OutputSection::layout() {
+               std::max(inputSection.size, cantFail(sym.getValue()) + object::ELFSymbolRef(sym).getSize());
+         }
+       }
+       if (inputSection.size == 0) {
+         // No function symbols found. We'd better restore the size to the size of the whole section.
+         inputSection.size = inputSection.sectionRef.getSize();
+       }
+     }
+ 
+     // Gain alignment as required for the next input section.
+-    uint64_t alignment = getAlignment(inputSection);
++    Align alignment = getAlignment(inputSection);
+     m_alignment = std::max(m_alignment, alignment);
+-    size = (size + alignment - 1) & -alignment;
++    size = alignTo(size, alignment);
+     // Store the start offset for the section.
+     inputSection.offset = size;
+     // Add on the size for this section.
+     size += inputSection.size;
+   }
+   if (m_type == ELF::SHT_NOTE)
+-    m_alignment = 4;
++    m_alignment = Align(4);
+ }
+ 
+ // =====================================================================================================================
+ // Get alignment for an input section. This takes into account the reduceAlign flag, reducing the alignment
+ // from 0x100 to 0x40 when gluing code together.
+ //
+ // @param inputSection : InputSection
+-uint64_t OutputSection::getAlignment(const InputSection &inputSection) {
+-  uint64_t alignment = inputSection.sectionRef.getAlignment();
++Align OutputSection::getAlignment(const InputSection &inputSection) {
++  Align alignment = Align(inputSection.sectionRef.getAlignment());
+   // Check if alignment is reduced for this section
+   // for gluing code together.
+   if (alignment > 0x40 && getReduceAlign(inputSection))
+-    alignment = 0x40;
++    alignment = Align(0x40);
+   return alignment;
+ }
+ 
+ // =====================================================================================================================
+ // Add a symbol to the output symbol table
+ //
+ // @param elfSymRef : The symbol from an input ELF
+ // @param inputSectIdx : Index of input section within this output section that the symbol refers to
+ void OutputSection::addSymbol(const object::ELFSymbolRef &elfSymRef, unsigned inputSectIdx) {
+   const InputSection &inputSection = m_inputSections[inputSectIdx];
+@@ -1083,21 +1083,21 @@ void OutputSection::write(raw_pwrite_stream &outStream, ELF::Elf64_Shdr *shdr) {
+     padding = "\0\0\x80\xBF\0\0\x80\xBF\0\0\x80\xBF\0\0\x80\xBF"; // s_nop
+     if (m_linker->getPipelineState()->getTargetInfo().getGfxIpVersion().major >= 10)
+       endPadding = "\0\0\x9F\xBF\0\0\x9F\xBF\0\0\x9F\xBF\0\0\x9F\xBF"; // s_code_end
+   }
+ 
+   // Output the contributions from the input sections.
+   uint64_t size = 0;
+   for (InputSection &inputSection : m_inputSections) {
+     assert(m_alignment >= getAlignment(inputSection));
+     // Gain alignment as required for the next input section.
+-    uint64_t alignmentGap = -size & (getAlignment(inputSection) - 1);
++    uint64_t alignmentGap = offsetToAlignment(size, getAlignment(inputSection));
+     while (alignmentGap != 0) {
+       size_t thisSize = std::min(alignmentGap, paddingUnit - (size & (paddingUnit - 1)));
+       outStream << StringRef(&padding[size & (paddingUnit - 1)], thisSize);
+       alignmentGap -= thisSize;
+       size += thisSize;
+     }
+ 
+     // Write the input section
+     StringRef contents = cantFail(inputSection.sectionRef.getContents());
+     outStream << contents.slice(0, inputSection.size);
+@@ -1115,12 +1115,12 @@ void OutputSection::write(raw_pwrite_stream &outStream, ELF::Elf64_Shdr *shdr) {
+     uint64_t alignmentGap = (-size & (cacheLineSize - 1)) + 3 * cacheLineSize;
+     while (alignmentGap != 0) {
+       size_t thisSize = std::min(alignmentGap, paddingUnit - (size & (paddingUnit - 1)));
+       outStream << StringRef(&endPadding[size & (paddingUnit - 1)], thisSize);
+       alignmentGap -= thisSize;
+       size += thisSize;
+     }
+   }
+ 
+   shdr->sh_size = size;
+-  shdr->sh_addralign = m_alignment;
++  shdr->sh_addralign = m_alignment.value();
+ }
+diff --git a/lgc/test/ElfRelocationSize.lgc b/lgc/test/ElfRelocationSize.lgc
+index aed7b1a26..687b9f24e 100644
+--- a/lgc/test/ElfRelocationSize.lgc
++++ b/lgc/test/ElfRelocationSize.lgc
+@@ -1,25 +1,25 @@
+ ; This test checks that no random extra bytes are generated after the relocations
+ ; in the relocation section (`.rel.text`). To check that, we extract the offsets of
+ ; the relocation section and the following section from the elf and subtract
+ ; them. Here we write 4 16-bit relocations, so the expected value should be
+-; around 0x40 (65 dec) (because of section alignment).
++; around 0x40 (64 dec) (depending on section alignment).
+ ; RUN: lgc -mcpu=gfx1030 -extract=2 -o %t.fs.elf %s
+ ; RUN: lgc -mcpu=gfx1030 -extract=3 -other=%t.fs.elf -o %t.vs.elf %s
+ ; RUN: lgc -mcpu=gfx1030 -extract=1 -l %s -o %t.pipe.elf %t.vs.elf %t.fs.elf
+ ;
+ ; RUN: llvm-readelf %t.pipe.elf --section-headers --elf-output-style=LLVM | FileCheck %s --match-full-lines
+ ;
+ ; CHECK-LABEL: Name: .rel.text ({{[0-9]+}})
+ ; CHECK:       Offset: 0x[[#%X,OFFSET1:]]
+ ; CHECK-LABEL: Name: .rodata.cst32 ({{[0-9]+}})
+-; CHECK:       Offset: 0x[[#OFFSET1 + 65]]
++; CHECK:       Offset: 0x[[#OFFSET1 + 64]]
+ ; CHECK-LABEL: Name: .note.GNU-stack ({{[0-9]+}})
+ 
+ ; ----------------------------------------------------------------------
+ ; Extract 1: The reduced pipeline state for the link.
+ 
+ target datalayout = "e-p:64:64-p1:64:64-p2:32:32-p3:32:32-p4:64:64-p5:32:32-p6:32:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7"
+ target triple = "amdgcn--amdpal"
+ 
+ ; Metadata does not include user data nodes, as that is not needed for a link when the
+ ; shaders were compiled with user data nodes.
+diff --git a/llpc/lower/llpcSpirvLowerRayQuery.cpp b/llpc/lower/llpcSpirvLowerRayQuery.cpp
+index c3dbf825c..0dfe83dda 100644
+--- a/llpc/lower/llpcSpirvLowerRayQuery.cpp
++++ b/llpc/lower/llpcSpirvLowerRayQuery.cpp
+@@ -1580,21 +1580,21 @@ void SpirvLowerRayQuery::createIntersectBvh(Function *func) {
+ 
+   Value *imageDesc = createGetBvhSrd(expansion, flags);
+ 
+   m_builder->CreateRet(m_builder->CreateImageBvhIntersectRay(address, extent, origin, dir, invDir, imageDesc));
+ }
+ 
+ // =====================================================================================================================
+ // Create sample gpu time
+ //
+ void SpirvLowerRayQuery::createSampleGpuTime(llvm::Function *func) {
+-  assert(func->getBasicBlockList().size() == 1);
++  assert(func->size() == 1);
+   m_builder->SetInsertPoint(func->getEntryBlock().getTerminator());
+   Value *clocksHiPtr = func->getArg(0);
+   Value *clocksLoPtr = func->getArg(1);
+   Value *const readClock = m_builder->CreateReadClock(true);
+   Value *clocksLo = m_builder->CreateAnd(readClock, m_builder->getInt64(UINT32_MAX));
+   clocksLo = m_builder->CreateTrunc(clocksLo, m_builder->getInt32Ty());
+   Value *clocksHi = m_builder->CreateLShr(readClock, m_builder->getInt64(32));
+   clocksHi = m_builder->CreateTrunc(clocksHi, m_builder->getInt32Ty());
+ 
+   m_builder->CreateStore(clocksLo, clocksLoPtr);
+diff --git a/llpc/lower/llpcSpirvLowerRayTracing.cpp b/llpc/lower/llpcSpirvLowerRayTracing.cpp
+index dc5676177..884230a26 100644
+--- a/llpc/lower/llpcSpirvLowerRayTracing.cpp
++++ b/llpc/lower/llpcSpirvLowerRayTracing.cpp
+@@ -553,21 +553,21 @@ bool SpirvLowerRayTracing::runImpl(Module &module) {
+       else if (opcode == OpExecuteCallableKHR)
+         createRayTracingFunc<OpExecuteCallableKHR>(&func, opcode);
+       else if (opcode == OpReportIntersectionKHR)
+         createRayTracingFunc<OpReportIntersectionKHR>(&func, opcode);
+     }
+ 
+     if (m_shaderStage == ShaderStageRayTracingAnyHit || m_shaderStage == ShaderStageRayTracingIntersect) {
+       // Assuming AnyHit/Intersect module is inlined, find the processed call instructions first
+       std::vector<CallInst *> callInsts;
+ 
+-      for (auto &block : m_entryPoint->getBasicBlockList()) {
++      for (auto &block : *m_entryPoint) {
+ #if LLVM_MAIN_REVISION && LLVM_MAIN_REVISION < 445640
+         // Old version of the code
+         for (auto &inst : block.getInstList()) {
+ #else
+         // New version of the code (also handles unknown version, which we treat as latest)
+         for (auto &inst : block) {
+ #endif
+           if (isa<CallInst>(&inst))
+             callInsts.push_back(dyn_cast<CallInst>(&inst));
+         }
+@@ -2055,21 +2055,21 @@ void SpirvLowerRayTracing::createCallableShaderEntryFunc(Function *func) {
+     ret->eraseFromParent();
+   }
+ }
+ 
+ // =====================================================================================================================
+ // Get all the function ReturnInst
+ //
+ // @param func : Function to gather ReturnInst
+ // @param rets : returned vector of  ReturnInst instructions
+ void SpirvLowerRayTracing::getFuncRets(Function *func, SmallVector<Instruction *, 4> &rets) {
+-  for (auto &block : func->getBasicBlockList()) {
++  for (auto &block : *func) {
+     auto blockTerm = block.getTerminator();
+     if (blockTerm != nullptr && isa<ReturnInst>(blockTerm))
+       rets.push_back(blockTerm);
+   }
+ }
+ 
+ // =====================================================================================================================
+ // Get the extra parameters needed for calling indirect shader
+ //
+ // @param stage : The shader stage of shader to call
+diff --git a/llpc/lower/llpcSpirvLowerRayTracingIntrinsics.cpp b/llpc/lower/llpcSpirvLowerRayTracingIntrinsics.cpp
+index 6c6c2eed1..20f32e160 100644
+--- a/llpc/lower/llpcSpirvLowerRayTracingIntrinsics.cpp
++++ b/llpc/lower/llpcSpirvLowerRayTracingIntrinsics.cpp
+@@ -112,21 +112,21 @@ bool SpirvLowerRayTracingIntrinsics::processIntrinsicsFunction(Function *func) {
+ 
+   return changed;
+ }
+ 
+ // =====================================================================================================================
+ // Create AmdExtD3DShaderIntrinsics_LoadDwordAtAddr, LoadDwordAtAddrx2, LoadDwordAtAddrx4,
+ //
+ // @param func : Function to create
+ // @param loadTy : Base type of the load value
+ void SpirvLowerRayTracingIntrinsics::createLoadDwordAtAddr(Function *func, Type *loadTy) {
+-  assert(func->getBasicBlockList().size() == 1);
++  assert(func->size() == 1);
+   (*func->begin()).eraseFromParent();
+ 
+   Type *loadPtrTy = loadTy->getPointerTo(SPIRAS_Global);
+ 
+   BasicBlock *entryBlock = BasicBlock::Create(m_builder->getContext(), "", func);
+   m_builder->SetInsertPoint(entryBlock);
+   auto argIt = func->arg_begin();
+ 
+   Value *gpuLowAddr = m_builder->CreateLoad(m_builder->getInt32Ty(), argIt++);
+   Value *gpuHighAddr = m_builder->CreateLoad(m_builder->getInt32Ty(), argIt++);
+@@ -154,21 +154,21 @@ void SpirvLowerRayTracingIntrinsics::createLoadDwordAtAddr(Function *func, Type
+ // Create AmdExtD3DShaderIntrinsics_ConvertF32toF16NegInf, AmdExtD3DShaderIntrinsics_ConvertF32toF16PosInf
+ //
+ // @param func : Function to create
+ // @param roundingMode : Rounding mode for the conversion
+ void SpirvLowerRayTracingIntrinsics::createConvertF32toF16(Function *func, unsigned roundingMode) {
+   // uint3 AmdExtD3DShaderIntrinsics_ConvertF32toF16NegInf/PosInf(in float3 inVec)
+   // {
+   //   return uint3(f32tof16NegInf/PosInf(inVec));
+   // }
+ 
+-  assert(func->getBasicBlockList().size() == 1);
++  assert(func->size() == 1);
+   (*func->begin()).eraseFromParent();
+ 
+   BasicBlock *entryBlock = BasicBlock::Create(m_builder->getContext(), "", func);
+   m_builder->SetInsertPoint(entryBlock);
+   auto argIt = func->arg_begin();
+ 
+   Type *convertInputType = FixedVectorType::get(m_builder->getFloatTy(), 3);
+   // TODO: Remove this when LLPC will switch fully to opaque pointers.
+   assert(IS_OPAQUE_OR_POINTEE_TYPE_MATCHES(argIt->getType(), convertInputType));
+   Value *inVec = m_builder->CreateLoad(convertInputType, argIt);

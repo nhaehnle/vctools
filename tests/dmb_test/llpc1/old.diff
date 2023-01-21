@@ -1,0 +1,545 @@
+diff --git a/lgc/builder/DescBuilder.cpp b/lgc/builder/DescBuilder.cpp
+index ee0aed8de..bde7370ae 100644
+--- a/lgc/builder/DescBuilder.cpp
++++ b/lgc/builder/DescBuilder.cpp
+@@ -46,44 +46,55 @@ using namespace llvm;
+ // Create a load of a buffer descriptor.
+ //
+ // @param descSet : Descriptor set
+ // @param binding : Descriptor binding
+ // @param descIndex : Descriptor index
+ // @param flags : BufferFlag* bit settings
+ // @param pointeeTy : Type that the returned pointer should point to.
+ // @param instName : Name to give instruction(s)
+ Value *DescBuilder::CreateLoadBufferDesc(unsigned descSet, unsigned binding, Value *descIndex, unsigned flags,
+                                          Type *const pointeeTy, const Twine &instName) {
++  // Convert descriptor to pointer
++  auto convert64Address = [&](Value *desc) {
++    auto int64ptr = CreateBitCast(desc, getInt64Ty());
++    return CreateIntToPtr(int64ptr, PointerType::get(pointeeTy, ADDR_SPACE_CONST));
++  };
++
+   Value *desc = nullptr;
+   descIndex = scalarizeIfUniform(descIndex, flags & BufferFlagNonUniform);
+ 
+   // Mark the shader as reading and writing (if applicable) a resource.
+   auto resUsage = getPipelineState()->getShaderResourceUsage(m_shaderStage);
+   resUsage->resourceRead = true;
+   if (flags & BufferFlagWritten)
+     resUsage->resourceWrite = true;
+ 
+   // Find the descriptor node. If doing a shader compilation with no user data layout provided, don't bother to
+   // look. Later code will use relocs.
+   const ResourceNode *topNode = nullptr;
+   const ResourceNode *node = nullptr;
+   if (!m_pipelineState->isUnlinked() || !m_pipelineState->getUserDataNodes().empty()) {
+     // We have the user data layout. Find the node.
++    bool return64Address = false;
+     ResourceNodeType abstractType = ResourceNodeType::Unknown;
+     if (flags & BufferFlagConst)
+       abstractType = ResourceNodeType::DescriptorConstBuffer;
+     else if (flags & BufferFlagNonConst)
+       abstractType = ResourceNodeType::DescriptorBuffer;
+     else if (flags & BufferFlagShaderResource)
+       abstractType = ResourceNodeType::DescriptorResource;
+     else if (flags & BufferFlagSampler)
+       abstractType = ResourceNodeType::DescriptorSampler;
++    else if (flags & BufferFlagAddress) {
++      return64Address = true;
++      abstractType = ResourceNodeType::DescriptorBufferCompact;
++    }
+ 
+     std::tie(topNode, node) = m_pipelineState->findResourceNode(abstractType, descSet, binding);
+     assert(node && "missing resource node");
+ 
+     if (node == topNode && isa<Constant>(descIndex) && node->concreteType != ResourceNodeType::InlineBuffer) {
+       // Handle a descriptor in the root table (a "dynamic descriptor") specially, as long as it is not variably
+       // indexed and is not an InlineBuffer. This lgc.root.descriptor call is by default lowered in
+       // PatchEntryPointMutate into a load from the spill table, but it might be able to "unspill" it to
+       // directly use shader entry SGPRs.
+       // TODO: Handle root InlineBuffer specially in a similar way to PushConst. The default handling is
+@@ -94,20 +105,24 @@ Value *DescBuilder::CreateLoadBufferDesc(unsigned descSet, unsigned binding, Val
+       unsigned dwordSize = descTy->getPrimitiveSizeInBits() / 32;
+       unsigned dwordOffset = cast<ConstantInt>(descIndex)->getZExtValue() * dwordSize;
+       if (dwordOffset + dwordSize > node->sizeInDwords) {
+         // Index out of range
+         desc = UndefValue::get(descTy);
+       } else {
+         dwordOffset += node->offsetInDwords;
+         dwordOffset += (binding - node->binding) * node->stride;
+         desc = CreateNamedCall(callName, descTy, getInt32(dwordOffset), Attribute::ReadNone);
+       }
++      if (return64Address) {
++        assert(node->concreteType == ResourceNodeType::DescriptorBufferCompact);
++        return convert64Address(desc);
++      }
+     } else if (node->concreteType == ResourceNodeType::InlineBuffer) {
+       // Handle an inline buffer specially. Get a pointer to it, then expand to a descriptor.
+       Value *descPtr = getDescPtr(node->concreteType, node->abstractType, descSet, binding, topNode, node);
+       desc = buildInlineBufferDesc(descPtr);
+     }
+   }
+ 
+   if (!desc) {
+     if (node) {
+       ResourceNodeType resType = node->concreteType;
+@@ -140,21 +155,21 @@ Value *DescBuilder::CreateLoadBufferDesc(unsigned descSet, unsigned binding, Val
+       }
+ 
+       auto descPtrLo = CreateBitCast(descPtr, FixedVectorType::get(getInt32Ty(), 2)->getPointerTo(ADDR_SPACE_CONST));
+       // The first load
+       auto descLo = CreateLoad(FixedVectorType::get(getInt32Ty(), 2), descPtrLo);
+       auto compactBufferDesc = buildBufferCompactDesc(descLo);
+ 
+       // If descriptor set is -1, this is a internal resource node, it is a root node
+       // and its type is ResourceNodeType::DescriptorBufferCompact.
+       if (descSet == -1) {
+-        desc = compactBufferDesc;
++        return convert64Address(descLo);
+       } else {
+         // Add offset
+         Value *descPtrHi = CreateAddByteOffset(descPtr, getInt32(8));
+         auto reloc = CreateRelocationConstant(reloc::CompactBuffer + Twine(descSet) + "_" + Twine(binding));
+         auto isCompactBuffer = CreateICmpNE(reloc, getInt32(0));
+         // Select the address
+         descPtrHi = CreateSelect(isCompactBuffer, descPtr, descPtrHi);
+         descPtrHi = CreateBitCast(descPtrHi, FixedVectorType::get(getInt32Ty(), 2)->getPointerTo(ADDR_SPACE_CONST));
+         // The second load
+         auto descHi = CreateLoad(FixedVectorType::get(getInt32Ty(), 2), descPtrHi);
+diff --git a/lgc/interface/lgc/Builder.h b/lgc/interface/lgc/Builder.h
+index 9e038b68c..c4c1043d6 100644
+--- a/lgc/interface/lgc/Builder.h
++++ b/lgc/interface/lgc/Builder.h
+@@ -697,21 +697,22 @@ public:
+ 
+   // Bit settings for flags argument in CreateLoadBufferDesc.
+   enum {
+     BufferFlagNonUniform = 1, // Descriptor index is non-uniform
+     BufferFlagWritten = 2,    // Buffer is (or might be) written to
+     BufferFlagConst = 4,      // Const buffer: Find a DescriptorConstBuffer/DescriptorConstBufferCompact/InlineBuffer
+                               //  descriptor entry, rather than DescriptorBuffer/DescriptorBufferCompact
+     BufferFlagNonConst = 8,   // Non-const buffer: Find a DescriptorBuffer/DescriptorBufferCompact descriptor
+                               //  entry, rather than DescriptorConstBuffer/DescriptorConstBufferCompact/InlineBuffer
+     BufferFlagShaderResource = 16, // Flag to find a Descriptor Resource
+-    BufferFlagSampler = 32         // Flag to find Descriptor Sampler
++    BufferFlagSampler = 32,        // Flag to find Descriptor Sampler
++    BufferFlagAddress = 64         // Flag to return an i64 address of the descriptor
+   };
+ 
+   // Get the type of pointer returned by CreateLoadBufferDesc.
+   llvm::PointerType *getBufferDescTy(llvm::Type *pointeeTy);
+ 
+   // Create a load of a buffer descriptor.
+   //
+   // @param descSet : Descriptor set
+   // @param binding : Descriptor binding
+   // @param descIndex : Descriptor index
+diff --git a/lgc/patch/VertexFetch.cpp b/lgc/patch/VertexFetch.cpp
+index 18fe1d009..8d6e02004 100644
+--- a/lgc/patch/VertexFetch.cpp
++++ b/lgc/patch/VertexFetch.cpp
+@@ -400,23 +400,23 @@ bool LowerVertexFetch::runImpl(Module &module, PipelineState *pipelineState) {
+     for (auto user : func.users())
+       vertexFetches.push_back(cast<CallInst>(user));
+   }
+   if (vertexFetches.empty())
+     return false;
+ 
+   if (pipelineState->getOptions().enableUberFetchShader) {
+     std::unique_ptr<lgc::Builder> desBuilder(Builder::createBuilderImpl(pipelineState->getLgcContext(), pipelineState));
+     desBuilder->setShaderStage(ShaderStageVertex);
+     desBuilder->SetInsertPoint(&(*vertexFetches[0]->getFunction()->front().getFirstInsertionPt()));
+-    auto desc = desBuilder->CreateLoadBufferDesc(InternalDescriptorSetId, FetchShaderInternalBufferBinding,
+-                                                 desBuilder->getInt32(0), 0, desBuilder->getInt8Ty());
+-    desBuilder->CreateInvariantStart(desc);
++    auto desc =
++        desBuilder->CreateLoadBufferDesc(InternalDescriptorSetId, FetchShaderInternalBufferBinding,
++                                         desBuilder->getInt32(0), Builder::BufferFlagAddress, desBuilder->getInt8Ty());
+ 
+     for (CallInst *call : vertexFetches) {
+       builder.SetInsertPoint(call);
+       Value *vertex = vertexFetch->fetchVertex(call, desc, builder);
+       // Replace and erase this call.
+       call->replaceAllUsesWith(vertex);
+       call->eraseFromParent();
+     }
+     return true;
+   }
+@@ -537,41 +537,68 @@ Function *VertexFetchImpl::generateFetchFunction(bool is64bitFetch, Module *modu
+     };
+     // Return type
+     Type *retTy = FixedVectorType::get(builder.getInt32Ty(), is64bitFetch ? 8 : 4);
+ 
+     StringRef funcName = is64bitFetch ? "FetchVertex64" : "FetchVertex32";
+     FunctionType *const funcTy = FunctionType::get(retTy, argTypes, false);
+     Function *func = Function::Create(funcTy, GlobalValue::InternalLinkage, funcName, module);
+     func->setCallingConv(CallingConv::C);
+     func->addFnAttr(Attribute::AlwaysInline);
+ 
++    // Name args
++    auto argIt = func->arg_begin();
++    Value *vbDesc = argIt++;
++    vbDesc->setName("vbDesc");
++
++    Value *vbIndex = argIt++;
++    vbIndex->setName("vbIndex");
++
++    Value *vertexOffset = argIt++;
++    vertexOffset->setName("vertexOffset");
++
++    Value *compByteSize = argIt++;
++    compByteSize->setName("compByteSize");
++
++    Value *isPacked = argIt++;
++    isPacked->setName("isPacked");
++
++    Value *isBgr = argIt++;
++    isBgr->setName("isBgr");
++
++    Value *yMask = argIt++;
++    yMask->setName("yMask");
++    Value *zMask = argIt++;
++    zMask->setName("zMask");
++    Value *wMask = argIt++;
++    wMask->setName("wMask");
++
+     auto entry = createBlock(".entry", func);
+     auto wholeVertex = createBlock(".wholeVertex", func);
+     auto comp0Block = createBlock(".comp0Block", func);
+     auto comp1Block = createBlock(".comp1Block", func);
+     auto comp2Block = createBlock(".comp2Block", func);
+     auto comp3Block = createBlock(".comp3Block", func);
+     auto endfun = createBlock(".endfun", func);
+ 
+     Value *args[] = {
+-        func->getArg(0),     // rsrc
+-        func->getArg(1),     // vindex
+-        func->getArg(2),     // offset
++        vbDesc,              // rsrc
++        vbIndex,             // vindex
++        vertexOffset,        // offset
+         builder.getInt32(0), // soffset
+         builder.getInt32(0)  // glc, slc
+     };
+ 
+     // .entry
+     {
+       builder.SetInsertPoint(entry);
+       // If ispacked is false, we require per-component fetch
+-      builder.CreateCondBr(func->getArg(4), wholeVertex, comp0Block);
++      builder.CreateCondBr(isPacked, wholeVertex, comp0Block);
+     }
+ 
+     // .wholeVertex
+     {
+       builder.SetInsertPoint(wholeVertex);
+       Value *vertex = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, fetchType, args, {});
+       if (is64bitFetch) {
+         // If it is 64-bit, we need the second fetch
+         args[2] = builder.CreateAdd(args[2], builder.getInt32(SizeOfVec4));
+         auto secondFetch = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, fetchType, args, {});
+@@ -584,90 +611,90 @@ Function *VertexFetchImpl::generateFetchFunction(bool is64bitFetch, Module *modu
+     }
+ 
+     // return value
+     Value *lastVert = UndefValue::get(retTy);
+     Value *comp0 = nullptr;
+     Value *comp1 = nullptr;
+     Value *comp2 = nullptr;
+     Value *comp3 = nullptr;
+     // Per-component fetch
+     // reset
+-    args[2] = func->getArg(2);
++    args[2] = vertexOffset;
+ 
+     // X channel
+     // .comp0Block
+     {
+       builder.SetInsertPoint(comp0Block);
+       if (is64bitFetch) {
+         Value *comp = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, fetch64Type, args, {});
+         Value *elem = builder.CreateExtractElement(comp, uint64_t(0));
+         lastVert = builder.CreateInsertElement(lastVert, elem, uint64_t(0));
+         elem = builder.CreateExtractElement(comp, 1);
+         lastVert = builder.CreateInsertElement(lastVert, elem, 1);
+         comp0 = lastVert;
+       } else {
+         comp0 = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, builder.getInt32Ty(), args, {});
+         lastVert = builder.CreateInsertElement(lastVert, comp0, uint64_t(0));
+         comp0 = lastVert;
+       }
+       // If Y channel is 0, we will fetch the second component.
+-      builder.CreateCondBr(func->getArg(6), comp1Block, endfun);
++      builder.CreateCondBr(yMask, comp1Block, endfun);
+     }
+ 
+     // Y channel
+     // .comp1Block
+     {
+       builder.SetInsertPoint(comp1Block);
+       // Add offset. offset = offset + componentSize
+-      args[2] = builder.CreateAdd(args[2], func->getArg(3));
++      args[2] = builder.CreateAdd(args[2], compByteSize);
+       if (is64bitFetch) {
+         Value *comp = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, fetch64Type, args, {});
+         Value *elem = builder.CreateExtractElement(comp, uint64_t(0));
+         lastVert = builder.CreateInsertElement(lastVert, elem, 2);
+         elem = builder.CreateExtractElement(comp, 1);
+         lastVert = builder.CreateInsertElement(lastVert, elem, 3);
+         comp1 = lastVert;
+       } else {
+         comp1 = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, Type::getInt32Ty(*m_context), args,
+                                         {});
+         lastVert = builder.CreateInsertElement(lastVert, comp1, 1);
+         comp1 = lastVert;
+       }
+-      builder.CreateCondBr(func->getArg(7), comp2Block, endfun);
++      builder.CreateCondBr(zMask, comp2Block, endfun);
+     }
+ 
+     // Z channel
+     // .comp2Block
+     {
+       builder.SetInsertPoint(comp2Block);
+-      args[2] = builder.CreateAdd(args[2], func->getArg(3));
++      args[2] = builder.CreateAdd(args[2], compByteSize);
+       if (is64bitFetch) {
+         Value *comp = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, fetch64Type, args, {});
+         Value *elem = builder.CreateExtractElement(comp, uint64_t(0));
+         lastVert = builder.CreateInsertElement(lastVert, elem, 4);
+         elem = builder.CreateExtractElement(comp, 1);
+         lastVert = builder.CreateInsertElement(lastVert, elem, 5);
+         comp2 = lastVert;
+       } else {
+         comp2 = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, Type::getInt32Ty(*m_context), args,
+                                         {});
+         lastVert = builder.CreateInsertElement(lastVert, comp2, 2);
+         comp2 = lastVert;
+       }
+-      builder.CreateCondBr(func->getArg(8), comp3Block, endfun);
++      builder.CreateCondBr(wMask, comp3Block, endfun);
+     }
+ 
+     // W channel
+     // .comp3Block
+     {
+       builder.SetInsertPoint(comp3Block);
+-      args[2] = builder.CreateAdd(args[2], func->getArg(3));
++      args[2] = builder.CreateAdd(args[2], compByteSize);
+       if (is64bitFetch) {
+         Value *comp = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, fetch64Type, args, {});
+         Value *elem = builder.CreateExtractElement(comp, uint64_t(0));
+         lastVert = builder.CreateInsertElement(lastVert, elem, 6);
+         elem = builder.CreateExtractElement(comp, 1);
+         lastVert = builder.CreateInsertElement(lastVert, elem, 7);
+         comp3 = lastVert;
+       } else {
+         comp3 = builder.CreateIntrinsic(Intrinsic::amdgcn_struct_buffer_load_format, Type::getInt32Ty(*m_context), args,
+                                         {});
+@@ -687,39 +714,40 @@ Function *VertexFetchImpl::generateFetchFunction(bool is64bitFetch, Module *modu
+       phiInst->addIncoming(comp3, comp3Block);
+       Value *vertex = phiInst;
+       // If the format is bgr, fix the order. It only is included in 32-bit format.
+       if (!is64bitFetch) {
+         std::vector<Constant *> shuffleMask;
+         shuffleMask.push_back(builder.getInt32(2));
+         shuffleMask.push_back(builder.getInt32(1));
+         shuffleMask.push_back(builder.getInt32(0));
+         shuffleMask.push_back(builder.getInt32(3));
+         auto fixedVertex = builder.CreateShuffleVector(vertex, vertex, ConstantVector::get(shuffleMask));
+-        vertex = builder.CreateSelect(func->getArg(5), fixedVertex, vertex);
++        vertex = builder.CreateSelect(isBgr, fixedVertex, vertex);
+       }
+       builder.CreateRet(vertex);
+     }
+     return func;
+   };
+ 
+   if (is64bitFetch) {
+     if (!m_fetchVertex64)
+       m_fetchVertex64 = createFunction();
+     return m_fetchVertex64;
+   }
+ 
+   if (!m_fetchVertex32)
+     m_fetchVertex32 = createFunction();
+   return m_fetchVertex32;
+ }
+ 
+ // =====================================================================================================================
++// This is an lgc.input.import.vertex operation.
+ // Executes vertex fetch operations based on the uber shader buffer
+ //
+ // @param callInst : call instruction
+ // @param inputDesc : buffer descriptor
+ // @param builder : Builder to use to insert vertex fetch instructions
+ // @returns : vertex
+ Value *VertexFetchImpl::fetchVertex(CallInst *callInst, llvm::Value *inputDesc, BuilderBase &builder) {
+   unsigned location = cast<ConstantInt>(callInst->getArgOperand(0))->getZExtValue();
+   unsigned compIdx = cast<ConstantInt>(callInst->getArgOperand(1))->getZExtValue();
+   auto zero = builder.getInt32(0);
+@@ -741,39 +769,37 @@ Value *VertexFetchImpl::fetchVertex(CallInst *callInst, llvm::Value *inputDesc,
+   // Get the vertex buffer table pointer as pointer to v4i32 descriptor.
+   Type *vbDescTy = FixedVectorType::get(Type::getInt32Ty(*m_context), 4);
+   if (!m_vertexBufTablePtr) {
+     auto savedInsertPoint = builder.saveIP();
+     builder.SetInsertPoint(&*callInst->getFunction()->front().getFirstInsertionPt());
+     m_vertexBufTablePtr =
+         ShaderInputs::getSpecialUserDataAsPointer(UserDataMapping::VertexBufferTable, vbDescTy, builder);
+     builder.restoreIP(savedInsertPoint);
+   }
+ 
+-  // The size of each input descriptor is sizeof(UberFetchShaderAttribInfo).
+-  unsigned offset = location * sizeof(UberFetchShaderAttribInfo);
+-  auto currentLoc = builder.CreateGEP(builder.getInt8Ty(), inputDesc, {builder.getInt32(offset)});
++  // The size of each input descriptor is sizeof(UberFetchShaderAttribInfo). vector4
++  auto uberFetchAttrType = FixedVectorType::get(Type::getInt32Ty(*m_context), 4);
++  auto descPtr = builder.CreateBitCast(inputDesc, PointerType::get(uberFetchAttrType, ADDR_SPACE_CONST));
++  descPtr = builder.CreateGEP(uberFetchAttrType, descPtr, {builder.getInt32(location)});
++  auto uberFetchAttr = builder.CreateLoad(vbDescTy, descPtr);
+ 
+   // The first DWord
+-  currentLoc = builder.CreateBitCast(currentLoc, PointerType::get(builder.getInt32Ty(), ADDR_SPACE_BUFFER_FAT_POINTER));
+-  auto attr = builder.CreateLoad(builder.getInt32Ty(), currentLoc);
++  auto attr = builder.CreateExtractElement(uberFetchAttr, uint64_t(0));
+ 
+   // The second DWord
+-  currentLoc = builder.CreateGEP(builder.getInt32Ty(), currentLoc, {builder.getInt32(1)});
+-  auto byteOffset = builder.CreateLoad(builder.getInt32Ty(), currentLoc);
++  auto byteOffset = builder.CreateExtractElement(uberFetchAttr, 1);
+ 
+   // The third DWord
+-  currentLoc = builder.CreateGEP(builder.getInt32Ty(), currentLoc, {builder.getInt32(1)});
+-  auto instanceDivisor = builder.CreateLoad(builder.getInt32Ty(), currentLoc);
++  auto instanceDivisor = builder.CreateExtractElement(uberFetchAttr, 2);
+ 
+   // The fourth DWord
+-  currentLoc = builder.CreateGEP(builder.getInt32Ty(), currentLoc, {builder.getInt32(1)});
+-  auto bufferFormat = builder.CreateLoad(builder.getInt32Ty(), currentLoc);
++  auto bufferFormat = builder.CreateExtractElement(uberFetchAttr, 3);
+ 
+   // attr[0~7]
+   auto descBinding = builder.CreateAnd(attr, builder.getInt32(0xFF));
+ 
+   // attr[8]
+   auto perInstance = builder.CreateAnd(attr, builder.getInt32(0x100));
+ 
+   // attr[10]
+   auto isPacked = builder.CreateAnd(attr, builder.getInt32(0x400));
+   isPacked = builder.CreateICmpNE(isPacked, zero);
+diff --git a/lgc/test/UberFetchShader.lgc b/lgc/test/UberFetchShader.lgc
+index d0c2992bc..21dcc2711 100644
+--- a/lgc/test/UberFetchShader.lgc
++++ b/lgc/test/UberFetchShader.lgc
+@@ -1,31 +1,32 @@
+ ; RUN: lgc -o - -passes=lgc-vertex-fetch -enable-opaque-pointers %s | FileCheck --check-prefixes=CHECK %s
+ 
+ ; CHECK-LABEL: define dllexport spir_func void @lgc.shader.VS.main()
+ ; Get the descriptor of Uber Fetch Shader buffer
+ ; CHECK: [[Desc:%[0-9]*]] = call <2 x i32> @lgc.root.descriptor.v2i32(i32 1)
+ 
++; CHECK: [[INT64DESC:%[0-9]*]] = bitcast <2 x i32> [[Desc]] to i64
++; CHECK: [[DESCPTR:%[0-9]*]] = inttoptr i64 [[INT64DESC]] to ptr addrspace(4)
++; CHECK: [[UBERINFOPTR:%[0-9]*]] = getelementptr <4 x i32>, ptr addrspace(4) [[DESCPTR]], i32 0
++; CHECK: [[UBERINFO:%[0-9]*]] = load <4 x i32>, ptr addrspace(4) [[UBERINFOPTR]], align 16
++
+ ; Read the first dword: vertex attribute
+-; CHECK: [[ADDR0:%[0-9]*]] = getelementptr i8, ptr addrspace(7) {{%[0-9]*}}, i32 0
+-; CHECK: [[attr:%[0-9]*]] = load i32, ptr addrspace(7) [[ADDR0]], align 4
++; CHECK: [[attr:%[0-9]*]] = extractelement <4 x i32> [[UBERINFO]], i64 0
+ 
+ ; Read the second dword: Attribute offset
+-; CHECK: [[ADDR1:%[0-9]*]] = getelementptr i32, ptr addrspace(7) [[ADDR0]], i32 1
+-; CHECK: [[offset:%[0-9]*]] = load i32, ptr addrspace(7) [[ADDR1]], align 4
++; CHECK: [[offset:%[0-9]*]] = extractelement <4 x i32> [[UBERINFO]], i64 1
+ 
+ ; Read the third dword: Reciprocal of instance divisor
+-; CHECK: [[ADDR2:%[0-9]*]] = getelementptr i32, ptr addrspace(7) [[ADDR1]], i32 1
+-; CHECK: [[divisor:%[0-9]*]] = load i32, ptr addrspace(7) [[ADDR2]], align 4
++; CHECK: [[divisor:%[0-9]*]] = extractelement <4 x i32> [[UBERINFO]], i64 2
+ 
+ ; Read the fourth dword: Buffer format
+-; CHECK:[[ADDR3:%[0-9]*]] = getelementptr i32, ptr addrspace(7) [[ADDR2]], i32 1
+-; CHECK:[[format:%[0-9]*]] = load i32, ptr addrspace(7) [[ADDR3]], align 4
++; CHECK:[[format:%[0-9]*]] = extractelement <4 x i32> [[UBERINFO]], i64 3
+ 
+ ; parse vertex attribute
+ ; Attribute binding in vertex buffer table (attr & 0xFF)
+ ; CHECK: and i32 [[attr]], 255
+ ; Whether vertex input rate is per-instance (attr & 0x100)
+ ; CHECK: and i32 [[attr]], 256
+ ; Whether it is a packed format (attr & 0x400)
+ ; CHECK: and i32 [[attr]], 1024
+ ; Byte size per component (attr[12~15])
+ ; CHECK: call i32 @llvm.amdgcn.ubfe.i32(i32 [[attr]], i32 12, i32 4)
+@@ -36,34 +37,30 @@
+ ; z channel mask (attr & 0x400000)
+ ; CHECK: and i32 [[attr]], 262144
+ ; w channel mask (attr & 0x800000)
+ ; CHECK: and i32 [[attr]], 524288
+ ; Whether is BGRA format (attr & 0x100000)
+ ; CHECK: and i32 [[attr]], 1048576
+ 
+ ; fetch vertex function
+ ; CHECK-LABEL: define internal <4 x i32> @FetchVertex32
+ ; Load the whole vertex
+-; CHECK: call <4 x i32> @llvm.amdgcn.struct.buffer.load.format.v4i32(<4 x i32> %0, i32 %1, i32 %2, i32 0, i32 0)
++; CHECK: call <4 x i32> @llvm.amdgcn.struct.buffer.load.format.v4i32(<4 x i32>
+ ; Load per channel, 4 channels
+ ; CHECK: call i32 @llvm.amdgcn.struct.buffer.load.format.i32(<4 x i32>
+ ; CHECK: call i32 @llvm.amdgcn.struct.buffer.load.format.i32(<4 x i32>
+ ; CHECK: call i32 @llvm.amdgcn.struct.buffer.load.format.i32(<4 x i32>
+ ; CHECK: call i32 @llvm.amdgcn.struct.buffer.load.format.i32(<4 x i32>
+ 
+ define dllexport spir_func void @lgc.shader.VS.main() local_unnamed_addr #0 !spirv.ExecutionModel !10 !lgc.shaderstage !11 {
+ .entry:
+   %0 = call <4 x float> @lgc.input.import.vertex.v4f32.i32.i32(i32 0, i32 0) #1
+-  call void @lgc.output.export.builtin.Position.i32.v4f32(i32 0, <4 x float> %0) #0
+-  call void @lgc.output.export.builtin.PointSize.i32.f32(i32 1, float undef) #0
+-  call void @lgc.output.export.builtin.ClipDistance.i32.a1f32(i32 3, [1 x float] undef) #0
+-  call void @lgc.output.export.builtin.CullDistance.i32.a1f32(i32 4, [1 x float] undef) #0
+   ret void
+ }
+ 
+ ; Function Attrs: nounwind readonly willreturn
+ declare <4 x float> @lgc.input.import.vertex.v4f32.i32.i32(i32, i32) #1
+ 
+ ; Function Attrs: nounwind
+ declare void @lgc.output.export.builtin.CullDistance.i32.a1f32(i32, [1 x float]) #0
+ 
+ ; Function Attrs: nounwind
+diff --git a/llpc/test/shaderdb/general/PipelineVsFs_TestUberShader.pipe b/llpc/test/shaderdb/general/PipelineVsFs_TestUberShader.pipe
+index 474af6331..c07598b3d 100644
+--- a/llpc/test/shaderdb/general/PipelineVsFs_TestUberShader.pipe
++++ b/llpc/test/shaderdb/general/PipelineVsFs_TestUberShader.pipe
+@@ -1,24 +1,23 @@
+ // Test uber shader
+ 
+ ; BEGIN_SHADERTEST
+ ; RUN: amdllpc -enable-opaque-pointers=true -v %gfxip %s | FileCheck -check-prefix=SHADERTEST %s
+ ; SHADERTEST-LABEL: {{^// LLPC}} pipeline patching results
+ ; Load input descriptor
+-; SHADERTEST: [[attr:%[0-9]*]] = call i32 @llvm.amdgcn.s.buffer.load.i32(<4 x i32> %{{[0-9]*}}, i32 0, i32 0)
+-; SHADERTEST: [[byteOffset:%[0-9]*]] = call i32 @llvm.amdgcn.s.buffer.load.i32(<4 x i32> %{{[0-9]*}}, i32 4, i32 0)
+-; SHADERTEST: [[instanceDivisor:%[0-9]*]] = call i32 @llvm.amdgcn.s.buffer.load.i32(<4 x i32> %{{[0-9]*}}, i32 8, i32 0)
+-; SHADERTEST: [[bufferFormat:%[0-9]*]] = call i32 @llvm.amdgcn.s.buffer.load.i32(<4 x i32> %{{[0-9]*}}, i32 12, i32 0)
+-; Replace buffer format
+-; SHADERTEST: [[vbDesc:%[0-9]*]] = insertelement <4 x i32> %{{[0-9]*}}, i32 [[bufferFormat]], i64 3
++
++; SHADERTEST: [[DESCPTR:%[0-9]*]] = bitcast <2 x i32> %rootDesc2 to i64
++; SHADERTEST: [[INTDESCPTR:%[0-9]*]] = inttoptr i64 [[DESCPTR]] to ptr addrspace(4)
++; SHADERTEST: [[UBERINFO:%[0-9]*]] = load <4 x i32>, ptr addrspace(4) [[INTDESCPTR]], align 16
++
+ ; Load vertex
+-; SHADERTEST: call i32 @llvm.amdgcn.struct.buffer.load.format.i32(<4 x i32> [[vbDesc]], i32 %{{[0-9]*}}, i32 %{{[0-9]*}}, i32 0, i32 0)
++; SHADERTEST-COUNT-5: call i32 @llvm.amdgcn.struct.buffer.load.format
+ ; SHADERTEST: AMDLLPC SUCCESS
+ ; END_SHADERTEST
+ 
+ [Version]
+ version = 57
+ 
+ [VsGlsl]
+ #version 440
+ layout(constant_id = 0) const int numAttributes = 16;
+ layout(location = 0) in int attr0;

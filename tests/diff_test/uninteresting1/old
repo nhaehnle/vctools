@@ -1,0 +1,46 @@
+This test illustrates the uninterestingness heuristic used to guarantee
+log-linear worst-case running time.
+A minimal diff would remove and re-insert the unique line. Instead, we generate
+a diff in which the unique line is unchanged.
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+a
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+x
+footer

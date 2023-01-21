@@ -1,0 +1,16 @@
+--- basic/old
++++ basic/new
+@@ -1,10 +1,10 @@
+-first line old
++first line new
+ same1
+ same2
++middle new
+ 
+ same3
+ same3
+-middle old
+ same4
+ same5
+-end line old
++end line new

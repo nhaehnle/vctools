@@ -1,0 +1,92 @@
+--- reverse_blocks1/old
++++ reverse_blocks1/new
+@@ -1,5 +1,43 @@
+-Test the case where the order of three otherwise unchanged blocks is reversed.
+-The first block is the largest.
++c00
++c01
++c02
++c03
++c04
++c05
++c06
++c07
++c08
++c09
++c10
++c11
++c12
++c13
++c14
++c15
++c16
++c17
++c18
++c19
++b00
++b01
++b02
++b03
++b04
++b05
++b06
++b07
++b08
++b09
++b10
++b11
++b12
++b13
++b14
++b15
++b16
++b17
++b18
++b19
+ a00
+ a01
+ a02
+@@ -21,43 +59,3 @@
+ a18
+ a19
+ a20
+-b00
+-b01
+-b02
+-b03
+-b04
+-b05
+-b06
+-b07
+-b08
+-b09
+-b10
+-b11
+-b12
+-b13
+-b14
+-b15
+-b16
+-b17
+-b18
+-b19
+-c00
+-c01
+-c02
+-c03
+-c04
+-c05
+-c06
+-c07
+-c08
+-c09
+-c10
+-c11
+-c12
+-c13
+-c14
+-c15
+-c16
+-c17
+-c18
+-c19

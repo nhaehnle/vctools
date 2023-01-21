@@ -1,0 +1,87 @@
+--- uninteresting2/old
++++ uninteresting2/new
+@@ -1,64 +1,60 @@
+-Test that we still match trivial runs of multiple frequent lines, despite the
+-uninterestingness heuristic that is used to guarantee log-linear worst-case
+-running time.
+ x
+ y
+-a00
++b00
+ x
+ y
+-a01
++b01
+ x
+ y
+-a02
++b02
+ x
+ y
+-a03
++b03
+ x
+ y
+-a04
++b04
+ x
+ y
+-a05
++b05
+ x
+ y
+-a06
++b06
+ x
+ y
+-a07
++b07
+ x
+ y
+-a08
++b08
+ x
+ y
+-a09
++b09
+ x
+ y
+-a10
++b10
+ x
+ y
+-a11
++b11
+ x
+ y
+-a12
++b12
+ x
+ y
+-a13
++b13
+ x
+ y
+-a14
++b14
+ x
+ y
+-a15
++b15
+ x
+ y
+-a16
++b16
+ x
+ y
+-a17
++b17
+ x
+ y
+-a18
++b18
+ x
+ y
+-a19
+-footer -- throw off tail-matching attempts
++b19

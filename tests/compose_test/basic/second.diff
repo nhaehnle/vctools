@@ -1,0 +1,19 @@
+--- a/file
++++ b/file
+@@ -20,2 +20,3 @@
+ va
++blah
+ vb
+@@ -29,10 +30,6 @@
+ z
+ za
+-zb
+-bcb
+-zc
+-zd
+-bcb
++cdc
+ bcb2
+-bcb3
++cdc
+ ze

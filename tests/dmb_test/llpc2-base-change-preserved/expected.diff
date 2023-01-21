@@ -1,0 +1,103 @@
+#--- a/lgc/patch/PassRegistry.inc
+#+++ a/lgc/patch/PassRegistry.inc
+ --- a/lgc/patch/PassRegistry.inc
+ +++ b/lgc/patch/PassRegistry.inc
+#@@ -56,16 +65,20 @@
+# LLPC_MODULE_PASS("lgc-patch-llvm-ir-inclusion", PatchLlvmIrInclusion)
+# LLPC_MODULE_PASS("lgc-patch-wave-size-adjust", PatchWaveSizeAdjust)
+# LLPC_FUNCTION_PASS("lgc-patch-peephole-opt", PatchPeepholeOpt)
+# LLPC_MODULE_PASS("lgc-patch-entry-point-mutate", PatchEntryPointMutate)
+# LLPC_MODULE_PASS("lgc-patch-check-shader-cache", PatchCheckShaderCache)
+# LLPC_LOOP_PASS("lgc-patch-loop-metadata", PatchLoopMetadata)
+# LLPC_FUNCTION_PASS("lgc-patch-buffer-op", PatchBufferOp)
+# LLPC_MODULE_PASS("lgc-patch-workarounds", PatchWorkarounds)
+# LLPC_FUNCTION_PASS("lgc-patch-load-scalarizer", PatchLoadScalarizer)
+# LLPC_MODULE_PASS("lgc-patch-null-frag-shader", PatchNullFragShader)
+#+#if LLPC_BUILD_GFX11
+#+LLPC_MODULE_PASS("lgc-patch-image-op-collect", PatchImageOpCollect)
+#+#endif
+# 
+# #undef LLPC_PASS
+# #undef LLPC_LOOP_PASS
+# #undef LLPC_FUNCTION_PASS
+# #undef LLPC_MODULE_PASS
+# #undef LLPC_MODULE_PASS_WITH_PARSER
+#>#undef LLPC_MODULE_ANALYSIS
+ @@ -56,17 +65,21 @@
+  LLPC_MODULE_PASS("lgc-patch-llvm-ir-inclusion", PatchLlvmIrInclusion)
+  LLPC_MODULE_PASS("lgc-patch-wave-size-adjust", PatchWaveSizeAdjust)
+  LLPC_FUNCTION_PASS("lgc-patch-peephole-opt", PatchPeepholeOpt)
+  LLPC_MODULE_PASS("lgc-patch-entry-point-mutate", PatchEntryPointMutate)
+  LLPC_MODULE_PASS("lgc-patch-check-shader-cache", PatchCheckShaderCache)
+  LLPC_LOOP_PASS("lgc-patch-loop-metadata", PatchLoopMetadata)
+  LLPC_FUNCTION_PASS("lgc-patch-buffer-op", PatchBufferOp)
+  LLPC_MODULE_PASS("lgc-patch-workarounds", PatchWorkarounds)
+  LLPC_FUNCTION_PASS("lgc-patch-load-scalarizer", PatchLoadScalarizer)
+  LLPC_MODULE_PASS("lgc-patch-null-frag-shader", PatchNullFragShader)
+ +#if LLPC_BUILD_GFX11
+ +LLPC_MODULE_PASS("lgc-patch-image-op-collect", PatchImageOpCollect)
+ +#endif
+  LLPC_MODULE_PASS("lgc-vertex-fetch", LowerVertexFetch)
+  
+  #undef LLPC_PASS
+  #undef LLPC_LOOP_PASS
+  #undef LLPC_FUNCTION_PASS
+  #undef LLPC_MODULE_PASS
+  #undef LLPC_MODULE_PASS_WITH_PARSER
+ >#undef LLPC_MODULE_ANALYSIS
+#--- a/llpc/context/llpcPipelineContext.cpp
+#+++ a/llpc/context/llpcPipelineContext.cpp
+ --- a/llpc/context/llpcPipelineContext.cpp
+ +++ b/llpc/context/llpcPipelineContext.cpp
+#@@ -336,21 +336,25 @@
+#     if (!EnableShadowDescriptorTable)
+#       options.shadowDescriptorTable = ShadowDescriptorTableDisable;
+#     else
+#       options.shadowDescriptorTable = ShadowDescTablePtrHigh;
+#   }
+# 
+#   if (isGraphics() && getGfxIpVersion().major >= 10) {
+#     // Only set NGG options for a GFX10+ graphics pipeline.
+#     auto pipelineInfo = reinterpret_cast<const GraphicsPipelineBuildInfo *>(getPipelineBuildInfo());
+#     const auto &nggState = pipelineInfo->nggState;
+#+#if VKI_BUILD_GFX11
+#+    if (!nggState.enableNgg && getGfxIpVersion().major < 11) // GFX11+ must enable NGG
+#+#else
+#     if (!nggState.enableNgg)
+#+#endif
+#       options.nggFlags |= NggFlagDisable;
+#     else {
+#       options.nggFlags = (nggState.enableGsUse ? NggFlagEnableGsUse : 0) |
+#                          (nggState.forceCullingMode ? NggFlagForceCullingMode : 0) |
+#                          (nggState.compactMode == NggCompactDisable ? NggFlagCompactDisable : 0) |
+#                          (nggState.enableVertexReuse ? NggFlagEnableVertexReuse : 0) |
+#                          (nggState.enableBackfaceCulling ? NggFlagEnableBackfaceCulling : 0) |
+#                          (nggState.enableFrustumCulling ? NggFlagEnableFrustumCulling : 0) |
+#                          (nggState.enableBoxFilterCulling ? NggFlagEnableBoxFilterCulling : 0) |
+#                          (nggState.enableSphereCulling ? NggFlagEnableSphereCulling : 0) |
+ @@ -339,21 +339,25 @@
+        options.shadowDescriptorTable = ShadowDescTablePtrHigh;
+    }
+  
+    if (isGraphics()) {
+      options.enableUberFetchShader =
+          reinterpret_cast<const GraphicsPipelineBuildInfo *>(getPipelineBuildInfo())->enableUberFetchShader;
+      if (getGfxIpVersion().major >= 10) {
+        // Only set NGG options for a GFX10+ graphics pipeline.
+        auto pipelineInfo = reinterpret_cast<const GraphicsPipelineBuildInfo *>(getPipelineBuildInfo());
+        const auto &nggState = pipelineInfo->nggState;
+ +#if VKI_BUILD_GFX11
+ +      if (!nggState.enableNgg && getGfxIpVersion().major < 11) // GFX11+ must enable NGG
+ +#else
+        if (!nggState.enableNgg)
+ +#endif
+          options.nggFlags |= NggFlagDisable;
+        else {
+          options.nggFlags = (nggState.enableGsUse ? NggFlagEnableGsUse : 0) |
+                             (nggState.forceCullingMode ? NggFlagForceCullingMode : 0) |
+                             (nggState.compactMode == NggCompactDisable ? NggFlagCompactDisable : 0) |
+                             (nggState.enableVertexReuse ? NggFlagEnableVertexReuse : 0) |
+                             (nggState.enableBackfaceCulling ? NggFlagEnableBackfaceCulling : 0) |
+                             (nggState.enableFrustumCulling ? NggFlagEnableFrustumCulling : 0) |
+                             (nggState.enableBoxFilterCulling ? NggFlagEnableBoxFilterCulling : 0) |
+                             (nggState.enableSphereCulling ? NggFlagEnableSphereCulling : 0) |

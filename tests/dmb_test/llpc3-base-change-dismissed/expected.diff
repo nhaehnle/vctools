@@ -1,0 +1,33 @@
+#--- a/lgc/patch/PatchPreparePipelineAbi.cpp
+#+++ a/lgc/patch/PatchPreparePipelineAbi.cpp
+#@@ -67,21 +67,30 @@
+# // @param [in/out] module : LLVM module to be run on
+# // @returns : True if the module was modified by the transformation and false otherwise
+# bool LegacyPatchPreparePipelineAbi::runOnModule(Module &module) {
+#   PipelineState *pipelineState = getAnalysis<LegacyPipelineStateWrapper>().getPipelineState(&module);
+#   PipelineShadersResult &pipelineShaders = getAnalysis<LegacyPipelineShaders>().getResult();
+# 
+#   auto getPostDomTree = [&](Function &func) -> PostDominatorTree & {
+#     return getAnalysis<PostDominatorTreeWrapperPass>(func).getPostDomTree();
+#   };
+#   auto getCycleInfo = [&](Function &func) -> CycleInfo & {
+#+#if (LLVM_MAIN_REVISION && LLVM_MAIN_REVISION < 445694) ||                                                             \
+#+    (LLVM_MAIN_REVISION >= 445696 && LLVM_MAIN_REVISION < 445701) ||                                                   \
+#+    (LLVM_MAIN_REVISION >= 445977 && LLVM_MAIN_REVISION < 445978) ||                                                   \
+#+    (LLVM_MAIN_REVISION >= 445979 && LLVM_MAIN_REVISION < 446084)
+#+    // Old version of the code
+#     return getAnalysis<CycleInfoWrapperPass>(func).getCycleInfo();
+#+#else
+#+    // New version of the code (also handles unknown version, which we treat as latest)
+#+    return getAnalysis<CycleInfoWrapperPass>(func).getResult();
+#+#endif
+#   };
+# 
+#   PatchPreparePipelineAbi::FunctionAnalysisHandlers analysisHandlers = {};
+#   analysisHandlers.getPostDomTree = getPostDomTree;
+#   analysisHandlers.getCycleInfo = getCycleInfo;
+# 
+#   return m_impl.runImpl(module, pipelineShaders, pipelineState, analysisHandlers);
+# }
+# 
+# // =====================================================================================================================
