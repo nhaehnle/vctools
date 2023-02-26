@@ -2,7 +2,7 @@
 
 use std::{io::prelude::*, fmt::Display};
 
-use crate::utils::{Result, err_from_str, try_forward, trim_ascii};
+use crate::utils::{Result, try_forward, trim_ascii};
 
 pub use std::ops::Range;
 use lazy_static::lazy_static;
@@ -170,7 +170,7 @@ impl RangeDiff {
     fn parse_impl(buffer: &[u8]) -> Result<Self> {
         lazy_static! {
             static ref RE: Regex = Regex::new(
-                r"(?-u)(?:(-+)|([0-9]+)): +(?:(-+)|([0-9a-f]+)) ([!<>=]) (?:(-+)|([0-9]+)): +(?:(-+)|([0-9a-f]+)) +(.*)"
+                r"(?-u)(?:(-+)|([0-9]+)): +(?:(-+)|([0-9a-f]+)) ([!<>=]) +(?:(-+)|([0-9]+)): +(?:(-+)|([0-9a-f]+)) +(.*)"
             ).unwrap();
         }
 
@@ -181,7 +181,9 @@ impl RangeDiff {
                 continue
             }
 
-            let captures = RE.captures(line).ok_or_else(|| err_from_str("bad diff-range line"))?;
+            let captures = RE.captures(line)
+                .ok_or_else(|| format!("bad diff-range line\n{}",
+                                       String::from_utf8_lossy(line)))?;
 
             fn get_side(captures: &regex::bytes::Captures, idx: usize) -> Result<Option<(u32, Ref)>> {
                 let index_missing = captures.get(idx);
@@ -274,6 +276,29 @@ mod test {
             new: Some((3, Ref::new("fedc3210"))),
             title: (*b"another").into(),
         });
+
+        Ok(())
+    }
+
+    #[test]
+    fn range_diff_long() -> Result<()> {
+        // With 10 or more commits, the number of spaces changes due to the
+        // column alignment. This test simply checks that parsing succeeds.
+        let range_diff_text = "\
+            1:  ce2d771c8 =  1:  ce2d771c8 Some title\n\
+            2:  3048b9cd5 =  2:  3048b9cd5 Some title\n\
+            3:  46c6da7f7 =  3:  46c6da7f7 Some title\n\
+            4:  ef3268f45 =  4:  ef3268f45 Some title\n\
+            5:  0dd787c71 =  5:  0dd787c71 Some title\n\
+            6:  b3c0f3c0b =  6:  b3c0f3c0b Some title\n\
+            7:  fcd2a46ed =  7:  fcd2a46ed Some title\n\
+            8:  87217884d =  8:  87217884d Some title\n\
+            9:  c06759892 =  9:  c06759892 Some title\n\
+            -:  --------- > 10:  22d6987c2 Some title\n\
+            -:  --------- > 11:  5595185f8 Some title\n\
+        ";
+
+        let _ = RangeDiff::parse(range_diff_text.as_bytes())?;
 
         Ok(())
     }
