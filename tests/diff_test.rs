@@ -2,6 +2,7 @@
 
 use diff_modulo_base::*;
 use utils::Result;
+use diff::ChunkFreeWriterExt;
 
 #[test]
 fn diff_test() -> Result<()> {
@@ -40,9 +41,11 @@ fn diff_test() -> Result<()> {
                                    &options, diff::DiffAlgorithm::default())?;
         let mut diff = diff::Diff::new(options);
         diff.add_file(file);
-        let result = diff.render(&buffer);
 
-        assert_eq!(expected, result);
+        let mut writer = diff::ChunkByteBufferWriter::new();
+        diff.render(&mut writer.with_buffer(&buffer));
+
+        assert_eq!(String::from_utf8(expected)?, String::from_utf8(writer.out)?);
     }
 
     Ok(())

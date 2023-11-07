@@ -137,7 +137,5 @@ To that end, the project is released under the MIT license.
 
 ## To do
 
-* Coloring when outputting to the terminal
-* git-style pager integration
 * Smarter alignment of "base" and "target" changes: remap line numbers using
   the old and new diffs

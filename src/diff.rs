@@ -58,6 +58,257 @@ impl Buffer {
     }
 }
 
+/// Represent an effective filename in a diff (without any prefix path
+/// components). Missing means that the file is missing on the corresponding
+/// side of the diff.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FileName {
+    Missing,
+    Name(Vec<u8>),
+}
+impl Default for FileName {
+    fn default() -> Self { FileName::Missing }
+}
+impl FileName {
+    fn extract(path: &[u8], strip_path_components: usize) -> Result<FileName> {
+        if path == b"/dev/null" {
+            return Ok(Self::Missing);
+        }
+
+        if path.is_empty() {
+            return Err("empty diff file path".into());
+        }
+
+        try_forward(|| -> Result<_> {
+            let mut path = path;
+            if path[0] == b'/' {
+                path = &path[1..];
+            }
+
+            for _ in 0..strip_path_components {
+                path = match path.iter().enumerate()
+                            .find(|(_, &b)| b == b'/')
+                            .map(|(idx, _)| idx) {
+                    Some(idx) => &path[idx + 1..],
+                    None => { return Err("path does not have enough components".into()); }
+                    };
+            }
+
+            Ok(Self::Name(path.into()))
+        }, || String::from_utf8_lossy(path))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum HunkLineStatus {
+    Unchanged,
+    Old(bool), // "unimportant" boolean
+    New(bool), // "unimportant" boolean
+}
+impl HunkLineStatus {
+    pub fn symbol_byte(self) -> u8 {
+        match self {
+        HunkLineStatus::Unchanged => b' ',
+        HunkLineStatus::Old(false) => b'-',
+        HunkLineStatus::New(false) => b'+',
+        HunkLineStatus::Old(true) => b'<',
+        HunkLineStatus::New(true) => b'>',
+        }
+    }
+
+    pub fn covers_old(self) -> bool {
+        match self {
+        HunkLineStatus::Unchanged | HunkLineStatus::Old(_) => true,
+        HunkLineStatus::New(_) => false,
+        }
+    }
+
+    pub fn covers_new(self) -> bool {
+        match self {
+        HunkLineStatus::Unchanged | HunkLineStatus::New(_) => true,
+        HunkLineStatus::Old(_) => false,
+        }
+    }
+
+    pub fn important(self) -> bool {
+        match self {
+        HunkLineStatus::Unchanged => false,
+        HunkLineStatus::Old(unimportant) | HunkLineStatus::New(unimportant)
+            => !unimportant,
+        }
+    }
+
+    fn counts<I>(iter: I) -> (u32, u32)
+        where I: Iterator<Item = HunkLineStatus>
+    {
+        let mut old_count = 0;
+        let mut new_count = 0;
+        for status in iter {
+            if status.covers_old() {
+                old_count += 1;
+            }
+            if status.covers_new() {
+                new_count += 1;
+            }
+        }
+        (old_count, new_count)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HunkLine {
+    pub status: HunkLineStatus,
+    pub contents: DiffRef,
+    pub no_newline: bool,
+}
+impl HunkLine {
+    fn from_range(status: HunkLineStatus, lines: &[DiffRef])
+        -> impl IntoIterator<Item = HunkLine> + '_
+    {
+        lines.iter().map(move |&line| HunkLine {
+            status,
+            contents: line,
+            no_newline: false,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Context {
+    Unknown,
+    CommitMessage,
+    Baseline,
+    Change,
+}
+impl Context {
+    pub fn prefix_bytes(self) -> &'static [u8] {
+        match self {
+        Context::Baseline => b"#",
+        Context::Change => b" ",
+        _ => &[],
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DiffChunkContents {
+    FileHeader { old_path: DiffRef, old_name: FileName, new_path: DiffRef, new_name: FileName },
+    HunkHeader { old_begin: u32, old_count: u32, new_begin: u32, new_count: u32 },
+    Line { line: HunkLine },
+}
+
+#[derive(Debug, Clone)]
+pub struct Chunk {
+    pub context: Context,
+    pub contents: DiffChunkContents,
+}
+impl Chunk {
+    pub fn render_text(&self, buffer: &Buffer, out: &mut Vec<u8>) {
+        let prefix = self.context.prefix_bytes();
+
+        match &self.contents {
+        DiffChunkContents::FileHeader { old_path, new_path, .. } => {
+            out.extend(prefix);
+            out.extend(b"--- ");
+            out.extend(buffer[*old_path].iter());
+            out.push(b'\n');
+            out.extend(prefix);
+            out.extend(b"+++ ");
+            out.extend(buffer[*new_path].iter());
+            out.push(b'\n');
+        },
+        DiffChunkContents::HunkHeader { old_begin, old_count, new_begin, new_count } => {
+            out.extend(prefix);
+            out.extend(format!("@@ -{},{} +{},{} @@\n",
+                old_begin, old_count, new_begin, new_count).as_bytes());
+        },
+        DiffChunkContents::Line { line } => {
+            out.extend(prefix);
+            out.push(line.status.symbol_byte());
+            out.extend(&buffer[line.contents]);
+            if line.no_newline {
+                out.extend(b"\n\\ No newline at end of file\n");
+            } else {
+                out.push(b'\n');
+            }
+        },
+        }
+    }
+}
+
+/// An object that receives [`Chunk`]s, e.g. to write them to a text file.
+pub trait ChunkWriter {
+    fn push(&mut self, chunk: Chunk);
+}
+
+pub trait ChunkWriterExt: ChunkWriter {
+    /// Return a writer that forces all chunks into the given context before passing them on
+    /// to the original (self) writer.
+    fn with_context(&mut self, context: Context) -> impl ChunkWriter;
+}
+impl<T: ChunkWriter + ?Sized> ChunkWriterExt for T {
+    fn with_context(&mut self, context: Context) -> impl ChunkWriter {
+        struct WithContext<'writer, U: ?Sized> {
+            this: &'writer mut U,
+            context: Context,
+        }
+        impl<'writer, U: ChunkWriter + ?Sized> ChunkWriter for WithContext<'writer, U> {
+            fn push(&mut self, chunk: Chunk) {
+                let mut chunk = chunk;
+                chunk.context = self.context;
+                self.this.push(chunk);
+            }
+        }
+        WithContext {
+            this: self,
+            context,
+        }
+    }
+}
+
+/// A trait that receives [`Chunk`]s, e.g. to write them to a text file.
+pub trait ChunkFreeWriter {
+    fn push(&mut self, buffer: &Buffer, chunk: Chunk);
+}
+
+pub trait ChunkFreeWriterExt: ChunkFreeWriter {
+    fn with_buffer<'buffer>(&'buffer mut self, buffer: &'buffer Buffer) -> impl ChunkWriter;
+}
+impl<T: ChunkFreeWriter + ?Sized> ChunkFreeWriterExt for T {
+    fn with_buffer<'buffer>(&'buffer mut self, buffer: &'buffer Buffer) -> impl ChunkWriter {
+        struct WithBuffer<'writer, T: ?Sized> {
+            this: &'writer mut T,
+            buffer: &'writer Buffer,
+        }
+        impl<'writer, T: ChunkFreeWriter + ?Sized> ChunkWriter for WithBuffer<'writer, T> {
+            fn push(&mut self, chunk: Chunk) {
+                self.this.push(self.buffer, chunk);
+            }
+        }
+        WithBuffer {
+            this: self,
+            buffer,
+        }
+    }
+}
+
+/// Write [`Chunk`]s into a byte buffer.
+pub struct ChunkByteBufferWriter {
+    pub out: Vec<u8>,
+}
+impl ChunkByteBufferWriter {
+    pub fn new() -> Self {
+        Self {
+            out: Vec::new(),
+        }
+    }
+}
+impl ChunkFreeWriter for ChunkByteBufferWriter {
+    fn push(&mut self, buffer: &Buffer, chunk: Chunk) {
+        chunk.render_text(buffer, &mut self.out);
+    }
+}
+
 struct LineIterator<'a> {
     buffer: &'a Buffer,
     range: DiffRef,
@@ -133,47 +384,6 @@ impl Default for DiffRef {
     }
 }
 
-/// Represent an effective filename in a diff (without any prefix path
-/// components). Missing means that the file is missing on the corresponding
-/// side of the diff.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FileName {
-    Missing,
-    Name(Vec<u8>),
-}
-impl Default for FileName {
-    fn default() -> Self { FileName::Missing }
-}
-impl FileName {
-    fn extract(path: &[u8], strip_path_components: usize) -> Result<FileName> {
-        if path == b"/dev/null" {
-            return Ok(Self::Missing);
-        }
-
-        if path.is_empty() {
-            return Err("empty diff file path".into());
-        }
-
-        try_forward(|| -> Result<_> {
-            let mut path = path;
-            if path[0] == b'/' {
-                path = &path[1..];
-            }
-
-            for _ in 0..strip_path_components {
-                path = match path.iter().enumerate()
-                            .find(|(_, &b)| b == b'/')
-                            .map(|(idx, _)| idx) {
-                    Some(idx) => &path[idx + 1..],
-                    None => { return Err("path does not have enough components".into()); }
-                    };
-            }
-
-            Ok(Self::Name(path.into()))
-        }, || String::from_utf8_lossy(path))
-    }
-}
-
 #[derive(Debug, Clone)]
 enum BlockContents {
     UnchangedUnknown(u32),
@@ -226,62 +436,6 @@ impl Block {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum HunkLineStatus {
-    Unchanged,
-    Old(bool), // "unimportant" boolean
-    New(bool), // "unimportant" boolean
-}
-impl HunkLineStatus {
-    fn covers_old(self) -> bool {
-        match self {
-        HunkLineStatus::Unchanged | HunkLineStatus::Old(_) => true,
-        HunkLineStatus::New(_) => false,
-        }
-    }
-
-    fn covers_new(self) -> bool {
-        match self {
-        HunkLineStatus::Unchanged | HunkLineStatus::New(_) => true,
-        HunkLineStatus::Old(_) => false,
-        }
-    }
-
-    fn counts<I>(iter: I) -> (u32, u32)
-        where I: Iterator<Item = HunkLineStatus>
-    {
-        let mut old_count = 0;
-        let mut new_count = 0;
-        for status in iter {
-            if status.covers_old() {
-                old_count += 1;
-            }
-            if status.covers_new() {
-                new_count += 1;
-            }
-        }
-        (old_count, new_count)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct HunkLine {
-    status: HunkLineStatus,
-    contents: DiffRef,
-    no_newline: bool,
-}
-impl HunkLine {
-    fn from_range(status: HunkLineStatus, lines: &[DiffRef])
-        -> impl IntoIterator<Item = HunkLine> + '_
-    {
-        lines.iter().map(move |&line| HunkLine {
-            status,
-            contents: line,
-            no_newline: false,
-        })
-    }
-}
-
 #[derive(Debug, Clone)]
 struct Hunk {
     old_begin: u32,
@@ -293,36 +447,27 @@ impl Hunk {
         HunkLineStatus::counts(self.lines.iter().map(|line| line.status))
     }
 
-    fn render(&self, buffer: &Buffer, prefix: &[u8], header: bool) -> Vec<u8> {
-        let mut out = Vec::new();
-
+    fn render(&self, header: bool, writer: &mut dyn ChunkWriter) {
         if header {
             // TODO: Correct hunk header when one of old/new is an empty file
             let (old_count, new_count) = self.counts();
-            out.extend(prefix);
-            out.extend(format!("@@ -{},{} +{},{} @@\n",
-                self.old_begin, old_count, self.new_begin, new_count).as_bytes());
+            writer.push(Chunk {
+                context: Context::Unknown,
+                contents: DiffChunkContents::HunkHeader {
+                    old_begin: self.old_begin,
+                    old_count,
+                    new_begin: self.new_begin,
+                    new_count,
+                },
+            });
         }
 
         for line in &self.lines {
-            out.extend(prefix);
-            out.push(
-                match line.status {
-                HunkLineStatus::Unchanged => b' ',
-                HunkLineStatus::Old(false) => b'-',
-                HunkLineStatus::New(false) => b'+',
-                HunkLineStatus::Old(true) => b'<',
-                HunkLineStatus::New(true) => b'>',
-                });
-            out.extend(&buffer[line.contents]);
-            if line.no_newline {
-                out.extend(b"\n\\ No newline at end of file\n");
-            } else {
-                out.push(b'\n');
-            }
+            writer.push(Chunk {
+                context: Context::Unknown,
+                contents: DiffChunkContents::Line { line: line.clone() },
+            });
         }
-
-        out
     }
 }
 
@@ -523,42 +668,37 @@ impl<'a> Iterator for Hunkify<'a> {
 }
 
 impl DiffFile {
-    pub fn render_header(&self, buffer: &Buffer, prefix: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
-        out.extend(prefix);
-        out.extend(b"--- ");
-        out.extend(&buffer[self.old_path]);
-        out.push(b'\n');
-        out.extend(prefix);
-        out.extend(b"+++ ");
-        out.extend(&buffer[self.new_path]);
-        out.push(b'\n');
-        out
+    pub fn render_header(&self, writer: &mut dyn ChunkWriter) {
+        writer.push(Chunk {
+            context: Context::Unknown,
+            contents: DiffChunkContents::FileHeader {
+                old_path: self.old_path,
+                old_name: self.old_name.clone(),
+                new_path: self.new_path,
+                new_name: self.new_name.clone(),
+            },
+        });
     }
 
-    pub fn render(&self, buffer: &Buffer, prefix: &[u8], num_context_lines: usize) -> Vec<u8> {
-        let mut out = Vec::new();
+    pub fn render(&self, num_context_lines: usize, writer: &mut dyn ChunkWriter) {
         let mut printed_header = false;
         for hunk in self.hunks(Some(num_context_lines)) {
             if !printed_header {
-                out.extend(self.render_header(buffer, prefix));
+                self.render_header(writer);
                 printed_header = true;
             }
-            out.extend(hunk.render(buffer, prefix, true));
+            hunk.render(true, writer);
         }
-        out
     }
 
-    pub fn render_full_body(&self, buffer: &Buffer, prefix: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
+    pub fn render_full_body(&self, writer: &mut dyn ChunkWriter) {
         let mut hunks = self.hunks(None).peekable();
         let mut is_first = true;
         while let Some(hunk) = hunks.next() {
             let header = !is_first || hunks.peek().is_some();
-            out.extend(hunk.render(buffer, prefix, header));
+            hunk.render(header, writer);
             is_first = false;
         }
-        out
     }
 
     /// Iterate over hunks of the diff appropriate for rendering.
@@ -1025,14 +1165,10 @@ impl Diff {
         })
     }
 
-    pub fn render<'a>(&'a self, buffer: &Buffer) -> Vec<u8> {
-        let mut out = Vec::new();
-
+    pub fn render(&self, writer: &mut dyn ChunkWriter) {
         for file in &self.files {
-            out.extend(file.render(buffer, b"", self.options.num_context_lines));
+            file.render(self.options.num_context_lines, writer);
         }
-
-        out
     }
 
     pub fn display_lossy<'a>(&'a self, buffer: &'a Buffer) -> LossyDiffDisplay<'a> {
@@ -1057,7 +1193,9 @@ pub struct LossyDiffDisplay<'a> {
 }
 impl<'a> std::fmt::Display for LossyDiffDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", String::from_utf8_lossy(&self.diff.render(self.buffer)))
+        let mut writer = ChunkByteBufferWriter::new();
+        self.diff.render(&mut writer.with_buffer(self.buffer));
+        write!(f, "{}", String::from_utf8_lossy(&writer.out))
     }
 }
 
@@ -1465,15 +1603,13 @@ pub fn reduce_modulo_base<'a>(mut target: Diff, target_is_base: bool,
     Ok(target)
 }
 
-pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new: &Diff) -> Result<Vec<u8>> {
+pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new: &Diff, writer: &mut dyn ChunkWriter) -> Result<()> {
     let base = compose(base_old, &target)?;
     let base = compose(&base, &reverse(base_new))?;
     let base = reduce_modulo_base(base, true, base_old, base_new)?;
     let base = reduce_changed_diff(buffer, base, DiffAlgorithm::default());
 
     let target = reduce_modulo_base(target, false, base_old, base_new)?;
-
-    let mut out = Vec::new();
 
     let base_old_index = DiffIndex::create(base_old);
     let base_new_index = DiffIndex::create(base_new);
@@ -1492,10 +1628,11 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
         if let Some(target_file) = target_file {
             let mut need_base_header = false;
             let mut need_target_header = false;
-            let mut hunks: Vec<u8> = Vec::new();
 
             let mut base_hunks = base_file.hunks(Some(num_context_lines)).peekable();
             let mut target_hunks = target_file.hunks(Some(num_context_lines)).peekable();
+
+            let mut hunks: Vec<(Context, Hunk)> = Vec::new();
 
             loop {
                 let base_hunk = base_hunks.peek();
@@ -1520,25 +1657,26 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
                 }
 
                 if render_base {
-                    hunks.extend(base_hunk.unwrap().render(buffer, b"#", true));
+                    hunks.push((Context::Baseline, base_hunks.next().unwrap()));
                     need_base_header = true;
-                    base_hunks.next();
                 } else {
-                    hunks.extend(target_hunk.unwrap().render(buffer, b" ", true));
+                    hunks.push((Context::Change, target_hunks.next().unwrap()));
                     need_target_header = true;
-                    target_hunks.next();
                 }
             }
 
             if need_base_header {
-                out.extend(base_file.render_header(buffer, b"#"));
+                base_file.render_header(&mut writer.with_context(Context::Baseline));
             }
             if need_target_header {
-                out.extend(target_file.render_header(buffer, b" "));
+                target_file.render_header(&mut writer.with_context(Context::Change));
             }
-            out.extend(hunks);
+
+            for (context, hunk) in hunks {
+                hunk.render(true, &mut writer.with_context(context));
+            }
         } else {
-            out.extend(base_file.render(buffer, b"#", num_context_lines));
+            base_file.render(num_context_lines, &mut writer.with_context(Context::Baseline));
         }
     }
 
@@ -1550,11 +1688,11 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
                     base_new_index.find_new_file(&target_file.new_name)
                         .and_then(|base_new_file| base_index.find_new_file(&base_new_file.old_name)));
         if base_file.is_none() {
-            out.extend(target_file.render(buffer, b" ", num_context_lines));
+            target_file.render(num_context_lines, &mut writer.with_context(Context::Change));
         }
     }
 
-    Ok(out)
+    Ok(())
 }
 
 pub fn diff_file(buffer: &Buffer, old_path: DiffRef, new_path: DiffRef, old_body: DiffRef, new_body: DiffRef,

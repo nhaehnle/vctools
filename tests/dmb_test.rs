@@ -2,6 +2,7 @@
 
 use diff_modulo_base::*;
 use utils::Result;
+use diff::ChunkFreeWriterExt;
 
 #[test]
 fn dmb_test() -> Result<()> {
@@ -24,9 +25,10 @@ fn dmb_test() -> Result<()> {
         let target_diff = utils::read_diff(&mut buffer, path.join("target.diff"))?;
         let expected = utils::read_bytes(path.join("expected.diff"))?;
 
-        let result = diff::diff_modulo_base(&buffer, target_diff, &old_base_diff, &new_base_diff)?;
+        let mut writer = diff::ChunkByteBufferWriter::new();
+        diff::diff_modulo_base(&buffer, target_diff, &old_base_diff, &new_base_diff, &mut writer.with_buffer(&buffer))?;
 
-        assert_eq!(expected, result);
+        assert_eq!(expected, writer.out);
     }
 
     Ok(())

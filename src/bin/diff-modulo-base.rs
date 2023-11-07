@@ -4,6 +4,7 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use utils::Result;
+use diff::ChunkFreeWriterExt;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -23,8 +24,9 @@ fn do_main() -> Result<()> {
     // println!("{:?}", &target_diff);
 
     // let result_diff = reduce_modulo_base(target_diff, &old_base_diff, &base_new_diff)?;
-    let result = diff::diff_modulo_base(&buffer, target_diff, &base_old_diff, &base_new_diff)?;
-    print!("{}", String::from_utf8_lossy(&result));
+    let mut writer = diff::ChunkByteBufferWriter::new();
+    diff::diff_modulo_base(&buffer, target_diff, &base_old_diff, &base_new_diff, &mut writer.with_buffer(&buffer))?;
+    print!("{}", String::from_utf8_lossy(&writer.out));
 
     Ok(())
 }

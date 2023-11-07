@@ -3,11 +3,12 @@
 use std::collections::HashSet;
 
 use crate::*;
+use diff::{ChunkFreeWriterExt, ChunkWriterExt};
 use git_core::{Range, Ref};
 use utils::Result;
 
-fn diff_ranges_full_impl(repo: &git_core::Repository, old: Option<Range<&Ref>>, new: Option<Range<&Ref>>)
-        -> Result<Vec<u8>> {
+fn diff_ranges_full_impl(repo: &git_core::Repository, old: Option<Range<&Ref>>, new: Option<Range<&Ref>>, writer: &mut dyn diff::ChunkFreeWriter)
+        -> Result<()> {
     let mut buffer = diff::Buffer::new();
 
     fn get_diff(buffer: &mut diff::Buffer, repo: &git_core::Repository, range: &Option<Range<&Ref>>)
@@ -43,32 +44,34 @@ fn diff_ranges_full_impl(repo: &git_core::Repository, old: Option<Range<&Ref>>, 
         _ => panic!("at least one range needs to be provided"),
         };
 
-    diff::diff_modulo_base(&buffer, target_diff, &base_old_diff, &base_new_diff)
+    diff::diff_modulo_base(&buffer, target_diff, &base_old_diff, &base_new_diff, &mut writer.with_buffer(&buffer))?;
+
+    Ok(())
 }
 
 /// Produce a base-reduced diff between the two given ranges, one of which may
 /// be empty (i.e., no change).
-pub fn diff_optional_ranges_full<R>(repo: &git_core::Repository, old: Option<Range<R>>, new: Option<Range<R>>)
-        -> Result<Vec<u8>>
+pub fn diff_optional_ranges_full<R>(repo: &git_core::Repository, old: Option<Range<R>>, new: Option<Range<R>>, writer: &mut dyn diff::ChunkFreeWriter)
+        -> Result<()>
     where R: std::borrow::Borrow<Ref>
 {
     diff_ranges_full_impl(
         repo,
         old.as_ref().map(|range| range.start.borrow()..range.end.borrow()),
-        new.as_ref().map(|range| range.start.borrow()..range.end.borrow()))
+        new.as_ref().map(|range| range.start.borrow()..range.end.borrow()), writer)
 }
 
 /// Produce a base-reduced diff between the two given ranges.
-pub fn diff_ranges_full<R>(repo: &git_core::Repository, old: Range<R>, new: Range<R>)
-        -> Result<Vec<u8>>
+pub fn diff_ranges_full<R>(repo: &git_core::Repository, old: Range<R>, new: Range<R>, writer: &mut dyn diff::ChunkFreeWriter)
+        -> Result<()>
     where R: std::borrow::Borrow<Ref>
 {
     diff_ranges_full_impl(repo, Some(old.start.borrow()..old.end.borrow()),
-                          Some(new.start.borrow()..new.end.borrow()))
+                          Some(new.start.borrow()..new.end.borrow()), writer)
 }
 
-fn diff_optional_commits_impl(repo: &git_core::Repository, old: Option<&Ref>, new: Option<&Ref>)
-        -> Result<Vec<u8>> {
+fn diff_optional_commits_impl(repo: &git_core::Repository, old: Option<&Ref>, new: Option<&Ref>, writer: &mut dyn diff::ChunkFreeWriter)
+        -> Result<()> {
     fn get_meta(buffer: &mut diff::Buffer, repo: &git_core::Repository, commit: Option<&Ref>, name: &[u8])
         -> Result<(diff::DiffRef, diff::DiffRef)>
     {
@@ -100,31 +103,31 @@ fn diff_optional_commits_impl(repo: &git_core::Repository, old: Option<&Ref>, ne
                             strip_path_components: 1,
                             ..Default::default()
                         }, diff::DiffAlgorithm::default())?;
-    let mut out = meta_diff.render_full_body(&buffer, b"");
-    out.extend(diff_optional_ranges_full(
+
+    meta_diff.render_full_body(&mut writer.with_buffer(&buffer).with_context(diff::Context::CommitMessage));
+    diff_optional_ranges_full(
         repo,
         old.map(|commit| commit.first_parent()..commit.clone()),
-        new.map(|commit| commit.first_parent()..commit.clone()))?);
-    Ok(out)
+        new.map(|commit| commit.first_parent()..commit.clone()), writer)
 }
 
 /// Produce a base-reduced diff between the two given commits; this includes
 /// diffs between the commit messages. Either side can be None, which will
 /// produce a diff as if that side had an empty commit without metadata.
-pub fn diff_optional_commits<R>(repo: &git_core::Repository, old: Option<R>, new: Option<R>)
-        -> Result<Vec<u8>>
+pub fn diff_optional_commits<R>(repo: &git_core::Repository, old: Option<R>, new: Option<R>, writer: &mut dyn diff::ChunkFreeWriter)
+        -> Result<()>
     where R: std::borrow::Borrow<Ref>
 {
     diff_optional_commits_impl(
         repo,
         old.as_ref().map(|old| old.borrow()),
-        new.as_ref().map(|new| new.borrow()))
+        new.as_ref().map(|new| new.borrow()), writer)
 }
 
 /// Produce a base-reduced diff between the two given commits; this includes
 /// diffs between the commit messages.
-pub fn diff_commits(repo: &git_core::Repository, old: &Ref, new: &Ref)
-        -> Result<Vec<u8>> {
+pub fn diff_commits(repo: &git_core::Repository, old: &Ref, new: &Ref, writer: &mut dyn diff::ChunkFreeWriter)
+        -> Result<()> {
     let show_options = git_core::ShowOptions {
         show_patch: false,
         ..Default::default()
@@ -142,7 +145,8 @@ pub fn diff_commits(repo: &git_core::Repository, old: &Ref, new: &Ref)
                             strip_path_components: 1,
                             ..Default::default()
                         }, diff::DiffAlgorithm::default())?;
-    let mut out = meta_diff.render_full_body(&buffer, b"");
-    out.extend(diff_ranges_full(repo, &old.first_parent()..old, &new.first_parent()..new)?);
-    Ok(out)
+
+
+    meta_diff.render_full_body(&mut writer.with_buffer(&buffer).with_context(diff::Context::CommitMessage));
+    diff_ranges_full(repo, &old.first_parent()..old, &new.first_parent()..new, writer)
 }

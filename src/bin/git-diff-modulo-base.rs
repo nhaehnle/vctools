@@ -3,6 +3,7 @@
 use std::{ops::Range, fmt::Display};
 
 use clap::Parser;
+use termcolor::{Color, ColorSpec};
 
 use diff_modulo_base::*;
 use utils::Result;
@@ -21,6 +22,9 @@ struct Cli {
     /// Behave as if run from the given path.
     #[clap(short = 'C', default_value = ".")]
     path: std::path::PathBuf,
+
+    #[clap(flatten)]
+    cli: cli::Options,
 }
 impl Cli {
     fn custom_parse() -> Result<Self> {
@@ -66,6 +70,8 @@ fn parse_rev_or_range(name: &str) -> Result<RevSpec> {
 
 fn do_main() -> Result<()> {
     let args = Cli::custom_parse()?;
+    let mut cli = cli::Cli::new(args.cli);
+    let out = cli.stream();
 
     let repo = git_core::Repository::new(&args.path);
 
@@ -91,10 +97,12 @@ fn do_main() -> Result<()> {
         new = RevSpec::Range(new_base, new_ref);
     }
 
+    let mut writer = diff_color::Writer::new(out);
+
     match (old, new) {
     (old @ RevSpec::Range(_, _), new @ RevSpec::Range(_, _)) => {
         if args.combined {
-            print!("{}", String::from_utf8_lossy(&git::diff_ranges_full(&repo, old.to_range(), new.to_range())?));
+            git::diff_ranges_full(&repo, old.to_range(), new.to_range(), &mut writer)?;
         } else {
             let range_diff = repo.range_diff(old.to_range(), new.to_range())?;
 
@@ -138,21 +146,22 @@ fn do_main() -> Result<()> {
             for (rd_match, (old_idx, old_hash, change, new_idx, new_hash))
                 in range_diff.matches.iter().zip(match_lines.into_iter())
             {
-                println!("{}: {} {} {}: {} {}",
+                writer.out.set_color(ColorSpec::new().set_bg(Some(Color::Cyan)).set_fg(Some(Color::Black)))?;
+                writeln!(writer.out, "{}: {} {} {}: {} {}",
                     Column(len.0, old_idx), Column(len.1, old_hash), change,
                     Column(len.2, new_idx), Column(len.3, new_hash),
-                    String::from_utf8_lossy(&rd_match.title));
+                    String::from_utf8_lossy(&rd_match.title))?;
 
                 if rd_match.changed {
                     let old = rd_match.old.as_ref().map(|(_, commit)| commit);
                     let new = rd_match.new.as_ref().map(|(_, commit)| commit);
-                    print!("{}", String::from_utf8_lossy(&git::diff_optional_commits(&repo, old, new)?));
+                    git::diff_optional_commits(&repo, old, new, &mut writer)?;
                 }
             }
         }
     },
     (RevSpec::Commit(old), RevSpec::Commit(new)) => {
-        print!("{}", String::from_utf8_lossy(&git::diff_commits(&repo, &old, &new)?));
+        git::diff_commits(&repo, &old, &new, &mut writer)?;
     },
     _ => return Err("old and new must either both refer to commits or both to ranges".into()),
     };
