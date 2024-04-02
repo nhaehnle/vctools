@@ -39,6 +39,13 @@ enum Command {
         #[clap(value_enum, short, long, default_value_t = Default::default())]
         algorithm: DiffAlgorithm,
     },
+    GitDiffModuloBase {
+        #[clap(flatten)]
+        gdmb: tool::GitDiffModuloBaseOptions,
+
+        #[clap(long)]
+        mock_data: std::path::PathBuf,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -93,6 +100,14 @@ fn do_main() -> Result<()> {
             let mut diff = diff::Diff::new(options);
             diff.add_file(file);
             print!("{}", diff.display_lossy(&buffer));
+        }
+        Command::GitDiffModuloBase { gdmb, mock_data } => {
+            let mut out = termcolor::StandardStream::stdout(termcolor::ColorChoice::Never);
+
+            let mut repo = git_core::Repository::new(&std::path::PathBuf::from("."));
+            repo.mock_data_path = Some(mock_data);
+
+            tool::git_diff_modulo_base(gdmb, repo, &mut out)?;
         }
     }
 

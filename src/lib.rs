@@ -5,4 +5,5 @@ pub mod diff;
 pub mod diff_color;
 pub mod git;
 pub mod git_core;
+pub mod tool;
 pub mod utils;
