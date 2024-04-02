@@ -1,0 +1,26 @@
+diff --git a/lgc/patch/CombineCooperativeMatrix.cpp b/lgc/patch/CombineCooperativeMatrix.cpp
+index 63f1017b..79264edd 100644
+--- a/lgc/patch/CombineCooperativeMatrix.cpp
++++ b/lgc/patch/CombineCooperativeMatrix.cpp
+@@ -63,20 +63,21 @@ public:
+   CooperativeMatrixCombiner(Function &function) : m_function(function), b(function.getContext()) {}
+ 
+   bool run();
+ 
+ private:
+   Shape getShapeOfTranspose(CallInst *transpose);
+   void foldTo(Value *from, Value *to);
+   bool tryFold(CallInst *op);
+   bool tryFoldComponentContaining(Value *start);
+   Instruction *findFirstUser(Instruction *instruction);
++  Value *tryFoldTimesScalar(CallInst *timesScalarLo, CallInst *timesScalarHi, Value *packedMatrix);
+   bool tryFoldMuladd(SmallVector<CallInst *> muladds);
+ 
+   Function &m_function;
+   BuilderCommon b;
+   std::vector<Instruction *> m_eraseList;
+ };
+   
+ } // anonymous namespace
+ 
+ // =====================================================================================================================
