@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 use std::collections::HashSet;
-use std::vec::Vec;
 use std::str;
+use std::vec::Vec;
 
 use lazy_static::lazy_static;
 use regex::bytes::Regex;
@@ -10,7 +10,7 @@ use regex::bytes::Regex;
 use crate::utils::*;
 
 mod reduce_changed;
-pub use reduce_changed::{DiffAlgorithm, reduce_changed_diff, reduce_changed_file};
+pub use reduce_changed::{reduce_changed_diff, reduce_changed_file, DiffAlgorithm};
 
 /// A reference to a span of bytes in a [`Buffer`].
 #[derive(Clone, Copy, Debug)]
@@ -18,7 +18,6 @@ pub struct DiffRef {
     begin: u32,
     end: u32,
 }
-
 
 /// Owner of diff contents.
 #[derive(Debug)]
@@ -28,14 +27,12 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new() -> Self {
-        Buffer {
-            buf: Vec::new(),
-        }
+        Buffer { buf: Vec::new() }
     }
 
     pub fn insert(&mut self, data: &[u8]) -> Result<DiffRef> {
         if data.len() >= u32::MAX as usize - self.buf.len() {
-            return Err("Diffs larger than 4GB are not supported".into())
+            return Err("Diffs larger than 4GB are not supported".into());
         }
 
         let begin = self.buf.len();
@@ -67,7 +64,9 @@ pub enum FileName {
     Name(Vec<u8>),
 }
 impl Default for FileName {
-    fn default() -> Self { FileName::Missing }
+    fn default() -> Self {
+        FileName::Missing
+    }
 }
 impl FileName {
     fn extract(path: &[u8], strip_path_components: usize) -> Result<FileName> {
@@ -79,23 +78,31 @@ impl FileName {
             return Err("empty diff file path".into());
         }
 
-        try_forward(|| -> Result<_> {
-            let mut path = path;
-            if path[0] == b'/' {
-                path = &path[1..];
-            }
+        try_forward(
+            || -> Result<_> {
+                let mut path = path;
+                if path[0] == b'/' {
+                    path = &path[1..];
+                }
 
-            for _ in 0..strip_path_components {
-                path = match path.iter().enumerate()
-                            .find(|(_, &b)| b == b'/')
-                            .map(|(idx, _)| idx) {
-                    Some(idx) => &path[idx + 1..],
-                    None => { return Err("path does not have enough components".into()); }
+                for _ in 0..strip_path_components {
+                    path = match path
+                        .iter()
+                        .enumerate()
+                        .find(|(_, &b)| b == b'/')
+                        .map(|(idx, _)| idx)
+                    {
+                        Some(idx) => &path[idx + 1..],
+                        None => {
+                            return Err("path does not have enough components".into());
+                        }
                     };
-            }
+                }
 
-            Ok(Self::Name(path.into()))
-        }, || String::from_utf8_lossy(path))
+                Ok(Self::Name(path.into()))
+            },
+            || String::from_utf8_lossy(path),
+        )
     }
 }
 
@@ -108,38 +115,38 @@ pub enum HunkLineStatus {
 impl HunkLineStatus {
     pub fn symbol_byte(self) -> u8 {
         match self {
-        HunkLineStatus::Unchanged => b' ',
-        HunkLineStatus::Old(false) => b'-',
-        HunkLineStatus::New(false) => b'+',
-        HunkLineStatus::Old(true) => b'<',
-        HunkLineStatus::New(true) => b'>',
+            HunkLineStatus::Unchanged => b' ',
+            HunkLineStatus::Old(false) => b'-',
+            HunkLineStatus::New(false) => b'+',
+            HunkLineStatus::Old(true) => b'<',
+            HunkLineStatus::New(true) => b'>',
         }
     }
 
     pub fn covers_old(self) -> bool {
         match self {
-        HunkLineStatus::Unchanged | HunkLineStatus::Old(_) => true,
-        HunkLineStatus::New(_) => false,
+            HunkLineStatus::Unchanged | HunkLineStatus::Old(_) => true,
+            HunkLineStatus::New(_) => false,
         }
     }
 
     pub fn covers_new(self) -> bool {
         match self {
-        HunkLineStatus::Unchanged | HunkLineStatus::New(_) => true,
-        HunkLineStatus::Old(_) => false,
+            HunkLineStatus::Unchanged | HunkLineStatus::New(_) => true,
+            HunkLineStatus::Old(_) => false,
         }
     }
 
     pub fn important(self) -> bool {
         match self {
-        HunkLineStatus::Unchanged => false,
-        HunkLineStatus::Old(unimportant) | HunkLineStatus::New(unimportant)
-            => !unimportant,
+            HunkLineStatus::Unchanged => false,
+            HunkLineStatus::Old(unimportant) | HunkLineStatus::New(unimportant) => !unimportant,
         }
     }
 
     fn counts<I>(iter: I) -> (u32, u32)
-        where I: Iterator<Item = HunkLineStatus>
+    where
+        I: Iterator<Item = HunkLineStatus>,
     {
         let mut old_count = 0;
         let mut new_count = 0;
@@ -162,9 +169,10 @@ pub struct HunkLine {
     pub no_newline: bool,
 }
 impl HunkLine {
-    fn from_range(status: HunkLineStatus, lines: &[DiffRef])
-        -> impl IntoIterator<Item = HunkLine> + '_
-    {
+    fn from_range(
+        status: HunkLineStatus,
+        lines: &[DiffRef],
+    ) -> impl IntoIterator<Item = HunkLine> + '_ {
         lines.iter().map(move |&line| HunkLine {
             status,
             contents: line,
@@ -183,18 +191,30 @@ pub enum Context {
 impl Context {
     pub fn prefix_bytes(self) -> &'static [u8] {
         match self {
-        Context::Baseline => b"#",
-        Context::Change => b" ",
-        _ => &[],
+            Context::Baseline => b"#",
+            Context::Change => b" ",
+            _ => &[],
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum DiffChunkContents {
-    FileHeader { old_path: DiffRef, old_name: FileName, new_path: DiffRef, new_name: FileName },
-    HunkHeader { old_begin: u32, old_count: u32, new_begin: u32, new_count: u32 },
-    Line { line: HunkLine },
+    FileHeader {
+        old_path: DiffRef,
+        old_name: FileName,
+        new_path: DiffRef,
+        new_name: FileName,
+    },
+    HunkHeader {
+        old_begin: u32,
+        old_count: u32,
+        new_begin: u32,
+        new_count: u32,
+    },
+    Line {
+        line: HunkLine,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -207,31 +227,43 @@ impl Chunk {
         let prefix = self.context.prefix_bytes();
 
         match &self.contents {
-        DiffChunkContents::FileHeader { old_path, new_path, .. } => {
-            out.extend(prefix);
-            out.extend(b"--- ");
-            out.extend(buffer[*old_path].iter());
-            out.push(b'\n');
-            out.extend(prefix);
-            out.extend(b"+++ ");
-            out.extend(buffer[*new_path].iter());
-            out.push(b'\n');
-        },
-        DiffChunkContents::HunkHeader { old_begin, old_count, new_begin, new_count } => {
-            out.extend(prefix);
-            out.extend(format!("@@ -{},{} +{},{} @@\n",
-                old_begin, old_count, new_begin, new_count).as_bytes());
-        },
-        DiffChunkContents::Line { line } => {
-            out.extend(prefix);
-            out.push(line.status.symbol_byte());
-            out.extend(&buffer[line.contents]);
-            if line.no_newline {
-                out.extend(b"\n\\ No newline at end of file\n");
-            } else {
+            DiffChunkContents::FileHeader {
+                old_path, new_path, ..
+            } => {
+                out.extend(prefix);
+                out.extend(b"--- ");
+                out.extend(buffer[*old_path].iter());
+                out.push(b'\n');
+                out.extend(prefix);
+                out.extend(b"+++ ");
+                out.extend(buffer[*new_path].iter());
                 out.push(b'\n');
             }
-        },
+            DiffChunkContents::HunkHeader {
+                old_begin,
+                old_count,
+                new_begin,
+                new_count,
+            } => {
+                out.extend(prefix);
+                out.extend(
+                    format!(
+                        "@@ -{},{} +{},{} @@\n",
+                        old_begin, old_count, new_begin, new_count
+                    )
+                    .as_bytes(),
+                );
+            }
+            DiffChunkContents::Line { line } => {
+                out.extend(prefix);
+                out.push(line.status.symbol_byte());
+                out.extend(&buffer[line.contents]);
+                if line.no_newline {
+                    out.extend(b"\n\\ No newline at end of file\n");
+                } else {
+                    out.push(b'\n');
+                }
+            }
         }
     }
 }
@@ -285,10 +317,7 @@ impl<T: ChunkFreeWriter + ?Sized> ChunkFreeWriterExt for T {
                 self.this.push(self.buffer, chunk);
             }
         }
-        WithBuffer {
-            this: self,
-            buffer,
-        }
+        WithBuffer { this: self, buffer }
     }
 }
 
@@ -298,9 +327,7 @@ pub struct ChunkByteBufferWriter {
 }
 impl ChunkByteBufferWriter {
     pub fn new() -> Self {
-        Self {
-            out: Vec::new(),
-        }
+        Self { out: Vec::new() }
     }
 }
 impl ChunkFreeWriter for ChunkByteBufferWriter {
@@ -321,12 +348,17 @@ impl<'a> Iterator for LineIterator<'a> {
         if self.range.begin >= self.range.end {
             None
         } else {
-            let (line_end, next_begin) =
-                match self.buffer[self.range].iter().enumerate()
-                    .find(|(_, &b)| b == b'\n') {
-                Some((idx, _)) => (self.range.begin + idx as u32, self.range.begin + idx as u32 + 1),
+            let (line_end, next_begin) = match self.buffer[self.range]
+                .iter()
+                .enumerate()
+                .find(|(_, &b)| b == b'\n')
+            {
+                Some((idx, _)) => (
+                    self.range.begin + idx as u32,
+                    self.range.begin + idx as u32 + 1,
+                ),
                 None => (self.range.end, self.range.end),
-                };
+            };
 
             let result = DiffRef {
                 begin: self.range.begin,
@@ -347,14 +379,21 @@ impl std::ops::Index<DiffRef> for Buffer {
 }
 
 impl DiffRef {
-    pub fn is_empty(&self) -> bool { self.begin >= self.end }
+    pub fn is_empty(&self) -> bool {
+        self.begin >= self.end
+    }
 
     pub fn len(&self) -> usize {
-        if self.end > self.begin { (self.end - self.begin) as usize } else { 0 }
+        if self.end > self.begin {
+            (self.end - self.begin) as usize
+        } else {
+            0
+        }
     }
 
     pub fn slice<R>(&self, range: R) -> DiffRef
-        where R: std::ops::RangeBounds<usize>
+    where
+        R: std::ops::RangeBounds<usize>,
     {
         use std::ops::Bound::*;
 
@@ -362,12 +401,12 @@ impl DiffRef {
             Included(&x) => x,
             Excluded(&x) => x.checked_add(1).unwrap_or(self.len()),
             Unbounded => 0,
-            };
+        };
         let end = match range.end_bound() {
             Included(&x) => x.checked_add(1).unwrap_or(self.len()),
             Excluded(&x) => x,
             Unbounded => self.len(),
-            };
+        };
         DiffRef {
             begin: self.begin + std::cmp::min(begin, self.len()) as u32,
             end: self.begin + std::cmp::min(end, self.len()) as u32,
@@ -377,10 +416,7 @@ impl DiffRef {
 
 impl Default for DiffRef {
     fn default() -> Self {
-        DiffRef {
-            begin: 0,
-            end: 0,
-        }
+        DiffRef { begin: 0, end: 0 }
     }
 }
 
@@ -388,36 +424,44 @@ impl Default for DiffRef {
 enum BlockContents {
     UnchangedUnknown(u32),
     UnchangedKnown(Vec<DiffRef>),
-    Changed { old: Vec<DiffRef>, new: Vec<DiffRef>, unimportant: bool },
-    EndOfDiff { known_eof: bool, old_has_newline_at_eof: bool, new_has_newline_at_eof: bool },
+    Changed {
+        old: Vec<DiffRef>,
+        new: Vec<DiffRef>,
+        unimportant: bool,
+    },
+    EndOfDiff {
+        known_eof: bool,
+        old_has_newline_at_eof: bool,
+        new_has_newline_at_eof: bool,
+    },
 }
 impl BlockContents {
     #[allow(unused)]
     fn is_unchanged_unknown(&self) -> bool {
         match self {
-        BlockContents::UnchangedUnknown(_) => true,
-        _ => false,
+            BlockContents::UnchangedUnknown(_) => true,
+            _ => false,
         }
     }
 
     fn is_unchanged_known(&self) -> bool {
         match self {
-        BlockContents::UnchangedKnown(_) => true,
-        _ => false,
+            BlockContents::UnchangedKnown(_) => true,
+            _ => false,
         }
     }
 
     fn is_changed(&self) -> bool {
         match self {
-        BlockContents::Changed { .. } => true,
-        _ => false,
+            BlockContents::Changed { .. } => true,
+            _ => false,
         }
     }
 
     fn is_end_of_diff(&self) -> bool {
         match self {
-        BlockContents::EndOfDiff { .. } => true,
-        _ => false,
+            BlockContents::EndOfDiff { .. } => true,
+            _ => false,
         }
     }
 }
@@ -503,7 +547,11 @@ impl<'a> Hunkify<'a> {
         } else {
             assert!({
                 let (old_count, new_count) = self.hunk.counts();
-                (old, new) == (self.hunk.old_begin + old_count, self.hunk.new_begin + new_count)
+                (old, new)
+                    == (
+                        self.hunk.old_begin + old_count,
+                        self.hunk.new_begin + new_count,
+                    )
             });
         }
     }
@@ -514,7 +562,9 @@ impl<'a> Hunkify<'a> {
             return None;
         }
 
-        let Some(num_context_lines) = self.num_context_lines else { panic!() };
+        let Some(num_context_lines) = self.num_context_lines else {
+            panic!()
+        };
 
         let current_context = self.hunk.lines.len() - self.important_end;
         let mut result = None;
@@ -530,7 +580,9 @@ impl<'a> Hunkify<'a> {
             if lines.len() <= missing_context + num_context_lines {
                 self.hunk.lines.extend(HunkLine::from_range(status, lines));
             } else {
-                self.hunk.lines.extend(HunkLine::from_range(status, &lines[..missing_context]));
+                self.hunk
+                    .lines
+                    .extend(HunkLine::from_range(status, &lines[..missing_context]));
                 taken += missing_context;
 
                 result = self.flush_hunk();
@@ -545,7 +597,9 @@ impl<'a> Hunkify<'a> {
             self.hunk.old_begin += excess_old;
             self.hunk.new_begin += excess_new;
 
-            self.hunk.lines.extend(HunkLine::from_range(status, &lines[lines.len() - count..]));
+            self.hunk
+                .lines
+                .extend(HunkLine::from_range(status, &lines[lines.len() - count..]));
             taken += count;
 
             if status.covers_old() {
@@ -589,13 +643,15 @@ impl<'a> Hunkify<'a> {
     fn flush_hunk(&mut self) -> Option<Hunk> {
         if self.num_context_lines.is_some() && self.important_end == 0 {
             self.hunk.lines.clear();
-            return None
+            return None;
         }
 
         let (old_count, new_count) = self.hunk.counts();
 
         if let Some(num_context_lines) = self.num_context_lines {
-            self.hunk.lines.truncate(self.important_end + num_context_lines);
+            self.hunk
+                .lines
+                .truncate(self.important_end + num_context_lines);
         }
         self.important_end = 0;
 
@@ -619,45 +675,53 @@ impl<'a> Iterator for Hunkify<'a> {
             self.set_location(block.old_begin, block.new_begin);
 
             match &block.contents {
-            BlockContents::UnchangedKnown(lines) => {
-                if let Some(hunk) = self.add_unchanged(lines) {
-                    return Some(hunk)
+                BlockContents::UnchangedKnown(lines) => {
+                    if let Some(hunk) = self.add_unchanged(lines) {
+                        return Some(hunk);
+                    }
                 }
-            },
-            BlockContents::Changed { old, new, unimportant } => {
-                let hunk1 = self.add_old(old, *unimportant);
-                let hunk2 = self.add_new(new, *unimportant);
-                assert!(hunk1.is_none() || hunk2.is_none());
-                if let Some(hunk) = hunk1.or(hunk2) {
-                    return Some(hunk)
+                BlockContents::Changed {
+                    old,
+                    new,
+                    unimportant,
+                } => {
+                    let hunk1 = self.add_old(old, *unimportant);
+                    let hunk2 = self.add_new(new, *unimportant);
+                    assert!(hunk1.is_none() || hunk2.is_none());
+                    if let Some(hunk) = hunk1.or(hunk2) {
+                        return Some(hunk);
+                    }
                 }
-            },
-            _ => {
-                if let BlockContents::EndOfDiff { known_eof, old_has_newline_at_eof, new_has_newline_at_eof }
-                        = &block.contents {
-                    if *known_eof {
-                        let mut mark_no_newline_old = !*old_has_newline_at_eof;
-                        let mut mark_no_newline_new = !*new_has_newline_at_eof;
-                        for line in self.hunk.lines.iter_mut().rev() {
-                            if line.status.covers_old() && mark_no_newline_old {
-                                line.no_newline = true;
-                                mark_no_newline_old = false;
-                            }
-                            if line.status.covers_new() && mark_no_newline_new {
-                                line.no_newline = true;
-                                mark_no_newline_new = false;
-                            }
-                            if !mark_no_newline_old && !mark_no_newline_new {
-                                break
+                _ => {
+                    if let BlockContents::EndOfDiff {
+                        known_eof,
+                        old_has_newline_at_eof,
+                        new_has_newline_at_eof,
+                    } = &block.contents
+                    {
+                        if *known_eof {
+                            let mut mark_no_newline_old = !*old_has_newline_at_eof;
+                            let mut mark_no_newline_new = !*new_has_newline_at_eof;
+                            for line in self.hunk.lines.iter_mut().rev() {
+                                if line.status.covers_old() && mark_no_newline_old {
+                                    line.no_newline = true;
+                                    mark_no_newline_old = false;
+                                }
+                                if line.status.covers_new() && mark_no_newline_new {
+                                    line.no_newline = true;
+                                    mark_no_newline_new = false;
+                                }
+                                if !mark_no_newline_old && !mark_no_newline_new {
+                                    break;
+                                }
                             }
                         }
                     }
-                }
 
-                if let Some(hunk) = self.flush_hunk() {
-                    return Some(hunk)
+                    if let Some(hunk) = self.flush_hunk() {
+                        return Some(hunk);
+                    }
                 }
-            },
             }
         }
         assert!(self.hunk.lines.is_empty());
@@ -726,8 +790,9 @@ impl DiffFile {
         for block in std::mem::take(&mut self.blocks) {
             let mut prev = None;
             if let Some(pending) = pending.take() {
-                if (pending.contents.is_unchanged_known() && block.contents.is_unchanged_known()) ||
-                (pending.contents.is_changed() && block.contents.is_changed()) {
+                if (pending.contents.is_unchanged_known() && block.contents.is_unchanged_known())
+                    || (pending.contents.is_changed() && block.contents.is_changed())
+                {
                     prev = Some(pending);
                 } else {
                     self.blocks.push(pending);
@@ -735,28 +800,42 @@ impl DiffFile {
             }
 
             match &block.contents {
-            BlockContents::UnchangedKnown(lines) => {
-                if let Some(mut prev) = prev.take() {
-                    let BlockContents::UnchangedKnown(prev_lines) = &mut prev.contents else { panic!() };
-                    prev_lines.extend(lines);
-                    pending = Some(prev);
-                } else {
-                    pending = Some(block);
+                BlockContents::UnchangedKnown(lines) => {
+                    if let Some(mut prev) = prev.take() {
+                        let BlockContents::UnchangedKnown(prev_lines) = &mut prev.contents else {
+                            panic!()
+                        };
+                        prev_lines.extend(lines);
+                        pending = Some(prev);
+                    } else {
+                        pending = Some(block);
+                    }
                 }
-            },
-            BlockContents::Changed { old, new, unimportant } => {
-                if let Some(mut prev) = prev.take() {
-                    let BlockContents::Changed { old: prev_old, new: prev_new, unimportant: prev_unimportant }
-                        = &mut prev.contents else { panic!() };
-                    prev_old.extend(old);
-                    prev_new.extend(new);
-                    *prev_unimportant = *prev_unimportant && *unimportant;
-                    pending = Some(prev);
-                } else {
-                    pending = Some(block);
+                BlockContents::Changed {
+                    old,
+                    new,
+                    unimportant,
+                } => {
+                    if let Some(mut prev) = prev.take() {
+                        let BlockContents::Changed {
+                            old: prev_old,
+                            new: prev_new,
+                            unimportant: prev_unimportant,
+                        } = &mut prev.contents
+                        else {
+                            panic!()
+                        };
+                        prev_old.extend(old);
+                        prev_new.extend(new);
+                        *prev_unimportant = *prev_unimportant && *unimportant;
+                        pending = Some(prev);
+                    } else {
+                        pending = Some(block);
+                    }
                 }
-            },
-            _ => { self.blocks.push(block); },
+                _ => {
+                    self.blocks.push(block);
+                }
             }
 
             assert!(prev.is_none());
@@ -850,50 +929,68 @@ impl Diff {
                 })
             }
 
-            fn process_hunk_line(&mut self, buffer: &Buffer, lineref: DiffRef,
-                                 no_newline_at_eof: bool) -> Result<()> {
+            fn process_hunk_line(
+                &mut self,
+                buffer: &Buffer,
+                lineref: DiffRef,
+                no_newline_at_eof: bool,
+            ) -> Result<()> {
                 if lineref.len() < 1 {
-                    return Err("completely empty hunk line".into())
+                    return Err("completely empty hunk line".into());
                 }
 
                 let Some(file) = &mut self.file else { panic!() };
                 let Some(hunk) = &mut self.hunk else { panic!() };
 
                 let ch = buffer[lineref][0];
-                let (is_old, is_new) =
-                    match ch {
+                let (is_old, is_new) = match ch {
                     b' ' => (true, true),
                     b'-' => (true, false),
                     b'+' => (false, true),
-                    _ => { return Err("noise found inside hunk".into()) }
-                    };
+                    _ => return Err("noise found inside hunk".into()),
+                };
 
                 if is_old && is_new {
-                    let prev =
-                        if let Some(block @ Block { contents: BlockContents::UnchangedKnown(_), .. })
-                                = file.prev_block_mut() {
-                            block
-                        } else {
-                            file.blocks.insert(file.blocks.len() - 1, Block {
+                    let prev = if let Some(
+                        block @ Block {
+                            contents: BlockContents::UnchangedKnown(_),
+                            ..
+                        },
+                    ) = file.prev_block_mut()
+                    {
+                        block
+                    } else {
+                        file.blocks.insert(
+                            file.blocks.len() - 1,
+                            Block {
                                 old_begin: hunk.old_line,
                                 new_begin: hunk.new_line,
                                 contents: BlockContents::UnchangedKnown(Vec::new()),
-                            });
-                            let idx = file.blocks.len() - 2;
-                            &mut file.blocks[idx]
-                        };
-                    let BlockContents::UnchangedKnown(lines) = &mut prev.contents else { panic!() };
+                            },
+                        );
+                        let idx = file.blocks.len() - 2;
+                        &mut file.blocks[idx]
+                    };
+                    let BlockContents::UnchangedKnown(lines) = &mut prev.contents else {
+                        panic!()
+                    };
                     assert!(prev.old_begin + (lines.len() as u32) == hunk.old_line);
                     assert!(prev.new_begin + (lines.len() as u32) == hunk.new_line);
                     lines.push(lineref.slice(1..));
                 } else {
                     assert!(is_old || is_new);
-                    let prev =
-                        if let Some(block @ Block { contents: BlockContents::Changed { .. }, .. })
-                                = file.prev_block_mut() {
-                            block
-                        } else {
-                            file.blocks.insert(file.blocks.len() - 1, Block {
+                    let prev = if let Some(
+                        block @ Block {
+                            contents: BlockContents::Changed { .. },
+                            ..
+                        },
+                    ) = file.prev_block_mut()
+                    {
+                        block
+                    } else {
+                        file.blocks.insert(
+                            file.blocks.len() - 1,
+                            Block {
                                 old_begin: hunk.old_line,
                                 new_begin: hunk.new_line,
                                 contents: BlockContents::Changed {
@@ -901,11 +998,14 @@ impl Diff {
                                     new: Vec::new(),
                                     unimportant: false,
                                 },
-                            });
-                            let idx = file.blocks.len() - 2;
-                            &mut file.blocks[idx]
-                        };
-                    let BlockContents::Changed { old, new, .. } = &mut prev.contents else { panic!() };
+                            },
+                        );
+                        let idx = file.blocks.len() - 2;
+                        &mut file.blocks[idx]
+                    };
+                    let BlockContents::Changed { old, new, .. } = &mut prev.contents else {
+                        panic!()
+                    };
                     assert!(prev.old_begin + (old.len() as u32) == hunk.old_line);
                     assert!(prev.new_begin + (new.len() as u32) == hunk.new_line);
                     if is_old {
@@ -923,16 +1023,22 @@ impl Diff {
                     hunk.old_line += 1;
                     last.old_begin += 1;
                     if hunk.old_remaining == 0 {
-                        return Err("too many old lines in hunk".into())
+                        return Err("too many old lines in hunk".into());
                     }
                     hunk.old_remaining -= 1;
 
                     if no_newline_at_eof {
                         if hunk.old_remaining != 0 {
-                            return Err("missing newline at EOF marker not at end of hunk".into())
+                            return Err("missing newline at EOF marker not at end of hunk".into());
                         }
-                        let BlockContents::EndOfDiff { known_eof, old_has_newline_at_eof, .. }
-                            = &mut last.contents else { panic!() };
+                        let BlockContents::EndOfDiff {
+                            known_eof,
+                            old_has_newline_at_eof,
+                            ..
+                        } = &mut last.contents
+                        else {
+                            panic!()
+                        };
                         *old_has_newline_at_eof = false;
                         *known_eof = true;
                     }
@@ -941,16 +1047,22 @@ impl Diff {
                     hunk.new_line += 1;
                     last.new_begin += 1;
                     if hunk.new_remaining == 0 {
-                        return Err("too many new lines in hunk".into())
+                        return Err("too many new lines in hunk".into());
                     }
                     hunk.new_remaining -= 1;
 
                     if no_newline_at_eof {
                         if hunk.new_remaining != 0 {
-                            return Err("missing newline at EOF marker not at end of hunk".into())
+                            return Err("missing newline at EOF marker not at end of hunk".into());
                         }
-                        let BlockContents::EndOfDiff { known_eof, new_has_newline_at_eof, .. }
-                            = &mut last.contents else { panic!() };
+                        let BlockContents::EndOfDiff {
+                            known_eof,
+                            new_has_newline_at_eof,
+                            ..
+                        } = &mut last.contents
+                        else {
+                            panic!()
+                        };
                         *new_has_newline_at_eof = false;
                         *known_eof = true;
                     }
@@ -974,155 +1086,171 @@ impl Diff {
 
         let guard = [DiffRef::default()].into_iter();
         for (lineidx, lineref) in buffer.lines(range).chain(guard).enumerate() {
-            try_forward(|| -> Result<()> {
-                let line = &buffer[lineref];
+            try_forward(
+                || -> Result<()> {
+                    let line = &buffer[lineref];
 
-                if let Some(hunk_line) = parser.hunk_line.take() {
-                    let no_newline = line == b"\\ No newline at end of file";
+                    if let Some(hunk_line) = parser.hunk_line.take() {
+                        let no_newline = line == b"\\ No newline at end of file";
 
-                    parser.process_hunk_line(&buffer, hunk_line, no_newline)?;
-                    if no_newline {
-                        return Ok(())
+                        parser.process_hunk_line(&buffer, hunk_line, no_newline)?;
+                        if no_newline {
+                            return Ok(());
+                        }
                     }
-                }
 
-                if parser.hunk.is_some() {
-                    parser.hunk_line = Some(lineref);
-                    return Ok(())
-                }
-
-                if line.starts_with(b"@@ ") {
-                    let Some(file) = &mut parser.file else {
-                        return Err("hunk without open file".into());
-                    };
-
-                    lazy_static! {
-                        static ref RE: Regex = Regex::new(
-                            r"(?-u)-(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@"
-                        ).unwrap();
+                    if parser.hunk.is_some() {
+                        parser.hunk_line = Some(lineref);
+                        return Ok(());
                     }
-                    let captures =
-                        RE.captures(&line[3..])
+
+                    if line.starts_with(b"@@ ") {
+                        let Some(file) = &mut parser.file else {
+                            return Err("hunk without open file".into());
+                        };
+
+                        lazy_static! {
+                            static ref RE: Regex =
+                                Regex::new(r"(?-u)-(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+                                    .unwrap();
+                        }
+                        let captures = RE
+                            .captures(&line[3..])
                             .ok_or_else(|| err_from_str("bad @@ line"))?;
 
-                    fn get_u32(captures: &regex::bytes::Captures, idx: usize,
-                               descr: &'static str) -> Result<Option<u32>> {
-                        try_forward(|| -> Result<Option<u32>> {
-                            Ok(
-                                match captures.get(idx) {
-                                Some(capture) =>
-                                    Some(str::from_utf8(capture.as_bytes())?
-                                        .parse::<u32>()?),
-                                None => None,
-                                }
+                        fn get_u32(
+                            captures: &regex::bytes::Captures,
+                            idx: usize,
+                            descr: &'static str,
+                        ) -> Result<Option<u32>> {
+                            try_forward(
+                                || -> Result<Option<u32>> {
+                                    Ok(match captures.get(idx) {
+                                        Some(capture) => Some(
+                                            str::from_utf8(capture.as_bytes())?.parse::<u32>()?,
+                                        ),
+                                        None => None,
+                                    })
+                                },
+                                || descr,
                             )
-                        }, || descr)
-                    }
-
-                    let mut old_start = get_u32(&captures, 1, "old start")?.unwrap();
-                    let old_count = get_u32(&captures, 2, "old count")?.unwrap_or(1);
-                    let mut new_start = get_u32(&captures, 3, "new start")?.unwrap();
-                    let new_count = get_u32(&captures, 4, "new count")?.unwrap_or(1);
-
-                    let back_block = file.blocks.last_mut().unwrap();
-
-                    let BlockContents::EndOfDiff { known_eof, .. } = &mut back_block.contents else { panic!() };
-                    if *known_eof {
-                        return Err("hunk after definitive indication that EOF was reached".into());
-                    }
-
-                    if old_start == 0 {
-                        if old_count != 0 {
-                            return Err("surprising old line reference".into())
                         }
-                        old_start = 1;
-                        *known_eof = true;
-                    }
-                    if new_start == 0 {
-                        if new_count != 0 {
-                            return Err("surprising new line reference".into())
-                        }
-                        new_start = 1;
-                        *known_eof = true;
-                    }
 
-                    if old_start < back_block.old_begin || new_start < back_block.new_begin {
-                        return Err("hunks seem to be out of order or otherwise inconsistent?".into())
-                    }
+                        let mut old_start = get_u32(&captures, 1, "old start")?.unwrap();
+                        let old_count = get_u32(&captures, 2, "old count")?.unwrap_or(1);
+                        let mut new_start = get_u32(&captures, 3, "new start")?.unwrap();
+                        let new_count = get_u32(&captures, 4, "new count")?.unwrap_or(1);
 
-                    if old_start != back_block.old_begin || new_start != back_block.new_begin {
-                        let count = old_start - back_block.old_begin;
-                        if count != new_start - back_block.new_begin {
-                            return Err("number of lines changed between hunks".into())
-                        }
-                        let filler = Block {
-                            contents: BlockContents::UnchangedUnknown(count),
-                            ..*back_block
+                        let back_block = file.blocks.last_mut().unwrap();
+
+                        let BlockContents::EndOfDiff { known_eof, .. } = &mut back_block.contents
+                        else {
+                            panic!()
                         };
-                        back_block.old_begin = old_start;
-                        back_block.new_begin = new_start;
-                        file.blocks.insert(file.blocks.len() - 1, filler);
-                    }
+                        if *known_eof {
+                            return Err(
+                                "hunk after definitive indication that EOF was reached".into()
+                            );
+                        }
 
-                    parser.hunk = Some(CurrentHunk {
-                        old_line: old_start,
-                        old_remaining: old_count,
-                        new_line: new_start,
-                        new_remaining: new_count,
-                    });
+                        if old_start == 0 {
+                            if old_count != 0 {
+                                return Err("surprising old line reference".into());
+                            }
+                            old_start = 1;
+                            *known_eof = true;
+                        }
+                        if new_start == 0 {
+                            if new_count != 0 {
+                                return Err("surprising new line reference".into());
+                            }
+                            new_start = 1;
+                            *known_eof = true;
+                        }
 
-                    return Ok(())
-                }
+                        if old_start < back_block.old_begin || new_start < back_block.new_begin {
+                            return Err(
+                                "hunks seem to be out of order or otherwise inconsistent?".into()
+                            );
+                        }
 
-                if let Some(file) = parser.file.take() {
-                    if file.new_path.is_some() {
-                        parser.diff_files.push(DiffFile {
-                            old_path: file.old_path.unwrap(),
-                            old_name: file.old_name.unwrap(),
-                            new_path: file.new_path.unwrap(),
-                            new_name: file.new_name.unwrap(),
-                            blocks: file.blocks,
+                        if old_start != back_block.old_begin || new_start != back_block.new_begin {
+                            let count = old_start - back_block.old_begin;
+                            if count != new_start - back_block.new_begin {
+                                return Err("number of lines changed between hunks".into());
+                            }
+                            let filler = Block {
+                                contents: BlockContents::UnchangedUnknown(count),
+                                ..*back_block
+                            };
+                            back_block.old_begin = old_start;
+                            back_block.new_begin = new_start;
+                            file.blocks.insert(file.blocks.len() - 1, filler);
+                        }
+
+                        parser.hunk = Some(CurrentHunk {
+                            old_line: old_start,
+                            old_remaining: old_count,
+                            new_line: new_start,
+                            new_remaining: new_count,
                         });
-                    } else {
-                        parser.file = Some(file);
-                    }
-                }
 
-                if line.starts_with(b"--- ") {
-                    let file = parser.ensure_file();
-                    if file.old_path.is_some() {
-                        return Err("multiple '---' lines found".into())
+                        return Ok(());
                     }
 
-                    file.old_path = Some(lineref.slice(4..));
-                    file.old_name =
-                        Some(FileName::extract(&line[4..], diff_options.strip_path_components)?);
-                    return Ok(())
-                }
-                if line.starts_with(b"+++ ") {
-                    let file = parser.ensure_file();
-                    if file.old_path.is_none() {
-                        return Err(
-                            "found '+++' line without preceding '---' line"
-                                .into());
-                    }
-                    if file.new_path.is_some() {
-                        return Err("multiple '+++' lines found".into())
+                    if let Some(file) = parser.file.take() {
+                        if file.new_path.is_some() {
+                            parser.diff_files.push(DiffFile {
+                                old_path: file.old_path.unwrap(),
+                                old_name: file.old_name.unwrap(),
+                                new_path: file.new_path.unwrap(),
+                                new_name: file.new_name.unwrap(),
+                                blocks: file.blocks,
+                            });
+                        } else {
+                            parser.file = Some(file);
+                        }
                     }
 
-                    file.new_path = Some(lineref.slice(4..));
-                    file.new_name =
-                        Some(FileName::extract(&line[4..], diff_options.strip_path_components)?);
-                    return Ok(())
-                }
+                    if line.starts_with(b"--- ") {
+                        let file = parser.ensure_file();
+                        if file.old_path.is_some() {
+                            return Err("multiple '---' lines found".into());
+                        }
 
-                if parser.file.is_some() {
-                    return Err("unrecognized noise in file".into());
-                }
+                        file.old_path = Some(lineref.slice(4..));
+                        file.old_name = Some(FileName::extract(
+                            &line[4..],
+                            diff_options.strip_path_components,
+                        )?);
+                        return Ok(());
+                    }
+                    if line.starts_with(b"+++ ") {
+                        let file = parser.ensure_file();
+                        if file.old_path.is_none() {
+                            return Err("found '+++' line without preceding '---' line".into());
+                        }
+                        if file.new_path.is_some() {
+                            return Err("multiple '+++' lines found".into());
+                        }
 
-                // Just skip noise outside of a file region.
-                Ok(())
-            }, move || { format!("line {}", lineidx + 1) })?;
+                        file.new_path = Some(lineref.slice(4..));
+                        file.new_name = Some(FileName::extract(
+                            &line[4..],
+                            diff_options.strip_path_components,
+                        )?);
+                        return Ok(());
+                    }
+
+                    if parser.file.is_some() {
+                        return Err("unrecognized noise in file".into());
+                    }
+
+                    // Just skip noise outside of a file region.
+                    Ok(())
+                },
+                move || format!("line {}", lineidx + 1),
+            )?;
         }
 
         if parser.hunk_line.is_some() {
@@ -1146,7 +1274,7 @@ impl Diff {
                                 std::cmp::max(lines.len(), diff_options.num_context_lines);
                         }
                         Predecessor::Context(lines.len() as usize)
-                    },
+                    }
                     BlockContents::Changed { .. } => Predecessor::Context(0),
                     _ => {
                         if let Predecessor::Context(lines) = pred {
@@ -1155,7 +1283,7 @@ impl Diff {
                         }
                         Predecessor::Boundary
                     }
-                    };
+                };
             }
         }
 
@@ -1172,10 +1300,7 @@ impl Diff {
     }
 
     pub fn display_lossy<'a>(&'a self, buffer: &'a Buffer) -> LossyDiffDisplay<'a> {
-        LossyDiffDisplay {
-            diff: self,
-            buffer,
-        }
+        LossyDiffDisplay { diff: self, buffer }
     }
 
     /// Simplify the diff by merging adjacent blocks that are trivially mergable.
@@ -1209,9 +1334,7 @@ pub struct DiffIndex<'a> {
 
 impl<'a> DiffIndex<'a> {
     pub fn create(diff: &'a Diff) -> Self {
-        Self {
-            diff,
-        }
+        Self { diff }
     }
 
     pub fn find_old_file<'b, 'c>(&'b self, name: &'c FileName) -> Option<&'b DiffFile> {
@@ -1232,7 +1355,11 @@ impl<'a> DiffIndex<'a> {
 
     pub fn is_range_changed(&self, file: &DiffFile, old: bool, begin: u32, end: u32) -> bool {
         let idx = file.blocks.partition_point(|block| {
-            let block_begin = if old { block.old_begin } else { block.new_begin };
+            let block_begin = if old {
+                block.old_begin
+            } else {
+                block.new_begin
+            };
             block_begin <= end
         });
 
@@ -1240,7 +1367,11 @@ impl<'a> DiffIndex<'a> {
             if let BlockContents::Changed { .. } = &block.contents {
                 return true;
             }
-            let block_begin = if old { block.old_begin } else { block.new_begin };
+            let block_begin = if old {
+                block.old_begin
+            } else {
+                block.new_begin
+            };
             if block_begin < begin {
                 return false;
             }
@@ -1264,8 +1395,10 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
         files: Vec::new(),
         options: DiffOptions {
             strip_path_components: first.options.strip_path_components,
-            num_context_lines: std::cmp::max(first.options.num_context_lines,
-                                             second.options.num_context_lines),
+            num_context_lines: std::cmp::max(
+                first.options.num_context_lines,
+                second.options.num_context_lines,
+            ),
         },
     };
 
@@ -1295,15 +1428,15 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
             impl<'a> SplitContents<'a> {
                 fn len(&self) -> u32 {
                     match self {
-                    SplitContents::Unknown(len) => *len,
-                    SplitContents::Known(lines) => lines.len() as u32,
+                        SplitContents::Unknown(len) => *len,
+                        SplitContents::Known(lines) => lines.len() as u32,
                     }
                 }
 
                 fn lines(&self) -> &'a [DiffRef] {
                     match self {
-                    SplitContents::Known(lines) => lines,
-                    SplitContents::Unknown(_) => panic!(),
+                        SplitContents::Known(lines) => lines,
+                        SplitContents::Unknown(_) => panic!(),
                     }
                 }
             }
@@ -1324,14 +1457,24 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
 
                 fn from(block_contents: &'a BlockContents) -> Self {
                     match block_contents {
-                    BlockContents::UnchangedUnknown(len) => Self::new_unchanged(SplitContents::Unknown(*len)),
-                    BlockContents::UnchangedKnown(lines) => Self::new_unchanged(SplitContents::Known(&lines)),
-                    BlockContents::Changed { old, new, unimportant } => Self {
-                        change: Some(*unimportant),
-                        old: SplitContents::Known(&old),
-                        new: SplitContents::Known(&new),
-                    },
-                    BlockContents::EndOfDiff { .. } => Self::new_unchanged(SplitContents::Unknown(u32::MAX)),
+                        BlockContents::UnchangedUnknown(len) => {
+                            Self::new_unchanged(SplitContents::Unknown(*len))
+                        }
+                        BlockContents::UnchangedKnown(lines) => {
+                            Self::new_unchanged(SplitContents::Known(&lines))
+                        }
+                        BlockContents::Changed {
+                            old,
+                            new,
+                            unimportant,
+                        } => Self {
+                            change: Some(*unimportant),
+                            old: SplitContents::Known(&old),
+                            new: SplitContents::Known(&new),
+                        },
+                        BlockContents::EndOfDiff { .. } => {
+                            Self::new_unchanged(SplitContents::Unknown(u32::MAX))
+                        }
                     }
                 }
             }
@@ -1343,35 +1486,37 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                 let first_mid_ofs = mid_line - first_block.new_begin;
                 let second_mid_ofs = mid_line - second_block.old_begin;
 
-                if let (BlockContents::EndOfDiff {
-                            known_eof: first_known_eof,
-                            old_has_newline_at_eof: first_old_has_newline_at_eof,
-                            new_has_newline_at_eof: first_new_has_newline_at_eof },
-                        BlockContents::EndOfDiff {
-                            known_eof: second_known_eof,
-                            old_has_newline_at_eof: second_old_has_newline_at_eof,
-                            new_has_newline_at_eof: second_new_has_newline_at_eof })
-                        = (&first_block.contents, &second_block.contents) {
+                if let (
+                    BlockContents::EndOfDiff {
+                        known_eof: first_known_eof,
+                        old_has_newline_at_eof: first_old_has_newline_at_eof,
+                        new_has_newline_at_eof: first_new_has_newline_at_eof,
+                    },
+                    BlockContents::EndOfDiff {
+                        known_eof: second_known_eof,
+                        old_has_newline_at_eof: second_old_has_newline_at_eof,
+                        new_has_newline_at_eof: second_new_has_newline_at_eof,
+                    },
+                ) = (&first_block.contents, &second_block.contents)
+                {
                     file.blocks.push(Block {
                         old_begin: first_block.old_begin + first_mid_ofs,
                         new_begin: second_block.new_begin + second_mid_ofs,
                         contents: BlockContents::EndOfDiff {
                             known_eof: *first_known_eof || *second_known_eof,
-                            old_has_newline_at_eof:
-                                if *first_known_eof {
-                                    *first_old_has_newline_at_eof
-                                } else {
-                                    *second_old_has_newline_at_eof
-                                },
-                            new_has_newline_at_eof:
-                                if *second_known_eof {
-                                    *second_new_has_newline_at_eof
-                                } else {
-                                    *first_new_has_newline_at_eof
-                                },
+                            old_has_newline_at_eof: if *first_known_eof {
+                                *first_old_has_newline_at_eof
+                            } else {
+                                *second_old_has_newline_at_eof
+                            },
+                            new_has_newline_at_eof: if *second_known_eof {
+                                *second_new_has_newline_at_eof
+                            } else {
+                                *first_new_has_newline_at_eof
+                            },
                         },
                     });
-                    break
+                    break;
                 }
 
                 assert!(!first_block.is_end_of_diff() || !second_block.is_end_of_diff());
@@ -1387,20 +1532,21 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                 let all_second = count == second_mid_remaining;
 
                 if first_split.change.is_none() && second_split.change.is_none() {
-                    let lines =
-                        if let SplitContents::Known(lines) = first_split.old {
-                            Some(&lines[first_mid_ofs as usize..])
-                        } else if let SplitContents::Known(lines) = second_split.new {
-                            Some(&lines[second_mid_ofs as usize..])
-                        } else {
-                            None
-                        };
+                    let lines = if let SplitContents::Known(lines) = first_split.old {
+                        Some(&lines[first_mid_ofs as usize..])
+                    } else if let SplitContents::Known(lines) = second_split.new {
+                        Some(&lines[second_mid_ofs as usize..])
+                    } else {
+                        None
+                    };
 
                     file.blocks.push(Block {
                         old_begin: first_block.old_begin + first_mid_ofs,
                         new_begin: second_block.new_begin + second_mid_ofs,
                         contents: match lines {
-                            Some(lines) => BlockContents::UnchangedKnown(lines[..count as usize].into()),
+                            Some(lines) => {
+                                BlockContents::UnchangedKnown(lines[..count as usize].into())
+                            }
                             None => BlockContents::UnchangedUnknown(count),
                         },
                     });
@@ -1415,8 +1561,8 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                             old = Vec::new();
                         }
                     } else {
-                        old = second_split.old
-                            .lines()[second_mid_ofs as usize..(second_mid_ofs + count) as usize]
+                        old = second_split.old.lines()
+                            [second_mid_ofs as usize..(second_mid_ofs + count) as usize]
                             .into();
                     }
 
@@ -1428,25 +1574,30 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                             new = Vec::new();
                         }
                     } else {
-                        new = first_split.new
-                            .lines()[first_mid_ofs as usize..(first_mid_ofs + count) as usize]
+                        new = first_split.new.lines()
+                            [first_mid_ofs as usize..(first_mid_ofs + count) as usize]
                             .into();
                     }
 
                     if !old.is_empty() || !new.is_empty() {
                         file.blocks.push(Block {
-                            old_begin:
-                                first_block.old_begin +
-                                if first_split.change.is_none() { first_mid_ofs } else { 0 },
-                            new_begin:
-                                second_block.new_begin +
-                                if second_split.change.is_none() { second_mid_ofs } else { 0 },
+                            old_begin: first_block.old_begin
+                                + if first_split.change.is_none() {
+                                    first_mid_ofs
+                                } else {
+                                    0
+                                },
+                            new_begin: second_block.new_begin
+                                + if second_split.change.is_none() {
+                                    second_mid_ofs
+                                } else {
+                                    0
+                                },
                             contents: BlockContents::Changed {
                                 old,
                                 new,
-                                unimportant:
-                                    first_split.change.unwrap_or(true) &&
-                                    second_split.change.unwrap_or(true),
+                                unimportant: first_split.change.unwrap_or(true)
+                                    && second_split.change.unwrap_or(true),
                             },
                         });
                     }
@@ -1462,7 +1613,7 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
             }
 
             result.files.push(file);
-            continue
+            continue;
         }
 
         // Find "recreated" files.
@@ -1474,15 +1625,37 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                     assert!(first_file.blocks.len() == 2);
                     assert!(second_file.blocks.len() == 2);
 
-                    let BlockContents::Changed { old, unimportant: first_unimportant, .. }
-                        = &first_file.blocks[0].contents else { panic!() };
-                    let BlockContents::Changed { new, unimportant: second_unimportant, .. }
-                        = &second_file.blocks[0].contents else { panic!() };
+                    let BlockContents::Changed {
+                        old,
+                        unimportant: first_unimportant,
+                        ..
+                    } = &first_file.blocks[0].contents
+                    else {
+                        panic!()
+                    };
+                    let BlockContents::Changed {
+                        new,
+                        unimportant: second_unimportant,
+                        ..
+                    } = &second_file.blocks[0].contents
+                    else {
+                        panic!()
+                    };
 
-                    let BlockContents::EndOfDiff { old_has_newline_at_eof, .. }
-                        = first_file.blocks[1].contents else { panic!() };
-                    let BlockContents::EndOfDiff { new_has_newline_at_eof, .. }
-                        = second_file.blocks[1].contents else { panic!() };
+                    let BlockContents::EndOfDiff {
+                        old_has_newline_at_eof,
+                        ..
+                    } = first_file.blocks[1].contents
+                    else {
+                        panic!()
+                    };
+                    let BlockContents::EndOfDiff {
+                        new_has_newline_at_eof,
+                        ..
+                    } = second_file.blocks[1].contents
+                    else {
+                        panic!()
+                    };
 
                     result.files.push(DiffFile {
                         old_path: first_file.old_path,
@@ -1507,11 +1680,12 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                                     old_has_newline_at_eof,
                                     new_has_newline_at_eof,
                                 },
-                            }
-                        ].into(),
+                            },
+                        ]
+                        .into(),
                     });
                     recreated.insert(second_file.new_name.clone());
-                    continue
+                    continue;
                 }
             }
         }
@@ -1520,11 +1694,13 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
     }
 
     for second_file in &second.files {
-        if second_file.old_name == FileName::Missing &&
-           recreated.contains(&second_file.new_name) {
-            continue
+        if second_file.old_name == FileName::Missing && recreated.contains(&second_file.new_name) {
+            continue;
         }
-        if first_diff_idx.find_new_file(&second_file.old_name).is_none() {
+        if first_diff_idx
+            .find_new_file(&second_file.old_name)
+            .is_none()
+        {
             result.files.push(second_file.clone());
         }
     }
@@ -1545,8 +1721,12 @@ pub fn reverse(diff: &Diff) -> Diff {
             std::mem::swap(&mut block.old_begin, &mut block.new_begin);
             if let BlockContents::Changed { old, new, .. } = &mut block.contents {
                 std::mem::swap(old, new);
-            } else if let BlockContents::EndOfDiff { old_has_newline_at_eof, new_has_newline_at_eof, .. }
-                    = &mut block.contents {
+            } else if let BlockContents::EndOfDiff {
+                old_has_newline_at_eof,
+                new_has_newline_at_eof,
+                ..
+            } = &mut block.contents
+            {
                 std::mem::swap(old_has_newline_at_eof, new_has_newline_at_eof);
             }
         }
@@ -1556,54 +1736,81 @@ pub fn reverse(diff: &Diff) -> Diff {
 }
 
 /// Reduce the `target` diff based on knowledge about the `old` and `new` diffs.
-pub fn reduce_modulo_base<'a>(mut target: Diff, target_is_base: bool,
-                              base_old: &'a Diff, base_new: &'a Diff) -> Result<Diff> {
+pub fn reduce_modulo_base<'a>(
+    mut target: Diff,
+    target_is_base: bool,
+    base_old: &'a Diff,
+    base_new: &'a Diff,
+) -> Result<Diff> {
     let old_index = DiffIndex::create(base_old);
     let new_index = DiffIndex::create(base_new);
 
-    target.files = target.files.into_iter().filter_map(|mut file| {
-        let old_ref;
-        let new_ref;
-        if target_is_base {
-            old_ref = old_index.find_old_file(&file.old_name);
-            new_ref = new_index.find_old_file(&file.new_name);
-        } else {
-            old_ref = old_index.find_new_file(&file.old_name);
-            new_ref = new_index.find_new_file(&file.new_name);
-        }
-
-        if old_ref.is_none() && new_ref.is_none() {
-            // The file is affected by neither the base..old nor the base..new
-            // diff. We should remove it entirely.
-            return None;
-        }
-
-        for block in &mut file.blocks {
-            if let BlockContents::Changed { old, new, unimportant } = &mut block.contents {
-                let mut important = false;
-                if let Some(old_ref) = old_ref {
-                    if old_index.is_range_changed(old_ref, target_is_base,
-                                                  block.old_begin, block.old_begin + (old.len() as u32)) {
-                        important = true;
-                    }
-                }
-                if let Some(new_ref) = new_ref {
-                    if new_index.is_range_changed(new_ref, target_is_base,
-                                                  block.new_begin, block.new_begin + (new.len() as u32)) {
-                        important = true;
-                    }
-                }
-                *unimportant = !important;
+    target.files = target
+        .files
+        .into_iter()
+        .filter_map(|mut file| {
+            let old_ref;
+            let new_ref;
+            if target_is_base {
+                old_ref = old_index.find_old_file(&file.old_name);
+                new_ref = new_index.find_old_file(&file.new_name);
+            } else {
+                old_ref = old_index.find_new_file(&file.old_name);
+                new_ref = new_index.find_new_file(&file.new_name);
             }
-        }
 
-        Some(file)
-    }).collect();
+            if old_ref.is_none() && new_ref.is_none() {
+                // The file is affected by neither the base..old nor the base..new
+                // diff. We should remove it entirely.
+                return None;
+            }
+
+            for block in &mut file.blocks {
+                if let BlockContents::Changed {
+                    old,
+                    new,
+                    unimportant,
+                } = &mut block.contents
+                {
+                    let mut important = false;
+                    if let Some(old_ref) = old_ref {
+                        if old_index.is_range_changed(
+                            old_ref,
+                            target_is_base,
+                            block.old_begin,
+                            block.old_begin + (old.len() as u32),
+                        ) {
+                            important = true;
+                        }
+                    }
+                    if let Some(new_ref) = new_ref {
+                        if new_index.is_range_changed(
+                            new_ref,
+                            target_is_base,
+                            block.new_begin,
+                            block.new_begin + (new.len() as u32),
+                        ) {
+                            important = true;
+                        }
+                    }
+                    *unimportant = !important;
+                }
+            }
+
+            Some(file)
+        })
+        .collect();
 
     Ok(target)
 }
 
-pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new: &Diff, writer: &mut dyn ChunkWriter) -> Result<()> {
+pub fn diff_modulo_base(
+    buffer: &Buffer,
+    target: Diff,
+    base_old: &Diff,
+    base_new: &Diff,
+    writer: &mut dyn ChunkWriter,
+) -> Result<()> {
     let base = compose(base_old, &target)?;
     let base = compose(&base, &reverse(base_new))?;
     let base = reduce_modulo_base(base, true, base_old, base_new)?;
@@ -1616,15 +1823,20 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
     let target_index = DiffIndex::create(&target);
     let base_index = DiffIndex::create(&base);
 
-    let num_context_lines = std::cmp::max(base.options.num_context_lines, target.options.num_context_lines);
+    let num_context_lines = std::cmp::max(
+        base.options.num_context_lines,
+        target.options.num_context_lines,
+    );
 
     for base_file in &base.files {
-        let target_file =
-            base_old_index.find_old_file(&base_file.old_name)
-                .and_then(|base_old_file| target_index.find_old_file(&base_old_file.new_name))
-                .or_else(||
-                    base_new_index.find_old_file(&base_file.new_name)
-                        .and_then(|base_new_file| target_index.find_new_file(&base_new_file.new_name)));
+        let target_file = base_old_index
+            .find_old_file(&base_file.old_name)
+            .and_then(|base_old_file| target_index.find_old_file(&base_old_file.new_name))
+            .or_else(|| {
+                base_new_index
+                    .find_old_file(&base_file.new_name)
+                    .and_then(|base_new_file| target_index.find_new_file(&base_new_file.new_name))
+            });
         if let Some(target_file) = target_file {
             let mut need_base_header = false;
             let mut need_target_header = false;
@@ -1638,7 +1850,7 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
                 let base_hunk = base_hunks.peek();
                 let target_hunk = target_hunks.peek();
                 if base_hunk.is_none() && target_hunk.is_none() {
-                    break
+                    break;
                 }
 
                 let render_base;
@@ -1646,9 +1858,8 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
                     if let Some(base_hunk) = base_hunk {
                         // TODO: Better algorithm for lining up base vs. target hunks
                         let (old_count, new_count) = target_hunk.counts();
-                        render_base =
-                            base_hunk.old_begin <= target_hunk.old_begin + old_count ||
-                            base_hunk.new_begin <= target_hunk.new_begin + new_count;
+                        render_base = base_hunk.old_begin <= target_hunk.old_begin + old_count
+                            || base_hunk.new_begin <= target_hunk.new_begin + new_count;
                     } else {
                         render_base = false;
                     }
@@ -1676,17 +1887,22 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
                 hunk.render(true, &mut writer.with_context(context));
             }
         } else {
-            base_file.render(num_context_lines, &mut writer.with_context(Context::Baseline));
+            base_file.render(
+                num_context_lines,
+                &mut writer.with_context(Context::Baseline),
+            );
         }
     }
 
     for target_file in &target.files {
-        let base_file =
-            base_old_index.find_new_file(&target_file.old_name)
-                .and_then(|base_old_file| base_index.find_old_file(&base_old_file.old_name))
-                .or_else(||
-                    base_new_index.find_new_file(&target_file.new_name)
-                        .and_then(|base_new_file| base_index.find_new_file(&base_new_file.old_name)));
+        let base_file = base_old_index
+            .find_new_file(&target_file.old_name)
+            .and_then(|base_old_file| base_index.find_old_file(&base_old_file.old_name))
+            .or_else(|| {
+                base_new_index
+                    .find_new_file(&target_file.new_name)
+                    .and_then(|base_new_file| base_index.find_new_file(&base_new_file.old_name))
+            });
         if base_file.is_none() {
             target_file.render(num_context_lines, &mut writer.with_context(Context::Change));
         }
@@ -1695,8 +1911,15 @@ pub fn diff_modulo_base(buffer: &Buffer, target: Diff, base_old: &Diff, base_new
     Ok(())
 }
 
-pub fn diff_file(buffer: &Buffer, old_path: DiffRef, new_path: DiffRef, old_body: DiffRef, new_body: DiffRef,
-                 options: &DiffOptions, algorithm: DiffAlgorithm) -> Result<DiffFile> {
+pub fn diff_file(
+    buffer: &Buffer,
+    old_path: DiffRef,
+    new_path: DiffRef,
+    old_body: DiffRef,
+    new_body: DiffRef,
+    options: &DiffOptions,
+    algorithm: DiffAlgorithm,
+) -> Result<DiffFile> {
     let old_lines: Vec<DiffRef> = buffer.lines(old_body).collect();
     let new_lines: Vec<DiffRef> = buffer.lines(new_body).collect();
     let mut old_has_newline_at_eof = true;
@@ -1727,7 +1950,7 @@ pub fn diff_file(buffer: &Buffer, old_path: DiffRef, new_path: DiffRef, old_body
                 contents: BlockContents::Changed {
                     old: old_lines,
                     new: new_lines,
-                    unimportant: false
+                    unimportant: false,
                 },
             },
             Block {
@@ -1739,7 +1962,8 @@ pub fn diff_file(buffer: &Buffer, old_path: DiffRef, new_path: DiffRef, old_body
                     new_has_newline_at_eof,
                 },
             },
-        ].into(),
+        ]
+        .into(),
     };
 
     Ok(reduce_changed_file(buffer, file, algorithm).0)

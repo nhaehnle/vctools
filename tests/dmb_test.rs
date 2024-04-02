@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
+use diff::ChunkFreeWriterExt;
 use diff_modulo_base::*;
 use utils::Result;
-use diff::ChunkFreeWriterExt;
 
 #[test]
 fn dmb_test() -> Result<()> {
@@ -10,10 +10,10 @@ fn dmb_test() -> Result<()> {
         let entry = entry?;
         let file_name = entry.file_name();
         if file_name == "." || file_name == ".." {
-            continue
+            continue;
         }
         if !entry.file_type()?.is_dir() {
-            continue
+            continue;
         }
 
         let path = entry.path();
@@ -26,7 +26,13 @@ fn dmb_test() -> Result<()> {
         let expected = utils::read_bytes(path.join("expected.diff"))?;
 
         let mut writer = diff::ChunkByteBufferWriter::new();
-        diff::diff_modulo_base(&buffer, target_diff, &old_base_diff, &new_base_diff, &mut writer.with_buffer(&buffer))?;
+        diff::diff_modulo_base(
+            &buffer,
+            target_diff,
+            &old_base_diff,
+            &new_base_diff,
+            &mut writer.with_buffer(&buffer),
+        )?;
 
         assert_eq!(expected, writer.out);
     }

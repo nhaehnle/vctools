@@ -29,12 +29,17 @@ impl Cli {
         let use_pager = options.pager.unwrap_or(is_terminal);
         let use_color = options.color.unwrap_or(is_terminal);
 
-        let mut pager = use_pager.then(|| Command::new("less")
-                .arg("-FR")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn().ok()).flatten();
+        let mut pager = use_pager
+            .then(|| {
+                Command::new("less")
+                    .arg("-FR")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .ok()
+            })
+            .flatten();
 
         let stream: Box<dyn WriteColor>;
         if let Some(pager) = &mut pager {
@@ -44,7 +49,11 @@ impl Cli {
                 stream = Box::new(termcolor::NoColor::new(pager.stdin.take().unwrap()));
             }
         } else {
-            let color = if use_color { ColorChoice::Always } else { ColorChoice::Never };
+            let color = if use_color {
+                ColorChoice::Always
+            } else {
+                ColorChoice::Never
+            };
             stream = Box::new(StandardStream::stdout(color));
         }
 

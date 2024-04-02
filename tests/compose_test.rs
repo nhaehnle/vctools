@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
+use diff::ChunkFreeWriterExt;
 use diff_modulo_base::*;
 use utils::Result;
-use diff::ChunkFreeWriterExt;
 
 #[test]
 fn compose_test() -> Result<()> {
@@ -10,10 +10,10 @@ fn compose_test() -> Result<()> {
         let entry = entry?;
         let file_name = entry.file_name();
         if file_name == "." || file_name == ".." {
-            continue
+            continue;
         }
         if !entry.file_type()?.is_dir() {
-            continue
+            continue;
         }
 
         let path = entry.path();

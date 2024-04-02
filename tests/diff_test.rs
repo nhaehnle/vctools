@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
+use diff::ChunkFreeWriterExt;
 use diff_modulo_base::*;
 use utils::Result;
-use diff::ChunkFreeWriterExt;
 
 #[test]
 fn diff_test() -> Result<()> {
@@ -10,10 +10,10 @@ fn diff_test() -> Result<()> {
         let entry = entry?;
         let file_name = entry.file_name();
         if file_name == "." || file_name == ".." {
-            continue
+            continue;
         }
         if !entry.file_type()?.is_dir() {
-            continue
+            continue;
         }
 
         let path = entry.path();
@@ -37,8 +37,15 @@ fn diff_test() -> Result<()> {
             ..Default::default()
         };
 
-        let file = diff::diff_file(&buffer, old_path, new_path, old_body, new_body,
-                                   &options, diff::DiffAlgorithm::default())?;
+        let file = diff::diff_file(
+            &buffer,
+            old_path,
+            new_path,
+            old_body,
+            new_body,
+            &options,
+            diff::DiffAlgorithm::default(),
+        )?;
         let mut diff = diff::Diff::new(options);
         diff.add_file(file);
 

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-use std::{io::prelude::*, fmt::Display};
+use std::{fmt::Display, io::prelude::*};
 
-use crate::utils::{Result, try_forward, trim_ascii};
+use crate::utils::{trim_ascii, try_forward, Result};
 
-pub use std::ops::Range;
 use lazy_static::lazy_static;
 use regex::bytes::Regex;
+pub use std::ops::Range;
 
 /// Reference to a single commit, using any format the git CLI understands as
 /// a reference.
@@ -16,9 +16,7 @@ pub struct Ref {
 }
 impl Ref {
     pub fn new<S: Into<String>>(name: S) -> Self {
-        Self {
-            name: name.into(),
-        }
+        Self { name: name.into() }
     }
 
     pub fn first_parent(&self) -> Self {
@@ -37,9 +35,7 @@ pub struct ShowOptions {
 }
 impl Default for ShowOptions {
     fn default() -> Self {
-        Self {
-            show_patch: true,
-        }
+        Self { show_patch: true }
     }
 }
 
@@ -49,14 +45,13 @@ pub struct Repository {
 }
 impl Repository {
     pub fn new(path: &std::path::Path) -> Self {
-        Self {
-            path: path.into(),
-        }
+        Self { path: path.into() }
     }
 
     fn exec<'a, I, A>(&self, subcommand: &str, args: I) -> Result<Vec<u8>>
-        where I: Iterator<Item = A>,
-              A: AsRef<std::ffi::OsStr>
+    where
+        I: Iterator<Item = A>,
+        A: AsRef<std::ffi::OsStr>,
     {
         let mut cmd = std::process::Command::new("git");
         cmd.args(["-C", self.path.to_str().unwrap()]);
@@ -84,32 +79,39 @@ impl Repository {
         let stderr_thread = std::thread::spawn(move || -> std::result::Result<Vec<u8>, String> {
             let mut stderr_buf = Vec::new();
             match stderr.read_to_end(&mut stderr_buf) {
-            Ok(_) => Ok(stderr_buf),
-            Err(e) => Err(format!("reading stderr: {e}")),
+                Ok(_) => Ok(stderr_buf),
+                Err(e) => Err(format!("reading stderr: {e}")),
             }
         });
         let output = child.wait_with_output()?;
         let stderr = stderr_thread.join().unwrap()?;
 
         if !output.status.success() || !stderr.is_empty() {
-            return Err(format!("git subcommand failed: {}\n{}", output.status,
-                               String::from_utf8_lossy(&stderr)).into())
+            return Err(format!(
+                "git subcommand failed: {}\n{}",
+                output.status,
+                String::from_utf8_lossy(&stderr)
+            )
+            .into());
         }
 
         Ok(output.stdout)
     }
 
     pub fn diff(&self, range: Range<&Ref>, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
-        try_forward(|| -> Result<Vec<u8>> {
-            let mut args: Vec<String> = Vec::new();
-            args.push(format!("{}..{}", range.start, range.end));
-            if let Some(paths) = paths {
-                args.push("--".into());
-                args.extend(paths.iter().map(|&s| String::from_utf8_lossy(s).into()));
-            }
+        try_forward(
+            || -> Result<Vec<u8>> {
+                let mut args: Vec<String> = Vec::new();
+                args.push(format!("{}..{}", range.start, range.end));
+                if let Some(paths) = paths {
+                    args.push("--".into());
+                    args.extend(paths.iter().map(|&s| String::from_utf8_lossy(s).into()));
+                }
 
-            self.exec("diff", args.iter())
-        }, || format!("failed to get diff {}..{}", range.start, range.end))
+                self.exec("diff", args.iter())
+            },
+            || format!("failed to get diff {}..{}", range.start, range.end),
+        )
     }
 
     pub fn diff_commit(&self, commit: &Ref, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
@@ -117,40 +119,51 @@ impl Repository {
     }
 
     pub fn show_commit(&self, commit: &Ref, options: &ShowOptions) -> Result<Vec<u8>> {
-        try_forward(|| -> Result<Vec<u8>> {
-            let mut args: Vec<String> = Vec::new();
-            if !options.show_patch {
-                args.push("--no-patch".into());
-            }
-            args.push(format!("{}", commit));
+        try_forward(
+            || -> Result<Vec<u8>> {
+                let mut args: Vec<String> = Vec::new();
+                if !options.show_patch {
+                    args.push("--no-patch".into());
+                }
+                args.push(format!("{}", commit));
 
-            self.exec("show", args.iter())
-        }, || format!("failed to show {}", commit))
+                self.exec("show", args.iter())
+            },
+            || format!("failed to show {}", commit),
+        )
     }
 
     pub fn merge_base(&self, a: &Ref, b: &Ref) -> Result<Ref> {
-        try_forward(|| -> Result<Ref> {
-            let result = self.exec("merge-base", [
-                format!("{a}"),
-                format!("{b}"),
-            ].iter())?;
+        try_forward(
+            || -> Result<Ref> {
+                let result = self.exec("merge-base", [format!("{a}"), format!("{b}")].iter())?;
 
-            Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
-        }, || "failed to obtain merge-base")
+                Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
+            },
+            || "failed to obtain merge-base",
+        )
     }
 
     pub fn range_diff<R>(&self, old: Range<R>, new: Range<R>) -> Result<RangeDiff>
-        where R: std::borrow::Borrow<Ref>,
+    where
+        R: std::borrow::Borrow<Ref>,
     {
-        try_forward(|| -> Result<RangeDiff> {
-            let result = self.exec("range-diff", [
-                "-s".into(),
-                format!("{}..{}", old.start.borrow(), old.end.borrow()),
-                format!("{}..{}", new.start.borrow(), new.end.borrow()),
-            ].iter())?;
+        try_forward(
+            || -> Result<RangeDiff> {
+                let result = self.exec(
+                    "range-diff",
+                    [
+                        "-s".into(),
+                        format!("{}..{}", old.start.borrow(), old.end.borrow()),
+                        format!("{}..{}", new.start.borrow(), new.end.borrow()),
+                    ]
+                    .iter(),
+                )?;
 
-            RangeDiff::parse(&result)
-        }, || "failed to obtain range-diff")
+                RangeDiff::parse(&result)
+            },
+            || "failed to obtain range-diff",
+        )
     }
 }
 
@@ -178,21 +191,24 @@ impl RangeDiff {
         for line in buffer.split(|&ch| ch == b'\n') {
             let line = trim_ascii(line);
             if line.is_empty() {
-                continue
+                continue;
             }
 
-            let captures = RE.captures(line)
-                .ok_or_else(|| format!("bad diff-range line\n{}",
-                                       String::from_utf8_lossy(line)))?;
+            let captures = RE
+                .captures(line)
+                .ok_or_else(|| format!("bad diff-range line\n{}", String::from_utf8_lossy(line)))?;
 
-            fn get_side(captures: &regex::bytes::Captures, idx: usize) -> Result<Option<(u32, Ref)>> {
+            fn get_side(
+                captures: &regex::bytes::Captures,
+                idx: usize,
+            ) -> Result<Option<(u32, Ref)>> {
                 let index_missing = captures.get(idx);
                 let index_number = captures.get(idx + 1);
                 let commit_missing = captures.get(idx + 2);
                 let commit_hash = captures.get(idx + 3);
 
                 if index_missing.is_some() != commit_missing.is_some() {
-                    return Err("one of index and commit missing, but not both".into())
+                    return Err("one of index and commit missing, but not both".into());
                 }
 
                 if let (Some(index_number), Some(commit_hash)) = (index_number, commit_hash) {
@@ -207,17 +223,22 @@ impl RangeDiff {
             let old = try_forward(|| get_side(&captures, 1), || "left hand side")?;
             let new = try_forward(|| get_side(&captures, 6), || "left hand side")?;
 
-            let (changed, old_expected, new_expected) =
-                match captures.get(5).unwrap().as_bytes() {
+            let (changed, old_expected, new_expected) = match captures.get(5).unwrap().as_bytes() {
                 b"=" => (false, true, true),
                 b"!" => (true, true, true),
                 b">" => (true, false, true),
                 b"<" => (true, true, false),
-                other => return Err(format!("bad change indicator '{}'", String::from_utf8_lossy(other)).into()),
-                };
+                other => {
+                    return Err(format!(
+                        "bad change indicator '{}'",
+                        String::from_utf8_lossy(other)
+                    )
+                    .into())
+                }
+            };
 
             if old.is_some() != old_expected || new.is_some() != new_expected {
-                return Err("change indicator doesn't match the shown commits".into())
+                return Err("change indicator doesn't match the shown commits".into());
             }
 
             matches.push(RangeDiffMatch {
@@ -252,30 +273,42 @@ mod test {
         let rd = RangeDiff::parse(range_diff_text.as_bytes())?;
 
         assert_eq!(rd.matches.len(), 4);
-        assert_eq!(rd.matches[0], RangeDiffMatch {
-            changed: true,
-            old: Some((1, Ref::new("31b5c003"))),
-            new: Some((1, Ref::new("d73727e2"))),
-            title: (*b"title foo").into(),
-        });
-        assert_eq!(rd.matches[1], RangeDiffMatch {
-            changed: true,
-            old: None,
-            new: Some((2, Ref::new("98ad5553"))),
-            title: (*b"title blah").into(),
-        });
-        assert_eq!(rd.matches[2], RangeDiffMatch {
-            changed: true,
-            old: Some((3, Ref::new("01234567"))),
-            new: None,
-            title: (*b"blub").into(),
-        });
-        assert_eq!(rd.matches[3], RangeDiffMatch {
-            changed: false,
-            old: Some((2, Ref::new("89abcdef"))),
-            new: Some((3, Ref::new("fedc3210"))),
-            title: (*b"another").into(),
-        });
+        assert_eq!(
+            rd.matches[0],
+            RangeDiffMatch {
+                changed: true,
+                old: Some((1, Ref::new("31b5c003"))),
+                new: Some((1, Ref::new("d73727e2"))),
+                title: (*b"title foo").into(),
+            }
+        );
+        assert_eq!(
+            rd.matches[1],
+            RangeDiffMatch {
+                changed: true,
+                old: None,
+                new: Some((2, Ref::new("98ad5553"))),
+                title: (*b"title blah").into(),
+            }
+        );
+        assert_eq!(
+            rd.matches[2],
+            RangeDiffMatch {
+                changed: true,
+                old: Some((3, Ref::new("01234567"))),
+                new: None,
+                title: (*b"blub").into(),
+            }
+        );
+        assert_eq!(
+            rd.matches[3],
+            RangeDiffMatch {
+                changed: false,
+                old: Some((2, Ref::new("89abcdef"))),
+                new: Some((3, Ref::new("fedc3210"))),
+                title: (*b"another").into(),
+            }
+        );
 
         Ok(())
     }
