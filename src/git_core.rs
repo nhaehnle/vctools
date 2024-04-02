@@ -46,10 +46,18 @@ impl Default for ShowOptions {
 #[derive(Debug)]
 pub struct Repository {
     pub path: std::path::PathBuf,
+
+    // Path of a directory that contains mock outputs of git commits as plain text files named with
+    // the command line after the "git" command itself. For example, a file named "show main" would
+    // contain the output of "git show main".
+    pub mock_data_path: Option<std::path::PathBuf>,
 }
 impl Repository {
     pub fn new(path: &std::path::Path) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            mock_data_path: None,
+        }
     }
 
     fn exec<'a, I, A>(&self, subcommand: &str, args: I) -> Result<Vec<u8>>
@@ -57,6 +65,33 @@ impl Repository {
         I: Iterator<Item = A>,
         A: AsRef<std::ffi::OsStr>,
     {
+        if let Some(test_data_path) = &self.mock_data_path {
+            let mut path = test_data_path.clone();
+            let components: Vec<_> = [std::ffi::OsString::from(subcommand)]
+                .into_iter()
+                .chain(args.map(|x| x.as_ref().to_os_string()))
+                .collect();
+            let cmdline = components.join(&std::ffi::OsString::from(" "));
+            let mut name = cmdline.to_string_lossy().to_string();
+            name.retain(|c| c != '/');
+            path.push(&name);
+
+            let mut file = try_forward(
+                || Ok(std::fs::File::open(&path)?),
+                || {
+                    format!(
+                        "failed to open mock data file {} for `git {}`",
+                        &name,
+                        cmdline.to_string_lossy()
+                    )
+                },
+            )?;
+            let mut contents = Vec::new();
+            file.read_to_end(&mut contents)?;
+
+            return Ok(contents);
+        }
+
         let mut cmd = std::process::Command::new("git");
         cmd.args(["-C", self.path.to_str().unwrap()]);
         cmd.arg(subcommand);
