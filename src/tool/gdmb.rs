@@ -77,8 +77,8 @@ pub fn git_diff_modulo_base(
         let old_base = repo.merge_base(&base, &old_ref)?;
         let new_base = repo.merge_base(&base, &new_ref)?;
 
-        old = RevSpec::Range(old_base, old_ref);
-        new = RevSpec::Range(new_base, new_ref);
+        old = RevSpec::Range(old_base, repo.rev_parse(&old_ref)?);
+        new = RevSpec::Range(new_base, repo.rev_parse(&new_ref)?);
     }
 
     let mut writer = diff_color::Writer::new(out);

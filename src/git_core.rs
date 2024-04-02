@@ -192,10 +192,100 @@ impl Repository {
         )
     }
 
+    pub fn rev_parse(&self, a: &Ref) -> Result<Ref> {
+        try_forward(
+            || -> Result<Ref> {
+                let result = self.exec("rev-parse", [format!("{a}")].iter())?;
+
+                Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
+            },
+            || "failed to obtain parsed revision",
+        )
+    }
+
+    pub fn log<R>(&self, range: Range<R>) -> Result<Vec<LogEntry>>
+    where
+        R: std::borrow::Borrow<Ref>,
+    {
+        try_forward(
+            || -> Result<Vec<LogEntry>> {
+                let result = self.exec(
+                    "log",
+                    [
+                        "--oneline".into(),
+                        format!("{}..{}", range.start.borrow(), range.end.borrow()),
+                    ]
+                    .iter(),
+                )?;
+
+                lazy_static! {
+                    static ref RE: Regex = Regex::new(r"([0-9a-f]+) +(.*)").unwrap();
+                }
+
+                let mut entries = Vec::new();
+
+                for line in result.split(|&ch| ch == b'\n') {
+                    let line = trim_ascii(line);
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    let captures = RE.captures(line).ok_or_else(|| {
+                        format!("bad log line\n{}", String::from_utf8_lossy(line))
+                    })?;
+
+                    let commit = captures.get(1).unwrap().as_bytes();
+                    let title = captures.get(2).unwrap().as_bytes();
+
+                    entries.push(LogEntry {
+                        commit: Ref::new(String::from_utf8(commit.into())?),
+                        title: title.into(),
+                    });
+                }
+
+                Ok(entries)
+            },
+            || "failed to obtain log",
+        )
+    }
+
     pub fn range_diff<R>(&self, old: Range<R>, new: Range<R>) -> Result<RangeDiff>
     where
         R: std::borrow::Borrow<Ref>,
     {
+        // Workaround: git range-diff fails if start and end of a range are the same
+        if old.start.borrow() == old.end.borrow() {
+            let new_commits = self.log(new)?;
+            return Ok(RangeDiff {
+                matches: new_commits
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, entry)| RangeDiffMatch {
+                        changed: true,
+                        old: None,
+                        new: Some((idx as u32 + 1, entry.commit)),
+                        title: entry.title,
+                    })
+                    .collect(),
+            });
+        }
+
+        if new.start.borrow() == new.end.borrow() {
+            let old_commits = self.log(old)?;
+            return Ok(RangeDiff {
+                matches: old_commits
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, entry)| RangeDiffMatch {
+                        changed: true,
+                        old: Some((idx as u32 + 1, entry.commit)),
+                        new: None,
+                        title: entry.title,
+                    })
+                    .collect(),
+            });
+        }
+
         try_forward(
             || -> Result<RangeDiff> {
                 let result = self.exec(
@@ -213,6 +303,12 @@ impl Repository {
             || "failed to obtain range-diff",
         )
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub commit: Ref,
+    pub title: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,0 +1,9 @@
+-: - > 1: dcbbe1b Sample commit
++Author: Nicolai Hähnle <nhaehnle@gmail.com>
++Date:   Tue Apr 2 06:02:52 2024 +0200
++
++    Sample commit
+ --- /dev/null
+ +++ b/sample.txt
+ @@ -1,0 +1,1 @@
+ +Adding a new file
