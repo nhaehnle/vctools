@@ -145,17 +145,51 @@ fn diff_optional_commits_impl(
         diff::DiffAlgorithm::default(),
     )?;
 
-    meta_diff.render_full_body(
-        &mut writer
-            .with_buffer(&buffer)
-            .with_context(diff::Context::CommitMessage),
-    );
+    struct DelayedMetaWriter<'a> {
+        writer: &'a mut dyn diff::ChunkFreeWriter,
+        meta_diff_buffer: &'a diff::Buffer,
+        meta_diff: Option<diff::DiffFile>,
+    }
+    impl<'a> diff::ChunkFreeWriter for DelayedMetaWriter<'a> {
+        fn push(&mut self, buffer: &diff::Buffer, chunk: diff::Chunk) {
+            if let Some(meta_diff) = self.meta_diff.take() {
+                meta_diff.render_full_body(
+                    &mut self
+                        .writer
+                        .with_buffer(self.meta_diff_buffer)
+                        .with_context(diff::Context::CommitMessage),
+                );
+            }
+            self.writer.push(buffer, chunk);
+        }
+    }
+
+    let mut delayed_meta_writer = DelayedMetaWriter {
+        writer,
+        meta_diff_buffer: &buffer,
+        meta_diff: Some(meta_diff),
+    };
+
     diff_optional_ranges_full(
         repo,
         old.map(|commit| commit.first_parent()..commit.clone()),
         new.map(|commit| commit.first_parent()..commit.clone()),
-        writer,
-    )
+        &mut delayed_meta_writer,
+    )?;
+
+    // Handle the case where only the commit meta (e.g. message) has changed.
+    if let Some(meta_diff) = delayed_meta_writer.meta_diff.take() {
+        if !meta_diff.is_unchanged() {
+            meta_diff.render_full_body(
+                &mut delayed_meta_writer
+                    .writer
+                    .with_buffer(&buffer)
+                    .with_context(diff::Context::CommitMessage),
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// Produce a base-reduced diff between the two given commits; this includes

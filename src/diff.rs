@@ -765,6 +765,10 @@ impl DiffFile {
         }
     }
 
+    pub fn is_unchanged(&self) -> bool {
+        self.blocks.iter().all(|block| !block.contents.is_changed())
+    }
+
     /// Iterate over hunks of the diff appropriate for rendering.
     ///
     /// If `num_context_lines` is `None`, iterate over hunks covering all known
