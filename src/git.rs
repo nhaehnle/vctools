@@ -115,6 +115,7 @@ fn diff_optional_commits_impl(
         if let Some(commit) = commit {
             let show_options = git_core::ShowOptions {
                 show_patch: false,
+                skip_commit_id: true,
                 ..Default::default()
             };
 
@@ -187,6 +188,7 @@ pub fn diff_commits(
 ) -> Result<()> {
     let show_options = git_core::ShowOptions {
         show_patch: false,
+        skip_commit_id: true,
         ..Default::default()
     };
 

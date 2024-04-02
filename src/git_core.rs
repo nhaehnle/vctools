@@ -32,10 +32,14 @@ impl Display for Ref {
 #[derive(Debug, Clone)]
 pub struct ShowOptions {
     pub show_patch: bool,
+    pub skip_commit_id: bool,
 }
 impl Default for ShowOptions {
     fn default() -> Self {
-        Self { show_patch: true }
+        Self {
+            show_patch: true,
+            skip_commit_id: false,
+        }
     }
 }
 
@@ -127,7 +131,16 @@ impl Repository {
                 }
                 args.push(format!("{}", commit));
 
-                self.exec("show", args.iter())
+                let mut show = self.exec("show", args.iter())?;
+
+                // Erase the first line if it is of the form "commit <...>"
+                if options.skip_commit_id && show.starts_with(b"commit ") {
+                    if let Some(pos) = show.iter().position(|ch| *ch == b'\n') {
+                        show = Vec::from(show.split_at(pos + 1).1);
+                    }
+                }
+
+                Ok(show)
             },
             || format!("failed to show {}", commit),
         )
