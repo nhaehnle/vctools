@@ -2,4 +2,5 @@
 resolver = "2"
 members = [
     "diff-modulo-base",
+    "git-review-tui",
 ]
