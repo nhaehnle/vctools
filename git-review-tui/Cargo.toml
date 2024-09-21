@@ -11,3 +11,4 @@ categories = ["command-line-utilities"]
 directories = "5.0.1"
 octocrab = "0.39.0"
 ratatui = "0.28.1"
+tui-input = "0.10.1"

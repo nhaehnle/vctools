@@ -2,19 +2,27 @@ use std::io;
 
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{self, KeyCode, KeyEventKind},
-    layout::Rect,
+    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    layout::{Constraint, Layout, Rect},
     style::Stylize,
-    widgets::{Paragraph, Widget},
-    DefaultTerminal,
+    text::Line,
+    widgets::{
+        Block, Paragraph, Widget
+    },
+    DefaultTerminal
 };
 
 use directories::ProjectDirs;
+
+mod action;
+
+use action::{ActionBar, ActionBarMode};
 
 #[derive(Debug)]
 struct App {
     project_dirs: ProjectDirs,
     exit: bool,
+    action_bar: ActionBar,
 }
 
 impl App {
@@ -27,6 +35,7 @@ impl App {
         Ok(Self {
             project_dirs,
             exit: false,
+            action_bar: ActionBar::new(),
         })
     }
 
@@ -39,21 +48,41 @@ impl App {
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
-        if let event::Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('q') {
-                self.exit = true;
+        let ev =  event::read()?;
+
+        if self.action_bar.is_active() {
+            self.action_bar.handle_event(ev);
+            return Ok(())
+        }
+
+        match ev {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                self.handle_key_press(key)
             }
+            _ => {}
         }
         Ok(())
+    }
+
+    fn handle_key_press(&mut self, key: event::KeyEvent) {
+        match key.code {
+            KeyCode::Char('q') => self.exit = true,
+            KeyCode::Char(':') => self.action_bar.activate(ActionBarMode::Command),
+            KeyCode::Char('/') => self.action_bar.activate(ActionBarMode::Search),
+            _ => {}
+        }
     }
 }
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let vertical = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
         Paragraph::new("Hello Ratatui! (press 'q' to quit)")
             .white()
             .on_blue()
-            .render(area, buf);
+            .block(Block::bordered())
+            .render(vertical[0], buf);
+        self.action_bar.render(vertical[1], buf);
     }
 }
 
