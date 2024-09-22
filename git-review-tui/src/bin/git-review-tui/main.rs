@@ -1,4 +1,7 @@
-use std::io;
+use std::{
+    io,
+    rc::Rc,
+};
 
 use ratatui::{
     buffer::Buffer,
@@ -7,7 +10,7 @@ use ratatui::{
     style::Stylize,
     text::Line,
     widgets::{
-        Block, Paragraph, Widget
+        Block, Borders, BorderType, Paragraph, Widget
     },
     DefaultTerminal
 };
@@ -16,12 +19,13 @@ use directories::ProjectDirs;
 
 mod action;
 
-use action::{ActionBar, ActionBarMode};
+use action::{ActionBar, ActionBarMode, Commands};
 
 #[derive(Debug)]
 struct App {
     project_dirs: ProjectDirs,
     exit: bool,
+    commands: Rc<Commands>,
     action_bar: ActionBar,
 }
 
@@ -32,10 +36,16 @@ impl App {
         std::fs::create_dir_all(&project_dirs.config_dir())?;
         std::fs::create_dir_all(&project_dirs.cache_dir())?;
 
+        let mut commands = Commands::new();
+        commands.add_command("quit", &["Quit", "Exit"]);
+        let commands = Rc::new(commands);
+        let action_bar = ActionBar::new(commands.clone());
+
         Ok(Self {
             project_dirs,
             exit: false,
-            action_bar: ActionBar::new(),
+            commands,
+            action_bar,
         })
     }
 
@@ -77,10 +87,15 @@ impl App {
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let vertical = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
-        Paragraph::new("Hello Ratatui! (press 'q' to quit)")
-            .white()
-            .on_blue()
-            .block(Block::bordered())
+        let block = Block::default()
+            .title("Pull Requests")
+            .borders(Borders::TOP)
+            .border_type(BorderType::Thick)
+            .yellow();
+        Paragraph::new("No accounts configured. Press ':' and select \"Add Account\"")
+            .black()
+            .on_white()
+            .block(block)
             .render(vertical[0], buf);
         self.action_bar.render(vertical[1], buf);
     }
