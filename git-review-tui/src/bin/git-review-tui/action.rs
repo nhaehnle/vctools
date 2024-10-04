@@ -1,12 +1,13 @@
 
-use std::{borrow::Borrow, rc::Rc};
+use std::rc::Rc;
 
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{Event, KeyCode, KeyEventKind},
     layout::Rect,
-    style::Stylize,
-    widgets::{Paragraph, Widget},
+    style::{Style, Stylize},
+    text::{Line, Span, Text},
+    widgets::{block::BorderType, Block, Borders, Clear, Paragraph, StatefulWidget, Widget},
 };
 
 use tui_input::{backend::crossterm::EventHandler, Input};
@@ -22,9 +23,23 @@ pub struct Commands {
     commands: Vec<Command>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CommandId(usize);
+
+#[derive(Debug)]
+struct FilteredCommand {
+    id: CommandId,
+    title_idx: usize,
+    matching_chars: Vec<usize>,
+}
+
 impl Commands {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn get(&self, id: CommandId) -> &Command {
+        &self.commands[id.0]
     }
 
     pub fn add_command<N, T>(&mut self, name: N, titles: &[T])
@@ -38,15 +53,248 @@ impl Commands {
         });
     }
 
-    // pub fn filter(&self, query: &str) -> Vec<&Command> {
-        // self.commands
-            // .iter()
-            // .filter(|cmd| cmd.title.contains(query))
-            // .collect()
-    // }
+    fn filter_eval(&self, id: CommandId, query: &str) -> Option<(usize, FilteredCommand)> {
+        let command = self.get(id);
+        command.titles.iter().enumerate().map(|(title_idx, title)| {
+            let title = title.to_lowercase();
+
+            let mut matching_chars = Vec::new();
+
+            let mut tchars = title.char_indices().peekable();
+            let mut cost: Option<usize> = Some(0);
+            let mut in_word = false;
+
+            for qch in query.chars() {
+                if qch.is_whitespace() {
+                    in_word = false;
+                }
+
+                let mut skipped = false;
+                while let Some((_, tch)) = tchars.peek() {
+                    if *tch == qch { break; }
+                    skipped = true;
+                    tchars.next();
+                }
+
+                match tchars.next() {
+                None => {
+                    cost = None;
+                    break
+                },
+                Some((idx, _)) => {
+                    if skipped && in_word {
+                        *cost.as_mut().unwrap() += 1;
+                    }
+                    matching_chars.push(idx);
+                },
+                }
+
+                if !qch.is_whitespace() {
+                    in_word = true;
+                }
+            }
+
+            cost.map(|cost| (
+                10 * cost + title_idx,
+                FilteredCommand {
+                    id,
+                    title_idx,
+                    matching_chars,
+                },
+            ))
+        }).filter_map(|x| x).min_by_key(|(cost, _)| *cost)
+    }
+
+    fn filter(&self, query: &str) -> Vec<FilteredCommand> {
+        if query.is_empty() {
+            return (0..self.commands.len()).into_iter()
+                .map(|i| FilteredCommand {
+                    id: CommandId(i),
+                    title_idx: 0,
+                    matching_chars: Vec::new(),
+                })
+                .collect();
+        }
+
+        let query = query.to_lowercase();
+
+        let mut filtered: Vec<_> =
+            (0..self.commands.len()).into_iter()
+                .filter_map(|i| {
+                    self.filter_eval(CommandId(i), &query)
+                })
+            .collect();
+
+        filtered.sort_by_key(|(cost, _)| *cost);
+
+        filtered.into_iter().map(|(_, filtered)| filtered).collect()
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
+struct FilterState {
+    filtered: Vec<FilteredCommand>,
+    selected: usize,
+    scroll: usize,
+}
+impl FilterState {
+    fn new(commands: &Commands) -> Self {
+        Self {
+            filtered: commands.filter(""),
+            selected: 0,
+            scroll: 0,
+        }
+    }
+
+    fn set_query(&mut self, commands: &Commands, query: &str) {
+        self.filtered = commands.filter(query);
+        self.selected = 0;
+        self.scroll = 0;
+    }
+
+    fn handle_up(&mut self) {
+        if self.selected + 1 < self.filtered.len() {
+            self.selected += 1;
+        }
+    }
+
+    fn handle_down(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+            self.scroll = std::cmp::min(self.scroll, self.selected);
+        }
+    }
+
+    fn stylize_match<'text>(
+            text: &'text str,
+            matching_chars: &[usize],
+            normal_style: Style,
+            match_style: Style) -> Vec<Span<'text>> {
+        let mut spans = Vec::new();
+
+        let mut match_begin = None;
+        let mut ack = 0;
+
+        for idx in matching_chars.iter() {
+            if ack != *idx {
+                if let Some(match_begin) = match_begin.take() {
+                    spans.push(Span::styled(&text[match_begin..ack], match_style));
+                }
+                spans.push(Span::styled(&text[ack..*idx], normal_style));
+            }
+
+            match_begin.get_or_insert(*idx);
+            ack = idx + 1;
+            while !text.is_char_boundary(ack) {
+                ack += 1;
+            }
+        }
+
+        if let Some(match_begin) = match_begin.take() {
+            spans.push(Span::styled(&text[match_begin..ack], match_style));
+        }
+        if ack != text.len() {
+            spans.push(Span::styled(&text[ack..text.len()], normal_style));
+        }
+
+        spans
+    }
+
+    fn render(&mut self, area: Rect, buf: &mut Buffer, commands: &Commands) {
+        if area.y < 10 {
+            return;
+        }
+
+        let max_height = std::cmp::min(area.y, 5 + (std::cmp::max(5, area.y) - 5) / 4) as usize;
+        let content_lines = std::cmp::max(1, self.filtered.len());
+        let content_height = std::cmp::min(content_lines, max_height - 1);
+
+        let popup_height = content_height as u16 + 1;
+        let popup_area = Rect::new(area.x, area.y - popup_height, area.width, popup_height);
+
+        Clear.render(popup_area, buf);
+
+        if self.selected < self.scroll {
+            self.scroll = self.selected;
+        } else if self.selected >= self.scroll + content_height {
+            self.scroll = self.selected - content_height + 1;
+        }
+
+        let text = if self.filtered.is_empty() {
+            Text::from("(no matching command)")
+        } else {
+            let normal_style = Style::new();
+            let match_style = Style::new().bold().blue();
+
+            let normal_selected_style = Style::new().black();
+            let match_selected_style = Style::new().bold().blue();
+
+            let mut lines: Vec<_> =
+                self.filtered.iter()
+                .enumerate()
+                .skip(self.scroll)
+                .take(content_height)
+                .map(|(i, filtered)| {
+                    let command = commands.get(filtered.id);
+
+                    let (normal_style, match_style) =
+                    if i == self.selected {
+                        (normal_selected_style, match_selected_style)
+                    } else {
+                        (normal_style, match_style)
+                    };
+
+            let mut spans;
+                    if filtered.title_idx == 0 {
+                        spans = FilterState::stylize_match(
+                            &command.titles[0],
+                            &filtered.matching_chars,
+                            normal_style,
+                            match_style);
+                    } else {
+                        spans = vec![
+                            Span::styled(&command.titles[0], normal_style),
+                            Span::styled(" (aka ", normal_style),
+                        ];
+                        spans.append(&mut FilterState::stylize_match(
+                            &command.titles[filtered.title_idx],
+                            &filtered.matching_chars,
+                            normal_style,
+                            match_style));
+                        spans.push(Span::styled(")", normal_style));
+                    }
+
+                    let mut line = Line::from(spans);
+                    if i == self.selected {
+                        line = line.on_yellow();
+                    }
+                    line
+                })
+                .collect();
+            lines.reverse();
+            Text::from(lines)
+        };
+
+        let block = Block::new()
+            .border_type(BorderType::Double)
+            .borders(Borders::TOP)
+            .border_style(Style::new().blue());
+        Paragraph::new(text)
+            .block(block)
+            .render(popup_area, buf);
+    }
+}
+impl Default for FilterState {
+    fn default() -> Self {
+        Self {
+            filtered: Vec::new(),
+            selected: 0,
+            scroll: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionBarMode {
     Command,
     Search,
@@ -58,59 +306,80 @@ pub enum Response {
 }
 
 #[derive(Debug)]
-enum ActionBarState {
+enum ActionBarStateImpl {
     Idle,
     Active {
+        mode: ActionBarMode,
         input: Input,
+        filter: FilterState,
     },
 }
 
 #[derive(Debug)]
-pub struct ActionBar {
-    state: ActionBarState,
-    commands: Rc<Commands>,
+pub struct ActionBarState {
+    state: ActionBarStateImpl,
 }
 
-impl ActionBar {
-    pub fn new(commands: Rc<Commands>) -> Self {
+impl ActionBarState {
+    pub fn new() -> Self {
         Self {
-            state: ActionBarState::Idle,
-            commands,
+            state: ActionBarStateImpl::Idle,
         }
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self.state, ActionBarState::Active { .. })
+        matches!(self.state, ActionBarStateImpl::Active { .. })
     }
 
-    pub fn activate(&mut self, mode: ActionBarMode) {
-        self.state = ActionBarState::Active {
+    pub fn activate(&mut self, mode: ActionBarMode, action_bar: &ActionBar) {
+        let filter = match mode {
+            ActionBarMode::Command => FilterState::new(&action_bar.commands),
+            ActionBarMode::Search => FilterState::default(),
+        };
+
+        self.state = ActionBarStateImpl::Active {
+            mode,
             input: Input::new((match mode {
                 ActionBarMode::Command => ":",
                 ActionBarMode::Search => "/",
             }).into()),
+            filter,
         };
     }
 
-    pub fn handle_event(&mut self, ev: Event) -> Response {
-        let ActionBarState::Active { input } = &mut self.state else { return Response::Cancel };
+    pub fn handle_event(&mut self, ev: Event, action_bar: &ActionBar) -> Response {
+        let ActionBarStateImpl::Active { mode, input, filter } = &mut self.state else { return Response::Cancel };
 
         match ev {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 match key.code {
                     KeyCode::Enter => {
-                        self.state = ActionBarState::Idle;
+                        self.state = ActionBarStateImpl::Idle;
                         Response::Cancel
                     }
                     KeyCode::Esc => {
-                        self.state = ActionBarState::Idle;
+                        self.state = ActionBarStateImpl::Idle;
                         Response::Cancel
                     }
+                    KeyCode::Up => {
+                        filter.handle_up();
+                        Response::None
+                    },
+                    KeyCode::Down => {
+                        filter.handle_down();
+                        Response::None
+                    },
                     _ => {
-                        input.handle_event(&ev);
-                        if input.value().is_empty() {
-                            self.state = ActionBarState::Idle;
-                            Response::Cancel
+                        if let Some(change) = input.handle_event(&ev) {
+                            if change.value && input.value().is_empty() {
+                                self.state = ActionBarStateImpl::Idle;
+                                Response::Cancel
+                            } else {
+                                if change.value && *mode == ActionBarMode::Command {
+                                    filter.set_query(&action_bar.commands, &input.value()[1..]);
+                                }
+                                Response::None
+                            }
                         } else {
                             Response::None
                         }
@@ -122,22 +391,39 @@ impl ActionBar {
     }
 }
 
-impl Widget for &ActionBar {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        match &self.state {
-            ActionBarState::Idle => {
+#[derive(Debug)]
+pub struct ActionBar {
+    commands: Rc<Commands>,
+}
+
+impl ActionBar {
+    pub fn new(commands: Rc<Commands>) -> Self {
+        Self {
+            commands,
+        }
+    }
+}
+impl StatefulWidget for &ActionBar {
+    type State = ActionBarState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut ActionBarState) {
+        match &mut state.state {
+            ActionBarStateImpl::Idle => {
                 Paragraph::new("Press ':' to enter command mode, '/' to enter search mode")
                     .blue()
                     .on_gray()
                     .render(area, buf);
             }
-            ActionBarState::Active { input, .. } => {
+            ActionBarStateImpl::Active { mode, input, filter } => {
                 let scroll = input.visual_scroll(area.width as usize);
                 Paragraph::new(input.value())
                     .blue()
                     .on_gray()
                     .scroll((0, scroll as u16))
                     .render(area, buf);
+                if *mode == ActionBarMode::Command {
+                    filter.render(area, buf, &self.commands);
+                }
             }
         }
     }

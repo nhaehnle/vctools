@@ -10,7 +10,7 @@ use ratatui::{
     style::Stylize,
     text::Line,
     widgets::{
-        Block, Borders, BorderType, Paragraph, Widget
+        Block, Borders, BorderType, Paragraph, StatefulWidget, Widget
     },
     DefaultTerminal
 };
@@ -19,12 +19,17 @@ use directories::ProjectDirs;
 
 mod action;
 
-use action::{ActionBar, ActionBarMode, Commands};
+use action::{ActionBar, ActionBarMode, ActionBarState, Commands};
+
+#[derive(Debug)]
+struct AppState {
+    exit: bool,
+    action_bar: ActionBarState,
+}
 
 #[derive(Debug)]
 struct App {
     project_dirs: ProjectDirs,
-    exit: bool,
     commands: Rc<Commands>,
     action_bar: ActionBar,
 }
@@ -38,54 +43,65 @@ impl App {
 
         let mut commands = Commands::new();
         commands.add_command("quit", &["Quit", "Exit"]);
+
+        commands.add_command("foo", &["Foo"]);
+        commands.add_command("bar", &["Bar"]);
+        commands.add_command("baz", &["Baz"]);
+        commands.add_command("abiba", &["Abiba"]);
+
         let commands = Rc::new(commands);
         let action_bar = ActionBar::new(commands.clone());
 
         Ok(Self {
             project_dirs,
-            exit: false,
             commands,
             action_bar,
         })
     }
 
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
-        while !self.exit {
-            terminal.draw(|frame| frame.render_widget(&*self, frame.area()))?;
-            self.handle_events()?;
+        let mut state = AppState {
+            exit: false,
+            action_bar: ActionBarState::new(),
+        };
+        while !state.exit {
+            terminal.draw(|frame| frame.render_stateful_widget(&*self, frame.area(), &mut state))?;
+            self.handle_events(&mut state)?;
         }
         Ok(())
     }
 
-    fn handle_events(&mut self) -> io::Result<()> {
+    fn handle_events(&mut self, state: &mut AppState) -> io::Result<()> {
         let ev =  event::read()?;
 
-        if self.action_bar.is_active() {
-            self.action_bar.handle_event(ev);
+        if state.action_bar.is_active() {
+            state.action_bar.handle_event(ev, &self.action_bar);
             return Ok(())
         }
 
         match ev {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                self.handle_key_press(key)
+                self.handle_key_press(state, key)
             }
             _ => {}
         }
         Ok(())
     }
 
-    fn handle_key_press(&mut self, key: event::KeyEvent) {
+    fn handle_key_press(&mut self, state: &mut AppState, key: event::KeyEvent) {
         match key.code {
-            KeyCode::Char('q') => self.exit = true,
-            KeyCode::Char(':') => self.action_bar.activate(ActionBarMode::Command),
-            KeyCode::Char('/') => self.action_bar.activate(ActionBarMode::Search),
+            KeyCode::Char('q') => state.exit = true,
+            KeyCode::Char(':') => state.action_bar.activate(ActionBarMode::Command, &self.action_bar),
+            KeyCode::Char('/') => state.action_bar.activate(ActionBarMode::Search, &self.action_bar),
             _ => {}
         }
     }
 }
 
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+impl StatefulWidget for &App {
+    type State = AppState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut AppState) {
         let vertical = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
         let block = Block::default()
             .title("Pull Requests")
@@ -97,7 +113,7 @@ impl Widget for &App {
             .on_white()
             .block(block)
             .render(vertical[0], buf);
-        self.action_bar.render(vertical[1], buf);
+        self.action_bar.render(vertical[1], buf, &mut state.action_bar);
     }
 }
 
