@@ -26,6 +26,31 @@ pub struct Commands {
 #[derive(Debug, Clone, Copy)]
 pub struct CommandId(usize);
 
+pub struct CommandsMap<V> {
+    commands: Vec<Option<V>>,
+}
+impl<V> CommandsMap<V> {
+    pub fn new() -> Self {
+        Self {
+            commands: Vec::new(),
+        }
+    }
+
+    pub fn set(&mut self, id: CommandId, value: V) {
+        self.commands.resize_with(id.0 + 1, Default::default);
+        self.commands[id.0] = Some(value);
+    }
+
+    pub fn get(&self, id: CommandId) -> Option<&V> {
+        self.commands.get(id.0).and_then(Option::as_ref)
+    }
+}
+impl<V> std::fmt::Debug for CommandsMap<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CommandsMap {{ ... }}")
+    }
+}
+
 #[derive(Debug)]
 struct FilteredCommand {
     id: CommandId,
@@ -42,7 +67,7 @@ impl Commands {
         &self.commands[id.0]
     }
 
-    pub fn add_command<N, T>(&mut self, name: N, titles: &[T])
+    pub fn add_command<N, T>(&mut self, name: N, titles: &[T]) -> CommandId
     where
         N: Into<String>,
         T: Copy + Into<String>,
@@ -51,6 +76,8 @@ impl Commands {
             name: name.into(),
             titles: titles.iter().map(|t| (*t).into()).collect(),
         });
+
+        CommandId(self.commands.len() - 1)
     }
 
     fn filter_eval(&self, id: CommandId, query: &str) -> Option<(usize, FilteredCommand)> {
@@ -144,6 +171,10 @@ impl FilterState {
             selected: 0,
             scroll: 0,
         }
+    }
+
+    fn get_selected(&self) -> Option<CommandId> {
+        self.filtered.get(self.selected).map(|filtered| filtered.id)
     }
 
     fn set_query(&mut self, commands: &Commands, query: &str) {
@@ -303,6 +334,7 @@ pub enum ActionBarMode {
 pub enum Response {
     None,
     Cancel,
+    Command(CommandId),
 }
 
 #[derive(Debug)]
@@ -354,8 +386,17 @@ impl ActionBarState {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 match key.code {
                     KeyCode::Enter => {
+                        let response =
+                            if *mode == ActionBarMode::Command {
+                                match filter.get_selected() {
+                                    Some(id) => Response::Command(id),
+                                    None => Response::Cancel,
+                                }
+                            } else {
+                                Response::Cancel
+                            };
                         self.state = ActionBarStateImpl::Idle;
-                        Response::Cancel
+                        response
                     }
                     KeyCode::Esc => {
                         self.state = ActionBarStateImpl::Idle;

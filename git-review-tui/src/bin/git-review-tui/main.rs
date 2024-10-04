@@ -1,6 +1,5 @@
 use std::{
-    io,
-    rc::Rc,
+    io, rc::Rc
 };
 
 use ratatui::{
@@ -8,7 +7,6 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Layout, Rect},
     style::Stylize,
-    text::Line,
     widgets::{
         Block, Borders, BorderType, Paragraph, StatefulWidget, Widget
     },
@@ -19,7 +17,7 @@ use directories::ProjectDirs;
 
 mod action;
 
-use action::{ActionBar, ActionBarMode, ActionBarState, Commands};
+use action::{ActionBar, ActionBarMode, ActionBarState, Commands, CommandsMap, Response};
 
 #[derive(Debug)]
 struct AppState {
@@ -31,6 +29,7 @@ struct AppState {
 struct App {
     project_dirs: ProjectDirs,
     commands: Rc<Commands>,
+    commands_map: CommandsMap<for<'a, 'b> fn(&mut App, &mut AppState)>,
     action_bar: ActionBar,
 }
 
@@ -42,7 +41,10 @@ impl App {
         std::fs::create_dir_all(&project_dirs.cache_dir())?;
 
         let mut commands = Commands::new();
-        commands.add_command("quit", &["Quit", "Exit"]);
+        let mut commands_map: CommandsMap<for<'a, 'b> fn(&mut App, &mut AppState)> = CommandsMap::new();
+
+        commands_map.set(commands.add_command("quit", &["Quit", "Exit"]), App::cmd_quit);
+        commands_map.set(commands.add_command("account-add", &["Add Account"]), App::cmd_account_add);
 
         commands.add_command("foo", &["Foo"]);
         commands.add_command("bar", &["Bar"]);
@@ -55,6 +57,7 @@ impl App {
         Ok(Self {
             project_dirs,
             commands,
+            commands_map,
             action_bar,
         })
     }
@@ -75,7 +78,14 @@ impl App {
         let ev =  event::read()?;
 
         if state.action_bar.is_active() {
-            state.action_bar.handle_event(ev, &self.action_bar);
+            match state.action_bar.handle_event(ev, &self.action_bar) {
+                Response::Command(cmd) => {
+                    if let Some(cmd) = self.commands_map.get(cmd) {
+                        cmd(self, state);
+                    }
+                },
+                _ => {},
+            }
             return Ok(())
         }
 
@@ -95,6 +105,14 @@ impl App {
             KeyCode::Char('/') => state.action_bar.activate(ActionBarMode::Search, &self.action_bar),
             _ => {}
         }
+    }
+
+    fn cmd_quit(&mut self, state: &mut AppState) {
+        state.exit = true;
+    }
+
+    fn cmd_account_add(&mut self, state: &mut AppState) {
+        todo!()
     }
 }
 
