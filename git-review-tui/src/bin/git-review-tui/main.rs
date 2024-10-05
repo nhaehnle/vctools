@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    hash::Hash,
     io::{self, BufReader},
     fs::File,
     rc::Rc
@@ -10,13 +11,14 @@ use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Layout, Rect},
-    style::Stylize,
+    style::{Style, Stylize},
     widgets::{
         Block, Borders, BorderType, Paragraph, StatefulWidget, Widget
     },
     DefaultTerminal
 };
 use directories::ProjectDirs;
+use tui_tree_widget::{Tree, TreeItem, TreeState};
 use serde::Deserialize;
 
 mod action;
@@ -46,6 +48,7 @@ struct AppState {
     exit: bool,
     action_bar: ActionBarState,
     terminal: Option<Rc<RefCell<DefaultTerminal>>>,
+    accounts: TreeState<usize>,
 }
 
 #[derive(Debug)]
@@ -56,6 +59,7 @@ struct App {
     commands_map: CommandsMap<for<'a, 'b> fn(&mut App)>,
     action_bar: ActionBar,
     state: AppState,
+    accounts: Vec<TreeItem<'static, usize>>,
 }
 
 impl App {
@@ -85,10 +89,12 @@ impl App {
             commands,
             commands_map,
             action_bar,
+            accounts: Vec::new(),
             state: AppState {
                 exit: false,
                 action_bar: ActionBarState::new(),
                 terminal: None,
+                accounts: TreeState::default(),
             },
         })
     }
@@ -110,6 +116,15 @@ impl App {
 
         if let Err(err) = result {
             MessageBox::new(self, "Error", &err.to_string()).run()?;
+        } else {
+            for (idx, account) in self.settings.accounts.iter().enumerate() {
+                self.accounts.push(
+                    TreeItem::new(
+                        idx, account.name.clone(),
+                        vec![TreeItem::new_leaf(std::usize::MAX, "Loading...")],
+                    )?
+                );
+            }
         }
 
         Ok(())
@@ -143,22 +158,28 @@ impl App {
             return Ok(())
         }
 
-        match ev {
+        let mut handled = match ev {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 self.handle_key_press(key)
-            }
-            _ => {}
+            },
+            _ => false,
+        };
+
+        if !handled {
+            handled = handle_tree_view_event(&mut self.state.accounts, ev);
         }
+
         Ok(())
     }
 
-    fn handle_key_press(&mut self, key: event::KeyEvent) {
+    fn handle_key_press(&mut self, key: event::KeyEvent) -> bool {
         match key.code {
             KeyCode::Char('q') => self.state.exit = true,
             KeyCode::Char(':') => self.state.action_bar.activate(ActionBarMode::Command, &self.action_bar),
             KeyCode::Char('/') => self.state.action_bar.activate(ActionBarMode::Search, &self.action_bar),
-            _ => {}
+            _ => return false,
         }
+        true
     }
 
     fn cmd_quit(&mut self) {
@@ -166,7 +187,7 @@ impl App {
     }
 
     fn cmd_account_add(&mut self) {
-        todo!()
+        drop(MessageBox::new(self, "Add Account", "Not implemented").run());
     }
 }
 
@@ -182,13 +203,46 @@ impl TopWidget for App {
             .borders(Borders::TOP)
             .border_type(BorderType::Thick)
             .yellow();
-        Paragraph::new("No accounts configured. Press ':' and select \"Add Account\"")
-            .black()
-            .on_white()
-            .block(block)
-            .render(vertical[0], buf);
+        if self.settings.accounts.is_empty() {
+            Paragraph::new("No accounts configured. Press ':' and select \"Add Account\"")
+                .black()
+                .on_white()
+                .block(block)
+                .render(vertical[0], buf);
+        } else {
+            if self.state.accounts.selected().is_empty() {
+                self.state.accounts.select_first();
+            }
+
+            let tree = Tree::new(&self.accounts).unwrap()
+                .block(block)
+                .style(Style::new().black().on_white())
+                .highlight_style(Style::new().blue().on_yellow());
+            StatefulWidget::render(tree, vertical[0], buf, &mut self.state.accounts);
+        }
         self.action_bar.render(vertical[1], buf, &mut self.state.action_bar);
     }
+}
+
+fn handle_tree_view_event<I: Clone + PartialEq + Eq + Hash>(state: &mut TreeState<I>, ev: Event) -> bool {
+    match ev {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            match key.code {
+                KeyCode::Left => { state.key_left(); },
+                KeyCode::Right => { state.key_right(); },
+                KeyCode::Down => { state.key_down(); },
+                KeyCode::Up => { state.key_up(); },
+                KeyCode::Esc => { state.select(Vec::new()); },
+                KeyCode::Home => { state.select_first(); },
+                KeyCode::End => { state.select_last(); },
+                KeyCode::PageDown => { for _ in 0..5 { state.key_down(); } },
+                KeyCode::PageUp => { for _ in 0..5 { state.key_up(); } },
+                _ => return false,
+            }
+        }
+        _ => return false,
+    }
+    true
 }
 
 fn main() -> io::Result<()> {
