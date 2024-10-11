@@ -3,7 +3,8 @@ use std::{
     hash::Hash,
     io::{self, BufReader},
     fs::File,
-    rc::Rc
+    rc::Rc,
+    time::Duration,
 };
 use tui_logger::{TuiLoggerSmartWidget, TuiLoggerWidget, TuiWidgetEvent, TuiWidgetState};
 use vctools_utils::preamble::*;
@@ -71,6 +72,7 @@ struct App {
     action_bar: ActionBar,
     state: AppState,
     accounts: Vec<TreeItem<'static, usize>>,
+    forges: Vec<model::Forge>,
 }
 
 impl App {
@@ -107,6 +109,7 @@ impl App {
             commands_map,
             action_bar,
             accounts: Vec::new(),
+            forges: Vec::new(),
             state: AppState {
                 exit: false,
                 action_bar: ActionBarState::new(),
@@ -120,6 +123,11 @@ impl App {
 
     fn post_init(&mut self) -> io::Result<()> {
         let path = self.project_dirs.config_dir().join("settings.json");
+
+        info!("Reading settings from '{}'", path.display());
+        info!("Cache dir: '{}'", self.project_dirs.cache_dir().display());
+        info!("Data dir: '{}'", self.project_dirs.data_dir().display());
+
         let result = try_forward(|| {
             let file = match File::open(&path) {
                 Ok(file) => file,
@@ -143,6 +151,7 @@ impl App {
                         vec![TreeItem::new_leaf(std::usize::MAX, "Loading...")],
                     )?
                 );
+                self.forges.push(model::Forge::GitHub(github::GitHubForge::open(account.github.clone())));
             }
         }
 
@@ -159,12 +168,27 @@ impl App {
             terminal.borrow_mut().draw(|frame| self.render_to_frame(frame))?;
             self.handle_events()?;
         }
+
+        for forge in self.forges.drain(..) {
+            forge.close();
+        }
+
         Ok(())
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
-        let ev = event::read()?;
+        self.handle_event(event::read()?);
 
+        // Handle any additional events -- we only want to repaint once after
+        // a batch of events.
+        while event::poll(Duration::from_secs(0))? {
+            self.handle_event(event::read()?);
+        }
+
+        Ok(())
+    }
+
+    fn handle_event(&mut self, ev: Event) {
         if self.state.action_bar.is_active() {
             match self.state.action_bar.handle_event(ev, &self.action_bar) {
                 action::Response::Command(cmd) => {
@@ -174,7 +198,7 @@ impl App {
                 },
                 _ => {},
             }
-            return Ok(())
+            return;
         }
 
         let mut handled = match ev {
@@ -197,8 +221,6 @@ impl App {
                 panes::Response::NotHandled => false,
             };
         }
-
-        Ok(())
     }
 
     fn handle_key_press(&mut self, key: event::KeyEvent) -> bool {
