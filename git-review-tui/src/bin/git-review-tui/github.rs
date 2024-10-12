@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, mpsc},
+    sync::{mpsc, Arc, RwLock},
     thread,
     time::{Duration, Instant},
 };
@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::model::{
     ForgeTrait,
+    Repository,
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -17,30 +18,98 @@ pub struct GitHubAccount {
     token: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ApiSimpleOwner {
+    login: String,
+    node_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiMinimalRepository {
+    id: u64,
+    node_id: String,
+    name: String,
+    owner: ApiSimpleOwner,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiNotificationSubject {
+    title: String,
+    url: String,
+    #[serde(rename = "type")]
+    subject_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiNotificationThread {
+    id: String,
+    last_read_at: Option<String>,
+    reason: String,
+    repository: ApiMinimalRepository,
+    subject: ApiNotificationSubject,
+    unread: bool,
+    updated_at: String,
+}
+
+#[derive(Debug)]
+struct GitHubRepository {
+    id: usize,
+    owner: String,
+    name: String,
+}
+
+#[derive(Debug)]
+struct GitHubRepositories {
+    repositories: Vec<GitHubRepository>,
+}
+impl GitHubRepositories {
+    fn new() -> Self {
+        Self {
+            repositories: Vec::new(),
+        }
+    }
+
+    fn get_or_insert(&mut self, owner: &str, name: &str) -> &mut GitHubRepository {
+        let id = self.repositories.iter()
+            .find(|r| r.owner == owner && r.name == name)
+            .map(|r| r.id)
+            .unwrap_or_else(|| {
+                let id = self.repositories.len();
+                self.repositories.push(GitHubRepository {
+                    id,
+                    owner: owner.to_string(),
+                    name: name.to_string(),
+                });
+                id
+            });
+        &mut self.repositories[id]
+    }
+}
+
 #[derive(Debug)]
 struct GitHubInner {
     account: GitHubAccount,
+    repositories: RwLock<GitHubRepositories>,
 }
 
 enum Command {
     Exit,
 }
 
-struct RateLimit {
-    duration: Duration,
-    until: Instant,
+trait Notify {
+    fn call(&self) -> bool;
 }
 
 struct GitHubWorker {
     inner: Arc<GitHubInner>,
+    notify: Box<dyn Notify>,
     done: bool,
     next_poll: Option<Instant>,
     client: Client,
-    rate_limit: Option<RateLimit>,
     notifications_last_modified: Option<String>,
 }
 impl GitHubWorker {
-    fn new(inner: Arc<GitHubInner>) -> Self {
+    fn new(inner: Arc<GitHubInner>, notify: Box<dyn Notify>) -> Self {
         use reqwest::header;
 
         let mut headers = header::HeaderMap::new();
@@ -59,10 +128,10 @@ impl GitHubWorker {
 
         Self {
             inner,
+            notify,
             done: false,
             next_poll: Some(Instant::now()),
             client,
-            rate_limit: None,
             notifications_last_modified: None,
         }
     }
@@ -137,11 +206,33 @@ impl GitHubWorker {
             }
             Ok(response) => {
                 log::info!("GitHub notifications: {:?}", &response);
+
+                let poll_interval = response.headers().get("X-Poll-Interval")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok());
+
                 if response.status().is_success() {
                     self.notifications_last_modified = response.headers().get(header::LAST_MODIFIED)
                             .and_then(|v| v.to_str().ok()).map(|s| s.to_string());
 
-                    //let notifications: serde_json::Value = response.json().unwrap();
+                    let notifications: Vec<ApiNotificationThread> =
+                        match response.json() {
+                            Ok(notifications) => notifications,
+                            Err(err) => {
+                                log::error!("Failed to parse notifications: {:?}", err);
+                                return;
+                            }
+                        };
+
+                    let mut repositories = self.inner.repositories.write().unwrap();
+                    for thread in notifications {
+                        log::info!("Notification: {:?}", &thread);
+                        repositories.get_or_insert(&thread.repository.owner.login, &thread.repository.name);
+                    }
+
+                    if !self.notify.call() {
+                        self.done = true;
+                    }
                 } else if response.status() == reqwest::StatusCode::NOT_MODIFIED {
                     log::info!("GitHub notifications not modified");
                 } else {
@@ -149,9 +240,7 @@ impl GitHubWorker {
                     return;
                 }
 
-                if let Some(seconds) = response.headers().get("X-Poll-Interval")
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|s| s.parse::<u64>().ok()) {
+                if  let Some(seconds) = poll_interval {
                     self.next_poll = Some(Instant::now() + Duration::from_secs(seconds));
                 }
             }
@@ -171,15 +260,30 @@ pub struct GitHubForge {
     control: GitHubControl,
 }
 impl GitHubForge {
-    pub fn open(account: GitHubAccount) -> Self {
+    pub fn open<N: Fn() -> bool + Send + 'static>(account: GitHubAccount, notify: N) -> Self {
         let inner = Arc::new(GitHubInner {
             account,
+            repositories: RwLock::new(GitHubRepositories::new()),
         });
 
         let (send, recv) = mpsc::channel();
 
         let inner_clone = inner.clone();
-        let thread_join = thread::spawn(move || GitHubWorker::new(inner_clone).run(recv));
+
+        struct NotifyImpl<F> {
+            f: F,
+        }
+        impl<F> Notify for NotifyImpl<F>
+            where F: Fn() -> bool
+        {
+            fn call(&self) -> bool {
+                (self.f)()
+            }
+        }
+        let notify = Box::new(NotifyImpl { f: notify });
+
+        let thread_join = thread::spawn(
+                move || GitHubWorker::new(inner_clone, notify).run(recv));
 
         Self {
             inner,
@@ -196,4 +300,12 @@ impl GitHubForge {
     }
 }
 impl ForgeTrait for GitHubForge {
+    fn get_repositories(&self) -> Vec<Repository> {
+        let repositories = self.inner.repositories.read().unwrap();
+        repositories.repositories.iter().map(|r| Repository {
+            id: r.id,
+            name: vec![r.owner.clone(), r.name.clone()],
+            code_reviews: Vec::new(),
+        }).collect()
+    }
 }

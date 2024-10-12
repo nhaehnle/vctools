@@ -1,10 +1,5 @@
 use std::{
-    cell::RefCell,
-    hash::Hash,
-    io::{self, BufReader},
-    fs::File,
-    rc::Rc,
-    time::Duration,
+    cell::RefCell, fs::File, hash::Hash, io::{self, BufReader}, rc::Rc, sync::mpsc, thread, time::Duration
 };
 use tui_logger::{TuiLoggerSmartWidget, TuiLoggerWidget, TuiWidgetEvent, TuiWidgetState};
 use vctools_utils::preamble::*;
@@ -13,11 +8,11 @@ use log::{trace, debug, info, warn, error, LevelFilter};
 
 use ratatui::{
     buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    crossterm::event::{self, KeyCode, KeyEventKind},
     layout::{Constraint, Layout, Rect},
     style::{Style, Stylize},
     widgets::{
-        Block, Borders, BorderType, Paragraph, StatefulWidget, Widget
+        Paragraph, StatefulWidget
     },
     DefaultTerminal
 };
@@ -33,9 +28,9 @@ mod panes;
 mod topwidget;
 
 use action::{ActionBar, ActionBarMode, ActionBarState, Commands, CommandsMap};
-use github::{GitHubAccount};
+use github::GitHubAccount;
 use msgbox::MessageBox;
-use panes::{PanesState, PanesLayout, Pane, Panes};
+use panes::{PanesState, Pane, Panes};
 use topwidget::TopWidget;
 
 const PANE_THREADS: usize = 0;
@@ -53,6 +48,13 @@ struct Account {
 #[derive(Debug, Default, Deserialize)]
 struct Settings {
     accounts: Vec<Account>,
+}
+
+#[derive(Debug)]
+enum Event {
+    TerminalEvent(event::Event),
+    UpdateForge(usize),
+    Exit,
 }
 
 struct AppState {
@@ -73,6 +75,8 @@ struct App {
     state: AppState,
     accounts: Vec<TreeItem<'static, usize>>,
     forges: Vec<model::Forge>,
+    action_send: mpsc::Sender<Event>,
+    action_recv: mpsc::Receiver<Event>,
 }
 
 impl App {
@@ -102,6 +106,8 @@ impl App {
         let mut panes_state = PanesState::default();
         panes_state.set_visible(PANE_LOGGING, false);
 
+        let (action_send, action_recv) = mpsc::channel();
+
         Ok(Self {
             settings: Settings::default(),
             project_dirs,
@@ -118,6 +124,8 @@ impl App {
                 logging: TuiWidgetState::default(),
                 panes: panes_state,
             },
+            action_send,
+            action_recv,
         })
     }
 
@@ -151,22 +159,73 @@ impl App {
                         vec![TreeItem::new_leaf(std::usize::MAX, "Loading...")],
                     )?
                 );
-                self.forges.push(model::Forge::GitHub(github::GitHubForge::open(account.github.clone())));
+
+                let send = self.action_send.clone();
+                let github = github::GitHubForge::open(
+                    account.github.clone(),
+                    move || {
+                        send.send(Event::UpdateForge(idx)).is_ok()
+                    }
+                );
+                self.forges.push(model::Forge::GitHub(github));
             }
         }
 
         Ok(())
     }
 
-    pub fn run(&mut self, terminal: DefaultTerminal) -> io::Result<()> {
+    fn update_forge(&mut self, idx: usize) {
+        let forge = &self.forges[idx];
+
+        let repositories = forge.get_repositories();
+        let children =
+            if repositories.is_empty() {
+                vec![TreeItem::new_leaf(std::usize::MAX, "No repositories")]
+            } else {
+                repositories.iter().map(|repo| {
+                    TreeItem::new_leaf(
+                        repo.id, repo.name.join("/"),
+                    )
+                }).collect()
+            };
+
+        self.accounts[idx] = TreeItem::new(
+            idx, self.settings.accounts[idx].name.clone(), children,
+        ).unwrap();
+    }
+
+    pub fn run(&mut self, terminal: DefaultTerminal) -> Result<()> {
         let terminal = Rc::new(RefCell::new(terminal));
         self.state.terminal = Some(terminal.clone());
 
         self.post_init()?;
 
+        let terminal_send = self.action_send.clone();
+        thread::spawn(
+            move || {
+                let _ = try_forward(|| -> Result<()> {
+                    loop {
+                        terminal_send.send(Event::TerminalEvent(event::read()?))?;
+                    }
+                }, || "");
+                let _ = terminal_send.send(Event::Exit);
+            });
+
         while !self.state.exit {
             terminal.borrow_mut().draw(|frame| self.render_to_frame(frame))?;
-            self.handle_events()?;
+
+            self.handle_event(self.action_recv.recv()?);
+
+            // Handle any additional events -- we only want to repaint once after
+            // a batch of events.
+            loop {
+                match self.action_recv.try_recv() {
+                    Ok(ev) => self.handle_event(ev),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) =>
+                        return Err(err_from_str("Event channel disconnected")),
+                }
+            }
         }
 
         for forge in self.forges.drain(..) {
@@ -176,19 +235,15 @@ impl App {
         Ok(())
     }
 
-    fn handle_events(&mut self) -> io::Result<()> {
-        self.handle_event(event::read()?);
-
-        // Handle any additional events -- we only want to repaint once after
-        // a batch of events.
-        while event::poll(Duration::from_secs(0))? {
-            self.handle_event(event::read()?);
+    fn handle_event(&mut self, ev: Event) {
+        match ev {
+            Event::Exit => self.state.exit = true,
+            Event::TerminalEvent(ev) => self.handle_terminal_event(ev),
+            Event::UpdateForge(idx) => self.update_forge(idx),
         }
-
-        Ok(())
     }
 
-    fn handle_event(&mut self, ev: Event) {
+    fn handle_terminal_event(&mut self, ev: event::Event) {
         if self.state.action_bar.is_active() {
             match self.state.action_bar.handle_event(ev, &self.action_bar) {
                 action::Response::Command(cmd) => {
@@ -202,7 +257,7 @@ impl App {
         }
 
         let mut handled = match ev {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
+            event::Event::Key(key) if key.kind == KeyEventKind::Press => {
                 self.handle_key_press(key)
             },
             _ => false,
@@ -287,9 +342,9 @@ impl TopWidget for App {
     }
 }
 
-fn handle_tree_view_event<I: Clone + PartialEq + Eq + Hash>(state: &mut TreeState<I>, ev: Event) -> bool {
+fn handle_tree_view_event<I: Clone + PartialEq + Eq + Hash>(state: &mut TreeState<I>, ev: event::Event) -> bool {
     match ev {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
+        event::Event::Key(key) if key.kind == KeyEventKind::Press => {
             match key.code {
                 KeyCode::Left => { state.key_left(); },
                 KeyCode::Right => { state.key_right(); },
@@ -308,9 +363,9 @@ fn handle_tree_view_event<I: Clone + PartialEq + Eq + Hash>(state: &mut TreeStat
     true
 }
 
-fn handle_debug_log_event(state: &mut TuiWidgetState, ev: Event) -> bool {
+fn handle_debug_log_event(state: &mut TuiWidgetState, ev: event::Event) -> bool {
     match ev {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
+        event::Event::Key(key) if key.kind == KeyEventKind::Press => {
             let widget_event =
                 match key.code {
                     KeyCode::Char(' ') => TuiWidgetEvent::SpaceKey,

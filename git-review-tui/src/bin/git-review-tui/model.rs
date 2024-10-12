@@ -5,16 +5,18 @@ pub struct CodeReview {
     pub target_branch: String,
 }
 
-pub type CodeReviewId = usize;
+#[derive(Debug, Clone)]
+pub struct CodeReviewId(pub usize);
 
 #[derive(Debug)]
 pub struct Repository {
+    pub id: usize,
     pub name: Vec<String>,
     pub code_reviews: Vec<CodeReviewId>,
 }
 
 pub trait ForgeTrait {
-    // fn get_repositories(&self) -> Vec<Repository>;
+    fn get_repositories(&self) -> Vec<Repository>;
 }
 
 pub enum Forge {
