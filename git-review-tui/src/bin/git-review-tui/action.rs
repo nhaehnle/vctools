@@ -12,6 +12,8 @@ use ratatui::{
 
 use tui_input::{backend::crossterm::EventHandler, Input};
 
+use crate::theme::{Theme, Themed};
+
 #[derive(Debug)]
 struct Command {
     name: String,
@@ -231,7 +233,7 @@ impl FilterState {
         spans
     }
 
-    fn render(&mut self, area: Rect, buf: &mut Buffer, commands: &Commands) {
+    fn render(&mut self, area: Rect, buf: &mut Buffer, theme: Option<&Theme>, commands: &Commands) {
         if area.y < 10 {
             return;
         }
@@ -242,6 +244,7 @@ impl FilterState {
 
         let popup_height = content_height as u16 + 1;
         let popup_area = Rect::new(area.x, area.y - popup_height, area.width, popup_height);
+        let content_area = Rect::new(area.x, popup_area.y + 1, area.width, content_height as u16);
 
         Clear.render(popup_area, buf);
 
@@ -254,11 +257,11 @@ impl FilterState {
         let text = if self.filtered.is_empty() {
             Text::from("(no matching command)")
         } else {
-            let normal_style = Style::new();
-            let match_style = Style::new().bold().blue();
+            let normal_style = theme.map_or(Style::default(), |theme| theme.modal_content);
+            let match_style = theme.map_or(Style::default(), |theme| theme.modal_highlight);
 
-            let normal_selected_style = Style::new().black();
-            let match_selected_style = Style::new().bold().blue();
+            let normal_selected_style = theme.map_or(Style::default(), |theme| theme.modal_selection);
+            let match_selected_style = normal_selected_style.patch(match_style);
 
             let mut lines: Vec<_> =
                 self.filtered.iter()
@@ -275,7 +278,7 @@ impl FilterState {
                         (normal_style, match_style)
                     };
 
-            let mut spans;
+                    let mut spans;
                     if filtered.title_idx == 0 {
                         spans = FilterState::stylize_match(
                             &command.titles[0],
@@ -306,13 +309,12 @@ impl FilterState {
             Text::from(lines)
         };
 
-        let block = Block::new()
+        Block::new()
             .border_type(BorderType::Double)
             .borders(Borders::TOP)
-            .border_style(Style::new().blue());
-        Paragraph::new(text)
-            .block(block)
+            .opt_theme_modal_pane(theme)
             .render(popup_area, buf);
+        Paragraph::new(text).render(content_area, buf);
     }
 }
 impl Default for FilterState {
@@ -363,9 +365,9 @@ impl ActionBarState {
         matches!(self.state, ActionBarStateImpl::Active { .. })
     }
 
-    pub fn activate(&mut self, mode: ActionBarMode, action_bar: &ActionBar) {
+    pub fn activate(&mut self, mode: ActionBarMode, commands: &Commands) {
         let filter = match mode {
-            ActionBarMode::Command => FilterState::new(&action_bar.commands),
+            ActionBarMode::Command => FilterState::new(&commands),
             ActionBarMode::Search => FilterState::default(),
         };
 
@@ -379,7 +381,7 @@ impl ActionBarState {
         };
     }
 
-    pub fn handle_event(&mut self, ev: Event, action_bar: &ActionBar) -> Response {
+    pub fn handle_event(&mut self, ev: Event, commands: &Commands) -> Response {
         let ActionBarStateImpl::Active { mode, input, filter } = &mut self.state else { return Response::Cancel };
 
         match ev {
@@ -417,7 +419,7 @@ impl ActionBarState {
                                 Response::Cancel
                             } else {
                                 if change.value && *mode == ActionBarMode::Command {
-                                    filter.set_query(&action_bar.commands, &input.value()[1..]);
+                                    filter.set_query(&commands, &input.value()[1..]);
                                 }
                                 Response::None
                             }
@@ -433,37 +435,42 @@ impl ActionBarState {
 }
 
 #[derive(Debug)]
-pub struct ActionBar {
-    commands: Rc<Commands>,
+pub struct ActionBar<'data, 'theme> {
+    commands: &'data Commands,
+    theme: Option<&'theme Theme>,
 }
 
-impl ActionBar {
-    pub fn new(commands: Rc<Commands>) -> Self {
+impl<'data, 'theme> ActionBar<'data, 'theme> {
+    pub fn new(commands: &'data Commands) -> Self {
         Self {
             commands,
+            theme: None,
         }
     }
+
+    pub fn theme(mut self, theme: &'theme Theme) -> Self {
+        self.theme = Some(theme);
+        self
+    }
 }
-impl StatefulWidget for &ActionBar {
+impl<'data, 'theme> StatefulWidget for &ActionBar<'data, 'theme> {
     type State = ActionBarState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut ActionBarState) {
         match &mut state.state {
             ActionBarStateImpl::Idle => {
                 Paragraph::new("Press ':' to enter command mode, '/' to enter search mode")
-                    .blue()
-                    .on_gray()
+                    .set_style_opt(self.theme.map(|theme| theme.status_bar))
                     .render(area, buf);
             }
             ActionBarStateImpl::Active { mode, input, filter } => {
                 let scroll = input.visual_scroll(area.width as usize);
                 Paragraph::new(input.value())
-                    .blue()
-                    .on_gray()
+                    .opt_theme_status_bar(self.theme)
                     .scroll((0, scroll as u16))
                     .render(area, buf);
                 if *mode == ActionBarMode::Command {
-                    filter.render(area, buf, &self.commands);
+                    filter.render(area, buf, self.theme, &self.commands);
                 }
             }
         }

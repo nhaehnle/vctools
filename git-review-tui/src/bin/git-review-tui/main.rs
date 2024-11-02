@@ -25,12 +25,14 @@ mod github;
 mod model;
 mod msgbox;
 mod panes;
+mod theme;
 mod topwidget;
 
 use action::{ActionBar, ActionBarMode, ActionBarState, Commands, CommandsMap};
 use github::GitHubAccount;
 use msgbox::MessageBox;
 use panes::{PanesState, Pane, Panes};
+use theme::{Theme, Themed};
 use topwidget::TopWidget;
 
 const PANE_THREADS: usize = 0;
@@ -69,9 +71,9 @@ struct AppState {
 struct App {
     settings: Settings,
     project_dirs: ProjectDirs,
+    theme: Theme,
     commands: Rc<Commands>,
     commands_map: CommandsMap<for<'a, 'b> fn(&mut App)>,
-    action_bar: ActionBar,
     state: AppState,
     accounts: Vec<TreeItem<'static, usize>>,
     forges: Vec<model::Forge>,
@@ -101,7 +103,6 @@ impl App {
         commands.add_command("abiba", &["Abiba"]);
 
         let commands = Rc::new(commands);
-        let action_bar = ActionBar::new(commands.clone());
 
         let mut panes_state = PanesState::default();
         panes_state.set_visible(PANE_LOGGING, false);
@@ -111,9 +112,9 @@ impl App {
         Ok(Self {
             settings: Settings::default(),
             project_dirs,
+            theme: Theme::default(),
             commands,
             commands_map,
-            action_bar,
             accounts: Vec::new(),
             forges: Vec::new(),
             state: AppState {
@@ -245,7 +246,7 @@ impl App {
 
     fn handle_terminal_event(&mut self, ev: event::Event) {
         if self.state.action_bar.is_active() {
-            match self.state.action_bar.handle_event(ev, &self.action_bar) {
+            match self.state.action_bar.handle_event(ev, &self.commands) {
                 action::Response::Command(cmd) => {
                     if let Some(cmd) = self.commands_map.get(cmd) {
                         cmd(self);
@@ -281,8 +282,8 @@ impl App {
     fn handle_key_press(&mut self, key: event::KeyEvent) -> bool {
         match key.code {
             KeyCode::Char('q') => self.state.exit = true,
-            KeyCode::Char(':') => self.state.action_bar.activate(ActionBarMode::Command, &self.action_bar),
-            KeyCode::Char('/') => self.state.action_bar.activate(ActionBarMode::Search, &self.action_bar),
+            KeyCode::Char(':') => self.state.action_bar.activate(ActionBarMode::Command, &self.commands),
+            KeyCode::Char('/') => self.state.action_bar.activate(ActionBarMode::Search, &self.commands),
             _ => return false,
         }
         true
@@ -306,27 +307,32 @@ impl TopWidget for App {
         self.state.terminal.as_ref().unwrap().clone()
     }
 
+    fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let vertical = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
+
+        let theme = &Theme::default();
 
         let mut pane_threads = Pane::new(PANE_THREADS, "Reviews");
 
         if self.settings.accounts.is_empty() {
             pane_threads = pane_threads.widget(
                 Paragraph::new("No accounts configured. Press ':' and select \"Add Account\"")
-                    .black()
-                    .on_white()
+                    .theme_content(theme)
             );
         } else {
             let tree = Tree::new(&self.accounts).unwrap()
-                .style(Style::new().black().on_white())
-                .highlight_style(Style::new().blue().on_yellow());
+                .style(theme.content)
+                .highlight_style(theme.selection);
 
             pane_threads = pane_threads.stateful_widget(tree, &mut self.state.accounts);
         }
 
         let logging = TuiLoggerWidget::default()
-            .style(Style::default().black().on_white())
+            .style(theme.content)
             .state(&self.state.logging);
 
         Panes::new(vec![
@@ -336,9 +342,12 @@ impl TopWidget for App {
                 .widget(logging)
                 .constraint(Constraint::Fill(10)),
         ])
+        .theme(theme)
         .render(vertical[0], buf, &mut self.state.panes);
 
-        self.action_bar.render(vertical[1], buf, &mut self.state.action_bar);
+        ActionBar::new(&self.commands)
+            .theme(theme)
+            .render(vertical[1], buf, &mut self.state.action_bar);
     }
 }
 

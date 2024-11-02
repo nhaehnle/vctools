@@ -5,6 +5,3 @@ members = [
     "git-review-tui",
     "vctools-utils",
 ]
-
-[patch.crates-io]
-tui-tree-widget = { path = "../tui-rs-tree-widget" }

@@ -11,7 +11,10 @@ use ratatui::{
     widgets::{Block, Borders, BorderType, Clear, Paragraph, Wrap},
 };
 
-use crate::topwidget::TopWidget;
+use crate::{
+    theme::{Theme, Themed},
+    topwidget::TopWidget,
+};
 
 pub struct MessageBox<'slf> {
     title: &'slf str,
@@ -48,6 +51,10 @@ impl<'slf> TopWidget for MessageBox<'slf> {
         self.parent.terminal()
     }
 
+    fn theme(&self) -> &Theme {
+        self.parent.theme()
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
         self.parent.render(area, buf);
 
@@ -65,16 +72,18 @@ impl<'slf> TopWidget for MessageBox<'slf> {
 
         Clear.render(msg_area, buf);
 
-        let block = Block::default()
+        Block::default()
             .title_alignment(Alignment::Center)
             .title(self.title)
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .blue()
-            .on_gray();
-        Paragraph::new(self.message)
-            .block(block)
-            .wrap(Wrap { trim: true })
+            .theme_modal_pane(self.theme())
             .render(msg_area, buf);
+
+        let inner_area = msg_area.inner(Margin::new(2, 2));
+        Paragraph::new(self.message)
+            .wrap(Wrap { trim: true })
+            .theme_modal_content(self.theme())
+            .render(inner_area, buf);
     }
 }

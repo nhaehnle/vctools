@@ -5,8 +5,11 @@ use std::{
 
 use ratatui::{prelude::*, DefaultTerminal};
 
+use crate::theme::Theme;
+
 pub trait TopWidget {
     fn terminal(&self) -> Rc<RefCell<DefaultTerminal>>;
+    fn theme(&self) -> &Theme;
     fn render(&mut self, area: Rect, buf: &mut Buffer);
 
     fn render_to_frame(&mut self, frame: &mut Frame) {

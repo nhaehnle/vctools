@@ -6,6 +6,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, StatefulWidget, Widget},
 };
 
+use crate::{
+    theme::{Theme, Themed},
+};
+
 #[derive(Debug)]
 pub enum Response {
     NotHandled,
@@ -171,18 +175,25 @@ impl<'state> Pane<'state> {
 }
 
 #[derive(Debug)]
-pub struct Panes<'state> {
+pub struct Panes<'state, 'theme> {
     panes: Vec<Pane<'state>>,
+    theme: Option<&'theme Theme>,
 }
-impl<'state> Panes<'state> {
+impl<'state, 'theme> Panes<'state, 'theme> {
     pub fn new(panes: Vec<Pane<'state>>) -> Self {
         Self {
             panes,
+            theme: None,
         }
     }
 
     pub fn add_pane(mut self, pane: Pane<'state>) -> Self {
         self.panes.push(pane);
+        self
+    }
+
+    pub fn theme(mut self, theme: &'theme Theme) -> Self {
+        self.theme = Some(theme);
         self
     }
 
@@ -206,7 +217,7 @@ impl<'state> Panes<'state> {
         }
     }
 }
-impl<'state> StatefulWidget for Panes<'state> {
+impl<'state, 'theme> StatefulWidget for Panes<'state, 'theme> {
     type State = PanesState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -235,13 +246,17 @@ impl<'state> StatefulWidget for Panes<'state> {
                 .borders(Borders::TOP);
 
             if state.focus == pane.key {
-                block = block
-                    .border_type(BorderType::Thick)
-                    .yellow();
+                block = block.border_type(BorderType::Thick)
             } else {
-                block = block
-                    .border_type(BorderType::Plain)
-                    .black();
+                block = block.border_type(BorderType::Plain)
+            }
+
+            if let Some(theme) = self.theme {
+                if state.focus == pane.key {
+                    block = block.theme_pane_active(theme);
+                } else {
+                    block = block.theme_pane_inactive(theme);
+                }
             }
 
             block.render(pane_area, buf);
