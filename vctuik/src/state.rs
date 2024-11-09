@@ -110,7 +110,7 @@ impl EventHandler for GlobalEventHandler<'_> {
                         .and_then(|id| self.state.find_in_focus_chain(id))
                         .unwrap_or(0);
                 if chain_index == 0 {
-                    chain_index = self.state.focus_chain.len() - 1;
+                    chain_index = self.state.focus_chain.len();
                 }
                 self.state.focus = Some(self.state.focus_chain[chain_index - 1]);
                 return Handled::Yes;
