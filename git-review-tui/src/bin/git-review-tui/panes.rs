@@ -6,9 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, StatefulWidget, Widget},
 };
 
-use crate::{
-    theme::{Theme, Themed},
-};
+use vctuik::theme::{Theme, Themed};
 
 #[derive(Debug)]
 pub enum Response {

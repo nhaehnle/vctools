@@ -1,4 +1,3 @@
-
 use std::cell::RefCell;
 
 use vctuik::{
@@ -21,7 +20,9 @@ fn main() -> Result<()> {
             checkbox::add(builder, "Foo", &mut foo);
             checkbox::add(builder, "Bar", &mut bar);
             checkbox::add(builder, "Running", &running);
-            event::on_key_press(builder, KeyCode::Char('q'), |_| { **running.borrow_mut() = false; });
+            event::on_key_press(builder, KeyCode::Char('q'), |_| {
+                **running.borrow_mut() = false;
+            });
         })?;
         terminal.wait_events(callbacks)?;
     }

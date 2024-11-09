@@ -532,7 +532,7 @@ dependencies = [
  "tui-input",
  "tui-logger",
  "tui-tree-widget",
- "vctools-utils",
+ "vctuik",
 ]
 
 [[package]]

@@ -12,7 +12,7 @@ use ratatui::{
 
 use tui_input::{backend::crossterm::EventHandler, Input};
 
-use crate::theme::{Theme, Themed};
+use vctuik::theme::{Theme, Themed};
 
 #[derive(Debug)]
 struct Command {

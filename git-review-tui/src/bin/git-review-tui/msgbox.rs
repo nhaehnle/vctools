@@ -11,10 +11,9 @@ use ratatui::{
     widgets::{Block, Borders, BorderType, Clear, Paragraph, Wrap},
 };
 
-use crate::{
-    theme::{Theme, Themed},
-    topwidget::TopWidget,
-};
+use vctuik::theme::{Theme, Themed};
+
+use crate::topwidget::TopWidget;
 
 pub struct MessageBox<'slf> {
     title: &'slf str,

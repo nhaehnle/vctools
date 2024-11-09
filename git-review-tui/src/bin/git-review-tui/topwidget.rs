@@ -5,7 +5,7 @@ use std::{
 
 use ratatui::{prelude::*, DefaultTerminal};
 
-use crate::theme::Theme;
+use vctuik::theme::Theme;
 
 pub trait TopWidget {
     fn terminal(&self) -> Rc<RefCell<DefaultTerminal>>;

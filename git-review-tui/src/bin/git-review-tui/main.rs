@@ -2,7 +2,7 @@ use std::{
     cell::RefCell, fs::File, hash::Hash, io::{self, BufReader}, rc::Rc, sync::mpsc, thread, time::Duration
 };
 use tui_logger::{TuiLoggerSmartWidget, TuiLoggerWidget, TuiWidgetEvent, TuiWidgetState};
-use vctools_utils::preamble::*;
+use vctuik::{prelude::*, theme::{Theme, Themed}};
 
 use log::{trace, debug, info, warn, error, LevelFilter};
 
@@ -25,14 +25,12 @@ mod github;
 mod model;
 mod msgbox;
 mod panes;
-mod theme;
 mod topwidget;
 
 use action::{ActionBar, ActionBarMode, ActionBarState, Commands, CommandsMap};
 use github::GitHubAccount;
 use msgbox::MessageBox;
 use panes::{PanesState, Pane, Panes};
-use theme::{Theme, Themed};
 use topwidget::TopWidget;
 
 const PANE_THREADS: usize = 0;
