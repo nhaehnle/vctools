@@ -73,7 +73,7 @@ struct App {
     project_dirs: ProjectDirs,
     theme: Theme,
     commands: Rc<Commands>,
-    commands_map: CommandsMap<for<'a, 'b> fn(&mut App)>,
+    commands_map: CommandsMap<fn(&mut App)>,
     state: AppState,
     accounts: Vec<TreeItem<'static, usize>>,
     forges: Vec<model::Forge>,
@@ -89,7 +89,7 @@ impl App {
         std::fs::create_dir_all(&project_dirs.cache_dir())?;
 
         let mut commands = Commands::new();
-        let mut commands_map: CommandsMap<for<'a, 'b> fn(&mut App)> = CommandsMap::new();
+        let mut commands_map: CommandsMap<fn(&mut App)> = CommandsMap::new();
 
         commands_map.set(commands.add_command("quit", &["Quit", "Exit"]), App::cmd_quit);
         commands_map.set(commands.add_command("account-add", &["Add Account"]), App::cmd_account_add);

@@ -460,13 +460,13 @@ impl<'data, 'theme> StatefulWidget for &ActionBar<'data, 'theme> {
         match &mut state.state {
             ActionBarStateImpl::Idle => {
                 Paragraph::new("Press ':' to enter command mode, '/' to enter search mode")
-                    .set_style_opt(self.theme.map(|theme| theme.status_bar))
+                    .opt_theme_action_bar(self.theme)
                     .render(area, buf);
             }
             ActionBarStateImpl::Active { mode, input, filter } => {
                 let scroll = input.visual_scroll(area.width as usize);
                 Paragraph::new(input.value())
-                    .opt_theme_status_bar(self.theme)
+                    .opt_theme_action_bar(self.theme)
                     .scroll((0, scroll as u16))
                     .render(area, buf);
                 if *mode == ActionBarMode::Command {

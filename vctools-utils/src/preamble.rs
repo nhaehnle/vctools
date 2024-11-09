@@ -1,7 +1,7 @@
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub fn err_from_str(msg: &str) -> Box<dyn std::error::Error> {
+pub fn err_from_str(msg: &str) -> Box<dyn std::error::Error + Send + Sync> {
     msg.into()
 }
 
@@ -15,7 +15,7 @@ where
     #[derive(Debug)]
     struct WrappedError {
         prefix: String,
-        cause: Box<dyn std::error::Error>,
+        cause: Box<dyn std::error::Error + Send + Sync>,
     }
     impl std::fmt::Display for WrappedError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

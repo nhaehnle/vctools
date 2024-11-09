@@ -15,7 +15,7 @@ pub struct Theme {
     pub modal_content: Style,
     pub modal_highlight: Style,
     pub modal_selection: Style,
-    pub status_bar: Style,
+    pub action_bar: Style,
 }
 
 impl Default for Theme {
@@ -39,7 +39,7 @@ impl Default for Theme {
             modal_content: Style::default().fg(dark_gray),
             modal_highlight: Style::default().fg(dark_blue),
             modal_selection: Style::default().bg(light_blue).fg(white),
-            status_bar: Style::default().bg(light_yellow).fg(dark_gray),
+            action_bar: Style::default().bg(light_yellow).fg(dark_blue),
         }
     }
 }
@@ -58,7 +58,7 @@ pub trait Themed {
     fn theme_modal_content(self, theme: &Theme) -> Self::Item;
     fn theme_modal_highlight(self, theme: &Theme) -> Self::Item;
     fn theme_modal_selection(self, theme: &Theme) -> Self::Item;
-    fn theme_status_bar(self, theme: &Theme) -> Self::Item;
+    fn theme_action_bar(self, theme: &Theme) -> Self::Item;
 
     fn opt_theme_pane_active(self, theme: Option<&Theme>) -> Self::Item;
     fn opt_theme_pane_inactive(self, theme: Option<&Theme>) -> Self::Item;
@@ -69,7 +69,7 @@ pub trait Themed {
     fn opt_theme_modal_content(self, theme: Option<&Theme>) -> Self::Item;
     fn opt_theme_modal_highlight(self, theme: Option<&Theme>) -> Self::Item;
     fn opt_theme_modal_selection(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_status_bar(self, theme: Option<&Theme>) -> Self::Item;
+    fn opt_theme_action_bar(self, theme: Option<&Theme>) -> Self::Item;
 }
 impl<I: Styled<Item = I>> Themed for I {
     type Item = I;
@@ -118,8 +118,8 @@ impl<I: Styled<Item = I>> Themed for I {
         self.set_style(theme.modal_selection)
     }
 
-    fn theme_status_bar(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.status_bar)
+    fn theme_action_bar(self, theme: &Theme) -> Self::Item {
+        self.set_style(theme.action_bar)
     }
 
     fn opt_theme_pane_active(self, theme: Option<&Theme>) -> Self::Item {
@@ -194,9 +194,9 @@ impl<I: Styled<Item = I>> Themed for I {
         }
     }
 
-    fn opt_theme_status_bar(self, theme: Option<&Theme>) -> Self::Item {
+    fn opt_theme_action_bar(self, theme: Option<&Theme>) -> Self::Item {
         if let Some(theme) = theme {
-            self.set_style(theme.status_bar)
+            self.set_style(theme.action_bar)
         } else {
             self
         }
