@@ -27,6 +27,7 @@ pub enum Renderable<'render> {
     Line(Rect, ratatui::text::Line<'render>),
     Text(Rect, ratatui::text::Text<'render>),
     Block(Rect, ratatui::widgets::Block<'render>),
+    SetCursor(Position),
     Other(Box<dyn IRenderable + 'render>),
     None,
 }
@@ -37,6 +38,7 @@ impl Renderable<'_> {
             Renderable::Line(area, line) => frame.render_widget(line, area),
             Renderable::Text(area, text) => frame.render_widget(text, area),
             Renderable::Block(area, block) => frame.render_widget(block, area),
+            Renderable::SetCursor(position) => frame.set_cursor_position(position),
             Renderable::Other(other) => other.render(frame),
             Renderable::None => {},
         }

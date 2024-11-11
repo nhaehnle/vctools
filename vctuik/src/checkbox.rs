@@ -58,7 +58,7 @@ impl<'a> CheckBoxStateRef<'a> for &'a RefCell<&'a mut bool> {
     }
 }
 
-pub fn add_checkbox<'builder, 'render, 'handler, 'tmp, S>(
+pub fn add_check_box<'builder, 'render, 'handler, 'tmp, S>(
     builder: &mut Builder<'builder, 'render, 'handler>,
     title: &'tmp str,
     state: S,
@@ -76,6 +76,7 @@ where
     let mut span = Span::from(text);
     if has_focus {
         span = span.theme_highlight(builder);
+        builder.add_render(Renderable::SetCursor(Position::new(area.x + 1, area.y)));
     } else {
         span = span.theme_text(builder);
     }
