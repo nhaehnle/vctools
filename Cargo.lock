@@ -2116,6 +2116,7 @@ name = "vctuik"
 version = "0.1.0"
 dependencies = [
  "ratatui",
+ "unicode-segmentation",
  "vctools-utils",
 ]
 

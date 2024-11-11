@@ -1,12 +1,17 @@
 use std::cell::Cell;
 
-use ratatui::DefaultTerminal;
+use ratatui::{
+    crossterm::{
+        event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
+        execute,
+    }, DefaultTerminal
+};
 
 use crate::{
-    event::{self, Event},
+    event::{self, Event, KeyEventKind},
     prelude::*,
     signals::{self, Dispatch, Receiver},
-    state::{BuildStore, Builder, EventHandlers, GlobalEventHandler, Handled, StateStore},
+    state::{BuildStore, Builder, EventHandlers, Handled, StateStore},
     theme::Theme,
 };
 
@@ -20,6 +25,15 @@ impl Terminal {
     pub(crate) fn init() -> Result<Terminal> {
         let mut terminal = ratatui::try_init()?;
         terminal.clear()?;
+
+        let mut stdout = std::io::stdout();
+        execute!(stdout, EnableMouseCapture)?;
+
+        let old_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            Terminal::restore();
+            old_hook(info);
+        }));
 
         let (event_signal, event_recv) = signals::make_channel();
 
@@ -40,6 +54,13 @@ impl Terminal {
             event_recv,
             theme: Theme::default(),
         })
+    }
+
+    fn restore() {
+        let mut stdout = std::io::stdout();
+        if let Err(err) = execute!(stdout, DisableMouseCapture) {
+            eprintln!("Failed to disable mouse capture: {err}");
+        }
     }
 
     pub fn draw<'slf, 'render, 'handler, F>(&'slf mut self, f: F) -> Result<EventHandlers<'handler>>
@@ -68,7 +89,22 @@ impl Terminal {
     pub fn wait_events<'a>(&'a mut self, mut handlers: EventHandlers<'a>) -> Result<()> {
         let the_err = Cell::new(None);
 
-        handlers.push(Box::new(GlobalEventHandler::new(&mut self.state_store.current)));
+        if self.state_store.current.can_focus() {
+            handlers.push(Box::new(|event| {
+                match event {
+                    Event::Key(ev) if ev.kind == KeyEventKind::Press => {
+                        let next = match ev.code {
+                            KeyCode::Tab => true,
+                            KeyCode::BackTab => false,
+                            _ => return Handled::No,
+                        };
+                        self.state_store.current.move_focus(next);
+                        Handled::Yes
+                    }
+                    _ => Handled::No,
+                }
+            }));
+        }
 
         // TODO: Need to bail out of this loop if there is a state change that
         //       changes how events are routed (e.g. TAB press).
@@ -94,23 +130,18 @@ impl Terminal {
     }
 
     fn handle_event(event: Event, handlers: &mut EventHandlers<'_>) -> Handled {
-        match event {
-            Event::Key(key_event) => {
-                for handler in handlers {
-                    let handled = handler.handle_key_event(key_event);
-                    if handled != Handled::No {
-                        return handled;
-                    }
-                }
-
-                Handled::No
-            },
-            _ => { Handled::No },
+        for handler in handlers {
+            let handled = handler(&event);
+            if handled != Handled::No {
+                return handled;
+            }
         }
+        Handled::No
     }
 }
 impl Drop for Terminal {
     fn drop(&mut self) {
+        Terminal::restore();
         ratatui::restore();
     }
 }

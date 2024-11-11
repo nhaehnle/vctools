@@ -1,10 +1,14 @@
 use std::{any::Any, borrow::Cow, collections::HashMap};
 
 use ratatui::{
-    crossterm::event::{KeyCode, KeyEventKind}, layout::{Position, Rect}, Frame
+    layout::{Position, Rect},
+    Frame,
 };
 
-use crate::{event::KeyEvent, theme::{Context, Theme}};
+use crate::{
+    event::Event,
+    theme::{Context, Theme},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StateId(usize);
@@ -45,12 +49,6 @@ impl Renderable<'_> {
     }
 }
 
-pub trait EventHandler {
-    fn handle_key_event(&mut self, _: KeyEvent) -> Handled {
-        Handled::No
-    }
-}
-
 struct StateNode {
     id: String,
     state: Option<Box<dyn Any>>,
@@ -78,8 +76,29 @@ impl StateNodes {
             .and_then(|state| state.downcast_ref())
     }
 
-    fn find_in_focus_chain(&self, id: StateId) -> Option<usize> {
-        self.focus_chain.iter().position(|&x| x == id)
+    pub fn can_focus(&self) -> bool {
+        !self.focus_chain.is_empty()
+    }
+
+    pub fn move_focus(&mut self, next: bool) {
+        assert!(!self.focus_chain.is_empty());
+
+        let old_index =
+            self.focus.and_then(|id| self.focus_chain.iter().position(|&x| x == id));
+
+        let new_index =
+            if next {
+                old_index
+                    .map(|index| index + 1)
+                    .filter(|index| index < &self.focus_chain.len())
+                    .unwrap_or(0)
+            } else {
+                old_index
+                    .and_then(|index| index.checked_sub(1))
+                    .unwrap_or(self.focus_chain.len().saturating_sub(1))
+            };
+
+        self.focus = Some(self.focus_chain[new_index]);
     }
 }
 
@@ -89,45 +108,7 @@ pub(crate) struct StateStore {
     pub(crate) current: StateNodes,
 }
 
-pub(crate) struct GlobalEventHandler<'handler> {
-    state: &'handler mut StateNodes,
-}
-impl<'handler> GlobalEventHandler<'handler> {
-    pub(crate) fn new(state: &'handler mut StateNodes) -> Self {
-        GlobalEventHandler { state }
-    }
-}
-impl EventHandler for GlobalEventHandler<'_> {
-    fn handle_key_event(&mut self, ev: KeyEvent) -> Handled {
-        if ev.kind == KeyEventKind::Press {
-            if ev.code == KeyCode::Tab {
-                let mut chain_index =
-                    self.state.focus
-                        .and_then(|id| self.state.find_in_focus_chain(id))
-                        .unwrap_or(self.state.focus_chain.len()) + 1;
-                if chain_index >= self.state.focus_chain.len() {
-                    chain_index = 0;
-                }
-                self.state.focus = Some(self.state.focus_chain[chain_index]);
-                return Handled::Yes;
-            }
-            if ev.code == KeyCode::BackTab {
-                let mut chain_index =
-                    self.state.focus
-                        .and_then(|id| self.state.find_in_focus_chain(id))
-                        .unwrap_or(0);
-                if chain_index == 0 {
-                    chain_index = self.state.focus_chain.len();
-                }
-                self.state.focus = Some(self.state.focus_chain[chain_index - 1]);
-                return Handled::Yes;
-            }
-        }
-        Handled::No
-    }
-}
-
-pub type EventHandlers<'handler> = Vec<Box<dyn EventHandler + 'handler>>;
+pub(crate) type EventHandlers<'handler> = Vec<Box<dyn (FnMut(&Event) -> Handled) + 'handler>>;
 
 pub(crate) struct BuildStore<'render, 'handler> {
     pub(crate) state: StateStore,
@@ -278,7 +259,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         self.store.render.get_mut(id.0)
     }
 
-    pub fn add_event_handler<H: EventHandler + 'handler>(&mut self, h: H) {
+    pub fn add_event_handler<H: (FnMut(&Event) -> Handled) + 'handler>(&mut self, h: H) {
         self.store.handlers.push(Box::new(h));
     }
 

@@ -1,6 +1,13 @@
 use std::cell::RefCell;
 
-use crate::{prelude::*, event, state::{Builder, Renderable}, theme::Themed};
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::{
+    prelude::*,
+    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton},
+    state::{Builder, Handled, Renderable},
+    theme::Themed,
+};
 
 use ratatui::{prelude::*, text::Span};
 
@@ -68,6 +75,8 @@ where
 {
     let mut state = state.as_check_box_state();
 
+    let text_width = title.graphemes(true).count() as u16;
+
     let id = builder.add_id(title, true);
     let has_focus = builder.has_focus(id);
     let text = format!("[{state_char}] {title}", state_char = if state.get() { '*' } else { ' ' });
@@ -82,7 +91,23 @@ where
     }
     builder.add_render(Renderable::Span(area, span));
 
-    if has_focus {
-        event::on_key_press(builder, event::KeyCode::Char(' '), move |_| state.toggle());
-    }
+    let click_area = Rect { width: 4 + text_width, ..area };
+
+    builder.add_event_handler(move |event| {
+        match event {
+            Event::Key(ev) if has_focus && ev.kind == KeyEventKind::Press
+                    && ev.code == KeyCode::Char(' ') => {
+                state.toggle();
+                Handled::Yes
+            }
+            Event::Mouse(ev) if ev.kind == MouseEventKind::Down(MouseButton::Left)
+                    && click_area.contains(Position::new(ev.column, ev.row)) => {
+                state.toggle();
+                Handled::Yes
+            }
+            _ => Handled::No,
+        }
+    });
+
+    // TODO: Set focus via mouse
 }

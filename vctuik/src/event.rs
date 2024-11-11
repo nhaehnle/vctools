@@ -1,28 +1,41 @@
 pub use ratatui::crossterm::event::*;
+use ratatui::layout::{Position, Rect};
 
-use crate::state::{Builder, EventHandler, Handled};
+use crate::state::{Builder, Handled};
 
 pub fn on_key_press<'handler>(
     builder: &mut Builder<'_, '_, 'handler>,
     key_code: KeyCode,
-    callback: impl FnMut(Event) + 'handler,
+    mut callback: impl FnMut(&KeyEvent) + 'handler,
 ) {
-    struct Impl<C> {
-        key_code: KeyCode,
-        callback: C,
-    }
-    impl<C: FnMut(Event)> EventHandler for Impl<C> {
-        fn handle_key_event(&mut self, event: KeyEvent) -> Handled {
-            if event.kind == KeyEventKind::Press && event.code == self.key_code {
-                (self.callback)(Event::Key(event));
+    let handler = move |event: &Event| {
+        match event {
+            Event::Key(ev) if ev.kind == KeyEventKind::Press && ev.code == key_code => {
+                callback(ev);
                 Handled::Yes
-            } else {
-                Handled::No
             }
+            _ => Handled::No,
         }
-    }
-    builder.add_event_handler(Impl {
-        key_code,
-        callback,
-    });
+    };
+    builder.add_event_handler(handler);
+}
+
+pub fn on_mouse_press<'handler>(
+    builder: &mut Builder<'_, '_, 'handler>,
+    area: Rect,
+    button: MouseButton,
+    mut callback: impl FnMut(&MouseEvent) + 'handler,
+) {
+    let handler = move |event: &Event| {
+        match event {
+            Event::Mouse(ev) if ev.kind == MouseEventKind::Down(button)
+                && area.contains(Position::new(ev.column, ev.row)) =>
+            {
+                callback(ev);
+                Handled::Yes
+            }
+            _=> Handled::No,                        
+        }
+    };
+    builder.add_event_handler(handler);
 }
