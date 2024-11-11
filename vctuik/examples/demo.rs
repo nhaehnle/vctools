@@ -1,7 +1,8 @@
 use std::cell::RefCell;
 
 use vctuik::{
-    checkbox,
+    checkbox::add_checkbox,
+    label::add_label,
     panes::{Pane, Panes},
     event::{self, KeyCode},
     prelude::*,
@@ -19,14 +20,17 @@ fn main() -> Result<()> {
         let running = RefCell::new(&mut running);
         let callbacks = terminal.draw(|builder| {
             let mut panes = Panes::new();
-            panes.add(Pane::new("Foo"), |builder| {
-                checkbox::add(builder, "Foo", &mut foo);
+            panes.add(Pane::new("Settings"), |builder| {
+                add_checkbox(builder, "Foo", &mut foo);
+                add_checkbox(builder, "Bar", &mut bar);
             });
-            panes.add(Pane::new("Bar"), |builder| {
-                checkbox::add(builder, "Bar", &mut bar);
+            panes.add(Pane::new("Commentary"), |builder| {
+                add_label(builder, "Cheddar");
+                add_label(builder, "Provolone");
+                add_label(builder, "Swiss");
             });
             panes.add(Pane::new("Running"), |builder| {
-                checkbox::add(builder, "Running", &running);
+                add_checkbox(builder, "Running", &running);
             });
             panes.build(builder, "panes", builder.viewport().height);
             event::on_key_press(builder, KeyCode::Char('q'), |_| {

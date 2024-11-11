@@ -58,7 +58,7 @@ impl<'a> CheckBoxStateRef<'a> for &'a RefCell<&'a mut bool> {
     }
 }
 
-pub fn add<'builder, 'render, 'handler, 'tmp, S>(
+pub fn add_checkbox<'builder, 'render, 'handler, 'tmp, S>(
     builder: &mut Builder<'builder, 'render, 'handler>,
     title: &'tmp str,
     state: S,

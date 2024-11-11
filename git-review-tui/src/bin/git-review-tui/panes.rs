@@ -252,7 +252,7 @@ impl<'state, 'theme> StatefulWidget for Panes<'state, 'theme> {
             if let Some(theme) = self.theme {
                 block = block.style(theme.pane_background);
                 if state.focus == pane.key {
-                    block = block.border_style(theme.pane_frame_highlighted);
+                    block = block.border_style(theme.pane_frame_focus);
                 } else {
                     block = block.border_style(theme.pane_frame_normal);
                 }

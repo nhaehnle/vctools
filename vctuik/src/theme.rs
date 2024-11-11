@@ -27,7 +27,7 @@ pub struct Theme {
     pub text: Text,
     pub pane_background: Style,
     pub pane_frame_normal: Style,
-    pub pane_frame_highlighted: Style,
+    pub pane_frame_focus: Style,
     pub pane_text: Text,
     pub modal_background: Style,
     pub modal_frame: Style,
@@ -103,7 +103,7 @@ fn make_solarized(dark: bool) -> Theme {
         },
         pane_background: Style::default().bg(base3),
         pane_frame_normal: Style::default().fg(base00).bold(),
-        pane_frame_highlighted: Style::default().fg(yellow).bold(),
+        pane_frame_focus: Style::default().fg(yellow).bold(),
         pane_text: Text {
             normal: Style::default().fg(base00),
             highlight: Style::default().fg(yellow),

@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{state::{Builder, Renderable}, theme::{Context, Themed}};
+use crate::{state::{Builder, Renderable}, theme::Context};
 
 use ratatui::{layout::Rect, widgets::{Block, BorderType, Borders}};
 
@@ -86,7 +86,7 @@ impl<'panes, 'render, 'handler> Panes<'panes,'render, 'handler> {
 
                 if nest.has_focus {
                     block = block.border_type(BorderType::Thick);
-                    block = block.border_style(builder.theme().pane_frame_highlighted);
+                    block = block.border_style(builder.theme().pane_frame_focus);
                 } else {
                     block = block.border_type(BorderType::Plain);
                     block = block.border_style(builder.theme().pane_frame_normal);
