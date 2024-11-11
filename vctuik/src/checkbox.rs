@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crate::{prelude::*, event, state::{Builder, Renderable}};
+use crate::{prelude::*, event, state::{Builder, Renderable}, theme::Themed};
 
 use ratatui::{prelude::*, text::Span};
 
@@ -75,7 +75,9 @@ where
 
     let mut span = Span::from(text);
     if has_focus {
-        span = span.bold();
+        span = span.theme_highlight(builder);
+    } else {
+        span = span.theme_text(builder);
     }
     builder.add_render(Renderable::Span(area, span));
 

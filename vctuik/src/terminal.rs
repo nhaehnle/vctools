@@ -7,12 +7,14 @@ use crate::{
     prelude::*,
     signals::{self, Dispatch, Receiver},
     state::{BuildStore, Builder, EventHandlers, GlobalEventHandler, Handled, StateStore},
+    theme::Theme,
 };
 
 pub struct Terminal {
     terminal: DefaultTerminal,
     state_store: StateStore,
     event_recv: Receiver<Result<Event>>,
+    theme: Theme,
 }
 impl Terminal {
     pub(crate) fn init() -> Result<Terminal> {
@@ -36,17 +38,19 @@ impl Terminal {
             terminal,
             state_store: StateStore::default(),
             event_recv,
+            theme: Theme::default(),
         })
     }
 
-    pub fn draw<'render, 'handler, F>(&mut self, f: F) -> Result<EventHandlers<'handler>>
+    pub fn draw<'slf, 'render, 'handler, F>(&'slf mut self, f: F) -> Result<EventHandlers<'handler>>
     where
         F: FnOnce(&mut Builder<'_, 'render, 'handler>),
+        'slf: 'render,
     {
         let mut result = None;
 
         self.terminal.draw(|frame| {
-            let mut build_store = BuildStore::new(std::mem::take(&mut self.state_store));
+            let mut build_store = BuildStore::new(std::mem::take(&mut self.state_store), &self.theme);
             f(&mut Builder::new(&mut build_store, frame.area()));
 
             self.state_store = build_store.state;

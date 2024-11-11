@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::state::{Builder, Renderable};
+use crate::{state::{Builder, Renderable}, theme::{Context, Themed}};
 
 use ratatui::{layout::Rect, widgets::{Block, Borders}};
 
@@ -12,7 +12,6 @@ pub struct Constraint {
 }
 
 pub struct Pane {
-    id: Option<String>,
     title: String,
 }
 impl Pane {
@@ -20,7 +19,7 @@ impl Pane {
     where 
         T: Into<String>
     {
-        Self { id: None, title: title.into() }
+        Self { title: title.into() }
     }
 }
 
@@ -73,9 +72,12 @@ impl<'panes, 'render, 'handler> Panes<'panes,'render, 'handler> {
 
                 let mut block = Block::default()
                     .title(pane.pane.title)
-                    .borders(Borders::TOP);
+                    .borders(Borders::TOP)
+                    .style(builder.theme().pane_background);
 
                 let inner_area = block.inner(area);
+
+                block = block.border_style(builder.theme().pane_frame_normal);
 
                 // if state.focus == pane.key {
                 //     block = block.border_type(BorderType::Thick)
@@ -93,7 +95,7 @@ impl<'panes, 'render, 'handler> Panes<'panes,'render, 'handler> {
 
                 builder.add_render(Renderable::Block(area, block));
 
-                builder.nest_viewport(inner_area, pane.build);
+                builder.with_context(Context::Pane, |builder| builder.nest_viewport(inner_area, pane.build));
             }
         });
     }

@@ -1,204 +1,157 @@
+use std::sync::LazyLock;
 
 use ratatui::{
     prelude::*,
     style::{Style, Styled},
 };
 
-#[derive(Debug)]
-pub struct Theme {
-    pub pane_active: Style,
-    pub pane_inactive: Style,
-    pub content: Style,
+use crate::state::Builder;
+
+#[derive(Debug, Clone)]
+pub struct Text {
+    pub normal: Style,
     pub highlight: Style,
-    pub selection: Style,
-    pub modal_pane: Style,
-    pub modal_content: Style,
-    pub modal_highlight: Style,
-    pub modal_selection: Style,
-    pub action_bar: Style,
+    pub inactive: Style,
+    pub selected: Style,
 }
 
-impl Default for Theme {
-    fn default() -> Self {
-        let light_blue = Color::Rgb(0, 0, 255);
-        let dark_blue = Color::Rgb(0, 0, 160);
-        let yellow = Color::Rgb(255, 255, 0);
-        let light_yellow = Color::Rgb(250, 250, 210);
-        let white = Color::Rgb(255, 255, 255);
-        let gray = Color::Rgb(128, 128, 128);
-        let light_gray = Color::Rgb(160, 160, 160);
-        let dark_gray = Color::Rgb(88, 88, 88);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Context {
+    None,
+    Pane,
+    Modal,
+}
 
-        Theme {
-            pane_active: Style::default().bg(light_blue).fg(yellow),
-            pane_inactive: Style::default().bg(dark_blue).fg(gray),
-            content: Style::default().fg(white),
-            highlight: Style::default().fg(yellow),
-            selection: Style::default().bg(light_gray).fg(light_blue),
-            modal_pane: Style::default().bg(light_yellow).fg(dark_blue),
-            modal_content: Style::default().fg(dark_gray),
-            modal_highlight: Style::default().fg(dark_blue),
-            modal_selection: Style::default().bg(light_blue).fg(white),
-            action_bar: Style::default().bg(light_yellow).fg(dark_blue),
+#[derive(Debug, Clone)]
+pub struct Theme {
+    pub text: Text,
+    pub pane_background: Style,
+    pub pane_frame_normal: Style,
+    pub pane_frame_highlighted: Style,
+    pub pane_text: Text,
+    pub modal_background: Style,
+    pub modal_frame: Style,
+    pub modal_text: Text,
+}
+impl Theme {
+    pub fn text(&self, context: Context) -> &Text {
+        match context {
+            Context::None => &self.text,
+            Context::Pane => &self.pane_text,
+            Context::Modal => &self.modal_text,
         }
     }
 }
+impl Default for Theme {
+    fn default() -> Self {
+        SOLARIZED_LIGHT.clone()
+    }
+}
+
+fn make_solarized(dark: bool) -> Theme {
+    // The original Solarized color theme is:
+    //
+    // Copyright (c) 2011 Ethan Schoonover
+    // 
+    // Permission is hereby granted, free of charge, to any person obtaining a copy
+    // of this software and associated documentation files (the "Software"), to deal
+    // in the Software without restriction, including without limitation the rights
+    // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    // copies of the Software, and to permit persons to whom the Software is
+    // furnished to do so, subject to the following conditions:
+    // 
+    // The above copyright notice and this permission notice shall be included in
+    // all copies or substantial portions of the Software.
+    // 
+    // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    // THE SOFTWARE.
+    let mut base03 =    Color::Rgb(0x00, 0x2b, 0x36);
+    let mut base02 =    Color::Rgb(0x07, 0x36, 0x42);
+    let mut base01 =    Color::Rgb(0x58, 0x6e, 0x75);
+    let mut base00 =    Color::Rgb(0x65, 0x7b, 0x83);
+    let mut base0 =     Color::Rgb(0x83, 0x94, 0x96);
+    let mut base1 =     Color::Rgb(0x93, 0xa1, 0xa1);
+    let mut base2 =     Color::Rgb(0xee, 0xe8, 0xd5);
+    let mut base3 =     Color::Rgb(0xfd, 0xf6, 0xe3);
+    let yellow =        Color::Rgb(0xb5, 0x89, 0x00);
+    let _orange =       Color::Rgb(0xcb, 0x4b, 0x16);
+    let _red =          Color::Rgb(0xdc, 0x32, 0x2f);
+    let _magenta =      Color::Rgb(0xd3, 0x36, 0x82);
+    let _violet =       Color::Rgb(0x6c, 0x71, 0xc4);
+    let _blue =         Color::Rgb(0x26, 0x8b, 0xd2);
+    let _cyan =         Color::Rgb(0x2a, 0xa1, 0x98);
+    let _green =        Color::Rgb(0x85, 0x99, 0x00);
+
+    if dark {
+        std::mem::swap(&mut base0, &mut base00);
+        std::mem::swap(&mut base1, &mut base01);
+        std::mem::swap(&mut base2, &mut base02);
+        std::mem::swap(&mut base3, &mut base03);
+    }
+
+    Theme {
+        text: Text {
+            normal: Style::default().fg(base00),
+            highlight: Style::default().fg(yellow),
+            inactive: Style::default().fg(base1),
+            selected: Style::default().bg(base02).fg(base1),
+        },
+        pane_background: Style::default().bg(base3),
+        pane_frame_normal: Style::default().fg(base00).bold(),
+        pane_frame_highlighted: Style::default().fg(yellow).bold(),
+        pane_text: Text {
+            normal: Style::default().fg(base00),
+            highlight: Style::default().fg(yellow),
+            inactive: Style::default().fg(base1),
+            selected: Style::default().bg(base02).fg(base1),
+        },
+        modal_background: Style::default().bg(base2),
+        modal_frame: Style::default().fg(yellow).bold(),
+        modal_text: Text {
+            normal: Style::default().fg(base00),
+            highlight: Style::default().fg(yellow),
+            inactive: Style::default().fg(base1),
+            selected: Style::default().bg(base02).fg(base1),
+        },
+    }
+}
+
+pub static SOLARIZED_LIGHT: LazyLock<Theme> = LazyLock::new(|| {
+    make_solarized(false)
+});
+pub static SOLARIZED_DARK: LazyLock<Theme> = LazyLock::new(|| {
+    make_solarized(true)
+});
 
 pub trait Themed {
     type Item;
 
-    fn set_style_opt(self, style: Option<Style>) -> Self::Item;
-
-    fn theme_pane_active(self, theme: &Theme) -> Self::Item;
-    fn theme_pane_inactive(self, theme: &Theme) -> Self::Item;
-    fn theme_content(self, theme: &Theme) -> Self::Item;
-    fn theme_highlight(self, theme: &Theme) -> Self::Item;
-    fn theme_selection(self, theme: &Theme) -> Self::Item;
-    fn theme_modal_pane(self, theme: &Theme) -> Self::Item;
-    fn theme_modal_content(self, theme: &Theme) -> Self::Item;
-    fn theme_modal_highlight(self, theme: &Theme) -> Self::Item;
-    fn theme_modal_selection(self, theme: &Theme) -> Self::Item;
-    fn theme_action_bar(self, theme: &Theme) -> Self::Item;
-
-    fn opt_theme_pane_active(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_pane_inactive(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_content(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_highlight(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_selection(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_modal_pane(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_modal_content(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_modal_highlight(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_modal_selection(self, theme: Option<&Theme>) -> Self::Item;
-    fn opt_theme_action_bar(self, theme: Option<&Theme>) -> Self::Item;
+    fn theme_text(self, theme: &Builder) -> Self::Item;
+    fn theme_highlight(self, theme: &Builder) -> Self::Item;
+    fn theme_inactive(self, theme: &Builder) -> Self::Item;
+    fn theme_selected(self, theme: &Builder) -> Self::Item;
 }
 impl<I: Styled<Item = I>> Themed for I {
     type Item = I;
 
-    fn set_style_opt(self, style: Option<Style>) -> Self::Item {
-        if let Some(style) = style {
-            self.set_style(style)
-        } else {
-            self
-        }
+    fn theme_text(self, builder: &Builder) -> Self::Item {
+        self.set_style(builder.theme().text(builder.context()).normal)
     }
 
-    fn theme_pane_active(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.pane_active)
+    fn theme_highlight(self, builder: &Builder) -> Self::Item {
+        self.set_style(builder.theme().text(builder.context()).highlight)
     }
 
-    fn theme_pane_inactive(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.pane_inactive)
+    fn theme_inactive(self, builder: &Builder) -> Self::Item {
+        self.set_style(builder.theme().text(builder.context()).inactive)
     }
 
-    fn theme_content(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.content)
-    }
-
-    fn theme_highlight(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.highlight)
-    }
-
-    fn theme_selection(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.selection)
-    }
-
-    fn theme_modal_pane(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.modal_pane)
-    }
-
-    fn theme_modal_content(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.modal_content)
-    }
-
-    fn theme_modal_highlight(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.modal_highlight)
-    }
-
-    fn theme_modal_selection(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.modal_selection)
-    }
-
-    fn theme_action_bar(self, theme: &Theme) -> Self::Item {
-        self.set_style(theme.action_bar)
-    }
-
-    fn opt_theme_pane_active(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.pane_active)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_pane_inactive(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.pane_inactive)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_content(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.content)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_highlight(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.highlight)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_selection(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.selection)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_modal_pane(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.modal_pane)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_modal_content(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.modal_content)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_modal_highlight(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.modal_highlight)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_modal_selection(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.modal_selection)
-        } else {
-            self
-        }
-    }
-
-    fn opt_theme_action_bar(self, theme: Option<&Theme>) -> Self::Item {
-        if let Some(theme) = theme {
-            self.set_style(theme.action_bar)
-        } else {
-            self
-        }
+    fn theme_selected(self, builder: &Builder) -> Self::Item {
+        self.set_style(builder.theme().text(builder.context()).selected)
     }
 }

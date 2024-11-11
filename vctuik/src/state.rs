@@ -4,7 +4,7 @@ use ratatui::{
     crossterm::event::{KeyCode, KeyEventKind}, layout::{Position, Rect}, Frame
 };
 
-use crate::event::KeyEvent;
+use crate::{event::KeyEvent, theme::{Context, Theme}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StateId(usize);
@@ -126,9 +126,10 @@ pub(crate) struct BuildStore<'render, 'handler> {
     pub(crate) state: StateStore,
     pub(crate) render: Vec<Renderable<'render>>,
     pub(crate) handlers: EventHandlers<'handler>,
+    pub(crate) theme: &'render Theme,
 }
 impl<'render, 'handler> BuildStore<'render, 'handler> {
-    pub(crate) fn new(mut state: StateStore) -> Self {
+    pub(crate) fn new(mut state: StateStore, theme: &'render Theme) -> Self {
         std::mem::swap(&mut state.previous, &mut state.current);
         state.current.clear();
 
@@ -136,6 +137,7 @@ impl<'render, 'handler> BuildStore<'render, 'handler> {
             state,
             render: Vec::new(),
             handlers: Vec::new(),
+            theme,
         }
     }
 }
@@ -143,6 +145,7 @@ impl<'render, 'handler> BuildStore<'render, 'handler> {
 pub struct Builder<'builder, 'render, 'handler> {
     store: &'builder mut BuildStore<'render, 'handler>,
     id_prefix: String,
+    context: Context,
     viewport: Rect,
     position: Position,
 }
@@ -151,9 +154,18 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         Builder {
             store,
             id_prefix: String::new(),
+            context: Context::None,
             viewport,
             position: Position::new(viewport.x, viewport.y),
         }
+    }
+
+    pub fn context(&self) -> Context {
+        self.context
+    }
+
+    pub fn theme(&self) -> &Theme {
+        self.store.theme
     }
 
     pub fn viewport(&self) -> Rect {
@@ -275,6 +287,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         f(&mut Builder {
             store: self.store,
             id_prefix,
+            context: self.context,
             viewport: self.viewport,
             position: self.position,
         });
@@ -287,8 +300,22 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         f(&mut Builder {
             store: self.store,
             id_prefix: self.id_prefix.clone(),
+            context: self.context,
             viewport,
             position: Position::new(viewport.x, viewport.y),
+        });
+    }
+
+    pub fn with_context<F>(&mut self, context: Context, f: F)
+    where
+        F: FnOnce(&mut Builder<'_, 'render, 'handler>),
+    {
+        f(&mut Builder {
+            store: self.store,
+            id_prefix: self.id_prefix.clone(),
+            context,
+            viewport: self.viewport,
+            position: self.position,
         });
     }
 }

@@ -1,4 +1,3 @@
-
 use std::rc::Rc;
 
 use ratatui::{
@@ -12,7 +11,7 @@ use ratatui::{
 
 use tui_input::{backend::crossterm::EventHandler, Input};
 
-use vctuik::theme::{Theme, Themed};
+use vctuik::theme::Theme;
 
 #[derive(Debug)]
 struct Command {
@@ -84,59 +83,70 @@ impl Commands {
 
     fn filter_eval(&self, id: CommandId, query: &str) -> Option<(usize, FilteredCommand)> {
         let command = self.get(id);
-        command.titles.iter().enumerate().map(|(title_idx, title)| {
-            let title = title.to_lowercase();
+        command
+            .titles
+            .iter()
+            .enumerate()
+            .map(|(title_idx, title)| {
+                let title = title.to_lowercase();
 
-            let mut matching_chars = Vec::new();
+                let mut matching_chars = Vec::new();
 
-            let mut tchars = title.char_indices().peekable();
-            let mut cost: Option<usize> = Some(0);
-            let mut in_word = false;
+                let mut tchars = title.char_indices().peekable();
+                let mut cost: Option<usize> = Some(0);
+                let mut in_word = false;
 
-            for qch in query.chars() {
-                if qch.is_whitespace() {
-                    in_word = false;
-                }
-
-                let mut skipped = false;
-                while let Some((_, tch)) = tchars.peek() {
-                    if *tch == qch { break; }
-                    skipped = true;
-                    tchars.next();
-                }
-
-                match tchars.next() {
-                None => {
-                    cost = None;
-                    break
-                },
-                Some((idx, _)) => {
-                    if skipped && in_word {
-                        *cost.as_mut().unwrap() += 1;
+                for qch in query.chars() {
+                    if qch.is_whitespace() {
+                        in_word = false;
                     }
-                    matching_chars.push(idx);
-                },
+
+                    let mut skipped = false;
+                    while let Some((_, tch)) = tchars.peek() {
+                        if *tch == qch {
+                            break;
+                        }
+                        skipped = true;
+                        tchars.next();
+                    }
+
+                    match tchars.next() {
+                        None => {
+                            cost = None;
+                            break;
+                        }
+                        Some((idx, _)) => {
+                            if skipped && in_word {
+                                *cost.as_mut().unwrap() += 1;
+                            }
+                            matching_chars.push(idx);
+                        }
+                    }
+
+                    if !qch.is_whitespace() {
+                        in_word = true;
+                    }
                 }
 
-                if !qch.is_whitespace() {
-                    in_word = true;
-                }
-            }
-
-            cost.map(|cost| (
-                10 * cost + title_idx,
-                FilteredCommand {
-                    id,
-                    title_idx,
-                    matching_chars,
-                },
-            ))
-        }).filter_map(|x| x).min_by_key(|(cost, _)| *cost)
+                cost.map(|cost| {
+                    (
+                        10 * cost + title_idx,
+                        FilteredCommand {
+                            id,
+                            title_idx,
+                            matching_chars,
+                        },
+                    )
+                })
+            })
+            .filter_map(|x| x)
+            .min_by_key(|(cost, _)| *cost)
     }
 
     fn filter(&self, query: &str) -> Vec<FilteredCommand> {
         if query.is_empty() {
-            return (0..self.commands.len()).into_iter()
+            return (0..self.commands.len())
+                .into_iter()
                 .map(|i| FilteredCommand {
                     id: CommandId(i),
                     title_idx: 0,
@@ -147,11 +157,9 @@ impl Commands {
 
         let query = query.to_lowercase();
 
-        let mut filtered: Vec<_> =
-            (0..self.commands.len()).into_iter()
-                .filter_map(|i| {
-                    self.filter_eval(CommandId(i), &query)
-                })
+        let mut filtered: Vec<_> = (0..self.commands.len())
+            .into_iter()
+            .filter_map(|i| self.filter_eval(CommandId(i), &query))
             .collect();
 
         filtered.sort_by_key(|(cost, _)| *cost);
@@ -199,10 +207,11 @@ impl FilterState {
     }
 
     fn stylize_match<'text>(
-            text: &'text str,
-            matching_chars: &[usize],
-            normal_style: Style,
-            match_style: Style) -> Vec<Span<'text>> {
+        text: &'text str,
+        matching_chars: &[usize],
+        normal_style: Style,
+        match_style: Style,
+    ) -> Vec<Span<'text>> {
         let mut spans = Vec::new();
 
         let mut match_begin = None;
@@ -257,22 +266,23 @@ impl FilterState {
         let text = if self.filtered.is_empty() {
             Text::from("(no matching command)")
         } else {
-            let normal_style = theme.map_or(Style::default(), |theme| theme.modal_content);
-            let match_style = theme.map_or(Style::default(), |theme| theme.modal_highlight);
+            let normal_style = theme.map_or(Style::default(), |theme| theme.modal_text.normal);
+            let match_style = theme.map_or(Style::default(), |theme| theme.modal_text.highlight);
 
-            let normal_selected_style = theme.map_or(Style::default(), |theme| theme.modal_selection);
+            let normal_selected_style =
+                theme.map_or(Style::default(), |theme| theme.modal_text.selected);
             let match_selected_style = normal_selected_style.patch(match_style);
 
-            let mut lines: Vec<_> =
-                self.filtered.iter()
+            let mut lines: Vec<_> = self
+                .filtered
+                .iter()
                 .enumerate()
                 .skip(self.scroll)
                 .take(content_height)
                 .map(|(i, filtered)| {
                     let command = commands.get(filtered.id);
 
-                    let (normal_style, match_style) =
-                    if i == self.selected {
+                    let (normal_style, match_style) = if i == self.selected {
                         (normal_selected_style, match_selected_style)
                     } else {
                         (normal_style, match_style)
@@ -284,7 +294,8 @@ impl FilterState {
                             &command.titles[0],
                             &filtered.matching_chars,
                             normal_style,
-                            match_style);
+                            match_style,
+                        );
                     } else {
                         spans = vec![
                             Span::styled(&command.titles[0], normal_style),
@@ -294,7 +305,8 @@ impl FilterState {
                             &command.titles[filtered.title_idx],
                             &filtered.matching_chars,
                             normal_style,
-                            match_style));
+                            match_style,
+                        ));
                         spans.push(Span::styled(")", normal_style));
                     }
 
@@ -309,11 +321,15 @@ impl FilterState {
             Text::from(lines)
         };
 
-        Block::new()
+        let mut block = Block::new()
             .border_type(BorderType::Double)
-            .borders(Borders::TOP)
-            .opt_theme_modal_pane(theme)
-            .render(popup_area, buf);
+            .borders(Borders::TOP);
+        if let Some(theme) = theme {
+            block = block
+                .style(theme.modal_background)
+                .border_style(theme.modal_frame);
+        }
+        block.render(popup_area, buf);
         Paragraph::new(text).render(content_area, buf);
     }
 }
@@ -373,63 +389,70 @@ impl ActionBarState {
 
         self.state = ActionBarStateImpl::Active {
             mode,
-            input: Input::new((match mode {
-                ActionBarMode::Command => ":",
-                ActionBarMode::Search => "/",
-            }).into()),
+            input: Input::new(
+                (match mode {
+                    ActionBarMode::Command => ":",
+                    ActionBarMode::Search => "/",
+                })
+                .into(),
+            ),
             filter,
         };
     }
 
     pub fn handle_event(&mut self, ev: Event, commands: &Commands) -> Response {
-        let ActionBarStateImpl::Active { mode, input, filter } = &mut self.state else { return Response::Cancel };
+        let ActionBarStateImpl::Active {
+            mode,
+            input,
+            filter,
+        } = &mut self.state
+        else {
+            return Response::Cancel;
+        };
 
         match ev {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                match key.code {
-                    KeyCode::Enter => {
-                        let response =
-                            if *mode == ActionBarMode::Command {
-                                match filter.get_selected() {
-                                    Some(id) => Response::Command(id),
-                                    None => Response::Cancel,
-                                }
-                            } else {
-                                Response::Cancel
-                            };
-                        self.state = ActionBarStateImpl::Idle;
-                        response
-                    }
-                    KeyCode::Esc => {
-                        self.state = ActionBarStateImpl::Idle;
+            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                KeyCode::Enter => {
+                    let response = if *mode == ActionBarMode::Command {
+                        match filter.get_selected() {
+                            Some(id) => Response::Command(id),
+                            None => Response::Cancel,
+                        }
+                    } else {
                         Response::Cancel
-                    }
-                    KeyCode::Up => {
-                        filter.handle_up();
-                        Response::None
-                    },
-                    KeyCode::Down => {
-                        filter.handle_down();
-                        Response::None
-                    },
-                    _ => {
-                        if let Some(change) = input.handle_event(&ev) {
-                            if change.value && input.value().is_empty() {
-                                self.state = ActionBarStateImpl::Idle;
-                                Response::Cancel
-                            } else {
-                                if change.value && *mode == ActionBarMode::Command {
-                                    filter.set_query(&commands, &input.value()[1..]);
-                                }
-                                Response::None
-                            }
+                    };
+                    self.state = ActionBarStateImpl::Idle;
+                    response
+                }
+                KeyCode::Esc => {
+                    self.state = ActionBarStateImpl::Idle;
+                    Response::Cancel
+                }
+                KeyCode::Up => {
+                    filter.handle_up();
+                    Response::None
+                }
+                KeyCode::Down => {
+                    filter.handle_down();
+                    Response::None
+                }
+                _ => {
+                    if let Some(change) = input.handle_event(&ev) {
+                        if change.value && input.value().is_empty() {
+                            self.state = ActionBarStateImpl::Idle;
+                            Response::Cancel
                         } else {
+                            if change.value && *mode == ActionBarMode::Command {
+                                filter.set_query(&commands, &input.value()[1..]);
+                            }
                             Response::None
                         }
+                    } else {
+                        Response::None
                     }
                 }
-            }
-            _ => { Response::None }
+            },
+            _ => Response::None,
         }
     }
 }
@@ -457,16 +480,23 @@ impl<'data, 'theme> StatefulWidget for &ActionBar<'data, 'theme> {
     type State = ActionBarState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut ActionBarState) {
+        let style = self.theme
+            .map(|theme| theme.modal_background.patch(theme.modal_frame))
+            .unwrap_or_default();
         match &mut state.state {
             ActionBarStateImpl::Idle => {
                 Paragraph::new("Press ':' to enter command mode, '/' to enter search mode")
-                    .opt_theme_action_bar(self.theme)
+                    .style(style)
                     .render(area, buf);
             }
-            ActionBarStateImpl::Active { mode, input, filter } => {
+            ActionBarStateImpl::Active {
+                mode,
+                input,
+                filter,
+            } => {
                 let scroll = input.visual_scroll(area.width as usize);
                 Paragraph::new(input.value())
-                    .opt_theme_action_bar(self.theme)
+                    .style(style)
                     .scroll((0, scroll as u16))
                     .render(area, buf);
                 if *mode == ActionBarMode::Command {

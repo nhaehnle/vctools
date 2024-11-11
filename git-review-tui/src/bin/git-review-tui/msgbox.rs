@@ -76,13 +76,14 @@ impl<'slf> TopWidget for MessageBox<'slf> {
             .title(self.title)
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .theme_modal_pane(self.theme())
+            .style(self.theme().modal_background)
+            .border_style(self.theme().modal_frame)
             .render(msg_area, buf);
 
         let inner_area = msg_area.inner(Margin::new(2, 2));
         Paragraph::new(self.message)
             .wrap(Wrap { trim: true })
-            .theme_modal_content(self.theme())
+            .style(self.theme().modal_text.normal)
             .render(inner_area, buf);
     }
 }

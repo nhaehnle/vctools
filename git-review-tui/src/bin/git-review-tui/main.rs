@@ -319,18 +319,18 @@ impl TopWidget for App {
         if self.settings.accounts.is_empty() {
             pane_threads = pane_threads.widget(
                 Paragraph::new("No accounts configured. Press ':' and select \"Add Account\"")
-                    .theme_content(theme)
+                    .style(theme.pane_text.normal)
             );
         } else {
             let tree = Tree::new(&self.accounts).unwrap()
-                .style(theme.content)
-                .highlight_style(theme.selection);
+                .style(theme.pane_text.normal)
+                .highlight_style(theme.pane_text.selected);
 
             pane_threads = pane_threads.stateful_widget(tree, &mut self.state.accounts);
         }
 
         let logging = TuiLoggerWidget::default()
-            .style(theme.content)
+            .style(theme.pane_text.normal)
             .state(&self.state.logging);
 
         Panes::new(vec![
