@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::{state::{Builder, Renderable}, theme::{Context, Themed}};
 
-use ratatui::{layout::Rect, widgets::{Block, Borders}};
+use ratatui::{layout::Rect, widgets::{Block, BorderType, Borders}};
 
 #[derive(Debug, Clone)]
 pub struct Constraint {
@@ -63,39 +63,36 @@ impl<'panes, 'render, 'handler> Panes<'panes,'render, 'handler> {
                 .chain(((remaining_height as usize)..self.panes.len()).map(|_| pane_height))
                 .collect();
 
-        builder.nest_id(id, |builder| {
+        let id = builder.add_id(id, false);
+
+        builder.nest().id(id).build(|builder| {
             for (pane, height) in self.panes.into_iter().zip(layout.into_iter()) {
                 let area = builder.take_lines(height);
                 if area.is_empty() {
                     break
                 }
 
+                let inner_area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+
+                let render = builder.add_render(Renderable::None);
+
+                let id = builder.add_id(&pane.pane.title, false);
+                let nest = builder.nest().id(id).context(Context::Pane).viewport(inner_area).build(pane.build);
+
                 let mut block = Block::default()
                     .title(pane.pane.title)
                     .borders(Borders::TOP)
                     .style(builder.theme().pane_background);
 
-                let inner_area = block.inner(area);
+                if nest.has_focus {
+                    block = block.border_type(BorderType::Thick);
+                    block = block.border_style(builder.theme().pane_frame_highlighted);
+                } else {
+                    block = block.border_type(BorderType::Plain);
+                    block = block.border_style(builder.theme().pane_frame_normal);
+                }
 
-                block = block.border_style(builder.theme().pane_frame_normal);
-
-                // if state.focus == pane.key {
-                //     block = block.border_type(BorderType::Thick)
-                // } else {
-                //     block = block.border_type(BorderType::Plain)
-                // }
-
-                // if let Some(theme) = self.theme {
-                //     if state.focus == pane.key {
-                //         block = block.theme_pane_active(theme);
-                //     } else {
-                //         block = block.theme_pane_inactive(theme);
-                //     }
-                // }
-
-                builder.add_render(Renderable::Block(area, block));
-
-                builder.with_context(Context::Pane, |builder| builder.nest_viewport(inner_area, pane.build));
+                *builder.get_render_mut(render).unwrap() = Renderable::Block(area, block);
             }
         });
     }

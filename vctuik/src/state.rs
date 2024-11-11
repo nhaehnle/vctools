@@ -49,9 +49,14 @@ pub trait EventHandler {
     }
 }
 
+struct StateNode {
+    id: String,
+    state: Option<Box<dyn Any>>,
+}
+
 #[derive(Default)]
 pub struct StateNodes {
-    entries: Vec<(String, Option<Box<dyn Any>>)>,
+    entries: Vec<StateNode>,
     id_map: HashMap<String, usize>,
     focus_chain: Vec<StateId>,
     focus: Option<StateId>,
@@ -67,7 +72,7 @@ impl StateNodes {
     pub fn get_state<T: 'static>(&self, id: StateId) -> Option<&T> {
         self.entries
             .get(id.0)
-            .and_then(|(_, state)| state.as_ref())
+            .and_then(|state| state.state.as_ref())
             .and_then(|state| state.downcast_ref())
     }
 
@@ -232,7 +237,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
 
         let old_index = self.store.state.previous.id_map.get(&*id);
         let state = old_index
-            .and_then(|index| self.store.state.previous.entries[*index].1.take())
+            .and_then(|index| self.store.state.previous.entries[*index].state.take())
             .filter(|state| state.is::<T>());
         let pre_existing = state.is_some();
 
@@ -249,11 +254,14 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
             self.store.state.current.focus_chain.push(StateId(index));
         }
 
-        self.store.state.current.entries.push((id, state));
+        self.store.state.current.entries.push(StateNode {
+            id,
+            state,
+        });
 
         (
             StateId(index),
-            self.store.state.current.entries[index].1
+            self.store.state.current.entries[index].state
                 .get_or_insert_with(|| Box::new(f()))
                 .downcast_mut().unwrap(),
         )
@@ -272,50 +280,74 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         self.store.handlers.push(Box::new(h));
     }
 
-    pub fn nest_id<'id, F, I>(&mut self, id: I, f: F)
-    where
-        F: FnOnce(&mut Builder<'_, 'render, 'handler>),
-        I: Into<Cow<'id, str>>,
-    {
-        let id = id.into();
-        let id_prefix = if self.id_prefix.is_empty() {
-            id.to_string()
-        } else {
-            format!("{}-##-{}", self.id_prefix, id)
-        };
-
-        f(&mut Builder {
-            store: self.store,
-            id_prefix,
-            context: self.context,
-            viewport: self.viewport,
-            position: self.position,
-        });
+    pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'render, 'handler> {
+        Nest {
+            first_id: StateId(self.store.state.current.entries.len()),
+            builder: Builder { 
+                store: self.store,
+                id_prefix: self.id_prefix.clone(),
+                context: self.context,
+                viewport: self.viewport,
+                position: self.position,
+            },
+        }
     }
+}
 
-    pub fn nest_viewport<F>(&mut self, viewport: Rect, f: F)
-    where
-        F: FnOnce(&mut Builder<'_, 'render, 'handler>),
-    {
-        f(&mut Builder {
-            store: self.store,
-            id_prefix: self.id_prefix.clone(),
-            context: self.context,
-            viewport,
-            position: Position::new(viewport.x, viewport.y),
-        });
-    }
-
-    pub fn with_context<F>(&mut self, context: Context, f: F)
+pub struct Nest<'nest, 'render, 'handler> {
+    builder: Builder<'nest, 'render, 'handler>,
+    first_id: StateId,
+}
+impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
+    pub fn build<F>(mut self, f: F) -> NestResult
     where
         F: FnOnce(&mut Builder<'_, 'render, 'handler>),
     {
-        f(&mut Builder {
-            store: self.store,
-            id_prefix: self.id_prefix.clone(),
-            context,
-            viewport: self.viewport,
-            position: self.position,
-        });
+        f(&mut self.builder);
+
+        NestResult {
+            has_focus: self.builder.store.state.current.focus
+                        .map(|focus_id| focus_id.0 >= self.first_id.0).unwrap_or(false),
+        }
     }
+
+    pub fn id(self, id: StateId) -> Self {
+        assert!(id.0 == self.builder.store.state.current.entries.len() - 1);
+
+        let id_prefix = self.builder.store.state.current.entries[id.0].id.clone();
+
+        Nest {
+            builder: Builder {
+                id_prefix,
+                ..self.builder
+            },
+            ..self
+        }
+    }
+
+    pub fn viewport(self, viewport: Rect) -> Self {
+        Nest {
+            builder: Builder {
+                viewport,
+                position: Position::new(viewport.x, viewport.y),
+                ..self.builder
+            },
+            ..self
+        }
+    }
+
+    pub fn context(self, context: Context) -> Self {
+        Nest {
+            builder: Builder {
+                context,
+                ..self.builder
+            },
+            ..self
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NestResult {
+    pub has_focus: bool,
 }
