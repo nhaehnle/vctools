@@ -66,6 +66,9 @@ impl Terminal {
 
         handlers.push(Box::new(GlobalEventHandler::new(&mut self.state_store.current)));
 
+        // TODO: Need to bail out of this loop if there is a state change that
+        //       changes how events are routed (e.g. TAB press).
+
         let mut dispatch = Dispatch::new();
         let mut event_recv = self.event_recv.dispatch(|event| {
             match event {

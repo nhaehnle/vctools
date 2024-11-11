@@ -260,17 +260,19 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         self.store.handlers.push(Box::new(h));
     }
 
-    pub fn nest_id<F>(&mut self, id: &str, f: F)
+    pub fn nest_id<'id, F, I>(&mut self, id: I, f: F)
     where
-        F: FnOnce(Builder<'_, 'render, 'handler>),
+        F: FnOnce(&mut Builder<'_, 'render, 'handler>),
+        I: Into<Cow<'id, str>>,
     {
+        let id = id.into();
         let id_prefix = if self.id_prefix.is_empty() {
             id.to_string()
         } else {
             format!("{}-##-{}", self.id_prefix, id)
         };
 
-        f(Builder {
+        f(&mut Builder {
             store: self.store,
             id_prefix,
             viewport: self.viewport,
@@ -280,9 +282,9 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
 
     pub fn nest_viewport<F>(&mut self, viewport: Rect, f: F)
     where
-        F: FnOnce(Builder<'_, 'render, 'handler>),
+        F: FnOnce(&mut Builder<'_, 'render, 'handler>),
     {
-        f(Builder {
+        f(&mut Builder {
             store: self.store,
             id_prefix: self.id_prefix.clone(),
             viewport,
