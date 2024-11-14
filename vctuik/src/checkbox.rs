@@ -3,8 +3,7 @@ use std::cell::RefCell;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    prelude::*,
-    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton},
+    event::{Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton},
     state::{Builder, Handled, Renderable},
     theme::Themed,
 };
@@ -77,7 +76,7 @@ where
 
     let text_width = title.graphemes(true).count() as u16;
 
-    let id = builder.add_id(title, true);
+    let id = builder.add_widget(title, true);
     let has_focus = builder.has_focus(id);
     let text = format!("[{state_char}] {title}", state_char = if state.get() { '*' } else { ' ' });
     let area = builder.take_lines(1);

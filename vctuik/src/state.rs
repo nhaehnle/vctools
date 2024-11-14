@@ -1,17 +1,19 @@
-use std::{any::Any, borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap};
 
 use ratatui::{
     layout::{Position, Rect},
     Frame,
 };
 
+use vctuik_unsafe_internals::state;
+
 use crate::{
-    event::Event,
+    event::{Event, KeyEventKind, KeyCode},
     theme::{Context, Theme},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StateId(usize);
+pub struct WidgetId(usize);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RenderId(usize);
@@ -49,11 +51,6 @@ impl Renderable<'_> {
     }
 }
 
-struct StateNode {
-    id: String,
-    state: Option<Box<dyn Any>>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Focus {
     ghost: Option<String>,
@@ -61,32 +58,25 @@ struct Focus {
 }
 
 #[derive(Default)]
-pub struct StateNodes {
-    entries: Vec<StateNode>,
-    id_map: HashMap<String, usize>,
-    focus_chain: Vec<StateId>,
+struct IdState {
+    id_map: HashMap<String, WidgetId>,
+    ids: Vec<String>,
+    focus_chain: Vec<WidgetId>,
     focus: Option<Focus>,
 }
-impl StateNodes {
-    pub fn clear(&mut self) {
-        self.entries.clear();
+impl IdState {
+    fn clear(&mut self) {
         self.id_map.clear();
+        self.ids.clear();
         self.focus_chain.clear();
         self.focus = None;
     }
 
-    pub fn get_state<T: 'static>(&self, id: StateId) -> Option<&T> {
-        self.entries
-            .get(id.0)
-            .and_then(|state| state.state.as_ref())
-            .and_then(|state| state.downcast_ref())
-    }
-
-    pub fn can_focus(&self) -> bool {
+    fn can_focus(&self) -> bool {
         !self.focus_chain.is_empty()
     }
 
-    pub fn move_focus(&mut self, next: bool) {
+    fn move_focus(&mut self, next: bool) {
         assert!(!self.focus_chain.is_empty());
 
         let index =
@@ -106,56 +96,89 @@ impl StateNodes {
 }
 
 #[derive(Default)]
-pub(crate) struct StateStore {
-    pub(crate) previous: StateNodes,
-    pub(crate) current: StateNodes,
+struct IdStore {
+    previous: IdState,
+    current: IdState,
+}
+
+#[derive(Default)]
+pub(crate) struct Store {
+    ids: IdStore,
+    state: state::Store<WidgetId>,
 }
 
 pub(crate) type EventHandlers<'handler> = Vec<Box<dyn (FnMut(&Event) -> Handled) + 'handler>>;
 
 pub(crate) struct BuildStore<'render, 'handler> {
-    pub(crate) state: StateStore,
-    pub(crate) render: Vec<Renderable<'render>>,
-    pub(crate) handlers: EventHandlers<'handler>,
-    pub(crate) theme: &'render Theme,
+    ids: &'handler mut IdStore,
+    state_builder: state::Builder<'handler, WidgetId>,
+    render: Vec<Renderable<'render>>,
+    handlers: EventHandlers<'handler>,
+    theme: &'render Theme,
 }
 impl<'render, 'handler> BuildStore<'render, 'handler> {
-    pub(crate) fn new(mut state: StateStore, theme: &'render Theme) -> Self {
-        std::mem::swap(&mut state.previous, &mut state.current);
-        state.current.clear();
+    pub(crate) fn new(state: &'handler mut Store, theme: &'render Theme) -> Self {
+        let ids = &mut state.ids;
+        std::mem::swap(&mut ids.previous, &mut ids.current);
+        ids.current.clear();
+
+        let state_builder = state::Builder::new(&mut state.state);
 
         BuildStore {
-            state,
+            ids,
+            state_builder,
             render: Vec::new(),
             handlers: Vec::new(),
             theme,
         }
     }
 
-    pub(crate) fn finish(&mut self) {
-        if self.state.current.focus.is_none() && !self.state.current.focus_chain.is_empty() {
-            if let Some(Focus { mut ghost, index }) = self.state.previous.focus.take() {
+    pub(crate) fn finish(mut self) -> (Vec<Renderable<'render>>, EventHandlers<'handler>) {
+        let previous = &mut self.ids.previous;
+        let current = &mut self.ids.current;
+
+        if current.focus.is_none() && !current.focus_chain.is_empty() {
+            if let Some(Focus { mut ghost, index }) = previous.focus.take() {
                 if ghost.is_none() {
-                    ghost = Some(std::mem::take(&mut self.state.previous.entries[self.state.previous.focus_chain[index].0].id));
+                    ghost = Some(std::mem::take(&mut previous.ids[previous.focus_chain[index].0]));
                 }
 
                 let ghost_index =
-                    self.state.previous.focus_chain[(index + 1)..]
+                    previous.focus_chain[(index + 1)..]
                         .iter()
                         .copied()
                         .filter_map(|old_id| {
-                            self.state.current.id_map.get(&self.state.previous.entries[old_id.0].id)
-                                .map(|&id| StateId(id))
+                            current.id_map.get(&previous.ids[old_id.0])
+                                .map(|&id| id)
                         })
                         .find_map(|new_id| {
-                            self.state.current.focus_chain.iter()
+                            current.focus_chain.iter()
                                 .enumerate()
                                 .find_map(|(index, &id)| (id == new_id).then_some(index))
                         })
                         .unwrap_or(0);
-                self.state.current.focus = Some(Focus { ghost, index: ghost_index });
+                current.focus = Some(Focus { ghost, index: ghost_index });
             }
         }
+
+        if current.can_focus() {
+            self.handlers.push(Box::new(|event| {
+                match event {
+                    Event::Key(ev) if ev.kind == KeyEventKind::Press => {
+                        let next = match ev.code {
+                            KeyCode::Tab => true,
+                            KeyCode::BackTab => false,
+                            _ => return Handled::No,
+                        };
+                        current.move_focus(next);
+                        Handled::Yes
+                    }
+                    _ => Handled::No,
+                }
+            }));
+        }
+
+        (self.render, self.handlers)
     }
 }
 
@@ -216,32 +239,14 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         area
     }
 
-    pub fn has_focus(&self, id: StateId) -> bool {
+    pub fn has_focus(&self, id: WidgetId) -> bool {
         matches!(
-            self.store.state.current.focus,
-            Some(Focus { ghost: None, index }) if self.store.state.current.focus_chain[index] == id)
+            self.store.ids.current.focus,
+            Some(Focus { ghost: None, index }) if self.store.ids.current.focus_chain[index] == id)
     }
 
-    pub fn add_id<'a, Id>(&'a mut self, id: Id, can_focus: bool) -> StateId
-    where
-        Id: Into<Cow<'a, str>>,
+    pub fn add_widget_impl(&mut self, mut id: Cow<'_, str>, can_focus: bool) -> (WidgetId, Option<WidgetId>)
     {
-        self.add_id_with_state(id, can_focus, || ()).0
-    }
-
-    pub fn add_id_with_state<'add, Id, T, F>(
-        &'add mut self,
-        id: Id,
-        can_focus: bool,
-        f: F,
-    ) -> (StateId, &'add mut T)
-    where
-        Id: Into<Cow<'add, str>>,
-        F: FnOnce() -> T,
-        T: 'static,
-    {
-        let mut id: Cow<'_, str> = id.into();
-
         assert!(!id.is_empty());
         assert!(id.find("##").is_none(), "id cannot contain '##'");
 
@@ -249,22 +254,14 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
             id = format!("{}-##-{}", self.id_prefix, id).into();
         }
 
-        let previous = &mut self.store.state.previous;
-        let current = &mut self.store.state.current;
+        let previous = &mut self.store.ids.previous;
+        let current = &mut self.store.ids.current;
 
-        let mut old_index = previous.id_map.get(&*id).map(|x| *x);
-        let state = old_index
-            .and_then(|index| previous.entries[index].state.take())
-            .filter(|state| state.is::<T>());
-        if state.is_none() {
-            // In the unusual case that the state type has changed, we treat this
-            // as a new widget.
-            old_index = None;
-        }
+        let old_id = previous.id_map.get(&*id).map(|x| *x);
+        let new_id = WidgetId(current.ids.len());
 
-        let index = current.entries.len();
         let id = id.into_owned();
-        let old = current.id_map.insert(id.clone(), index);
+        let old = current.id_map.insert(id.clone(), new_id);
         assert!(old.is_none());
 
         if can_focus {
@@ -285,7 +282,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
                 // If this widget was previously focus or carries the ghost
                 // location, carry the focus / ghost location forward.
                 (None, Some(Focus { ghost, index }))
-                    if Some(previous.focus_chain[*index].0) == old_index => Some(ghost.take()),
+                    if Some(previous.focus_chain[*index]) == old_id => Some(ghost.take()),
 
                 _ => None,
             };
@@ -293,19 +290,35 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
                 current.focus = Some(Focus { ghost, index: current.focus_chain.len() });
             }
 
-            current.focus_chain.push(StateId(index));
+            current.focus_chain.push(new_id);
         }
 
-        current.entries.push(StateNode {
-            id,
-            state,
-        });
+        current.ids.push(id);
+
+        (new_id, old_id)
+    }
+
+    pub fn add_widget<'add, Id>(&'add mut self, id: Id, can_focus: bool) -> WidgetId
+    where
+        Id: Into<Cow<'add, str>>,
+    {
+        self.add_widget_impl(id.into(), can_focus).0
+    }
+
+    pub fn add_state_widget<'add, S, Id>(
+        &'add mut self,
+        id: Id,
+        can_focus: bool,
+    ) -> (WidgetId, &'handler mut S)
+    where
+        Id: Into<Cow<'add, str>>,
+        S: Default + 'static,
+    {
+        let (new_id, old_id) = self.add_widget_impl(id.into(), can_focus);
 
         (
-            StateId(index),
-            current.entries[index].state
-                .get_or_insert_with(|| Box::new(f()))
-                .downcast_mut().unwrap(),
+            new_id,
+            self.store.state_builder.get_or_insert_default(new_id, old_id),
         )
     }
 
@@ -324,7 +337,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
 
     pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'render, 'handler> {
         Nest {
-            initial_focus_chain_len: self.store.state.current.focus_chain.len(),
+            initial_focus_chain_len: self.store.ids.current.focus_chain.len(),
             builder: Builder { 
                 store: self.store,
                 id_prefix: self.id_prefix.clone(),
@@ -348,7 +361,7 @@ impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
         f(&mut self.builder);
 
         let has_focus =
-            self.builder.store.state.current.focus.as_ref()
+            self.builder.store.ids.current.focus.as_ref()
                 .filter(|focus| focus.ghost.is_none())
                 .map(|focus| focus.index >= self.initial_focus_chain_len)
                 .unwrap_or(false);
@@ -358,10 +371,10 @@ impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
         }
     }
 
-    pub fn id(self, id: StateId) -> Self {
-        assert!(id.0 == self.builder.store.state.current.entries.len() - 1);
+    pub fn id(self, id: WidgetId) -> Self {
+        assert!(id.0 == self.builder.store.ids.current.ids.len() - 1);
 
-        let id_prefix = self.builder.store.state.current.entries[id.0].id.clone();
+        let id_prefix = self.builder.store.ids.current.ids[id.0].clone();
 
         Nest {
             builder: Builder {

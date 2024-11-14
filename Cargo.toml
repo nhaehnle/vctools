@@ -5,4 +5,5 @@ members = [
     "git-review-tui",
     "vctools-utils",
     "vctuik",
+    "vctuik-unsafe-internals",
 ]

@@ -2,22 +2,22 @@ use std::cell::Cell;
 
 use ratatui::{
     crossterm::{
-        event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
+        event::{DisableMouseCapture, EnableMouseCapture},
         execute,
     }, DefaultTerminal
 };
 
 use crate::{
-    event::{self, Event, KeyEventKind},
+    event::{self, Event},
     prelude::*,
     signals::{self, Dispatch, Receiver},
-    state::{BuildStore, Builder, EventHandlers, Handled, StateStore},
+    state::{BuildStore, Builder, EventHandlers, Handled, Store},
     theme::Theme,
 };
 
 pub struct Terminal {
     terminal: DefaultTerminal,
-    state_store: StateStore,
+    store: Store,
     event_recv: Receiver<Result<Event>>,
     theme: Theme,
 }
@@ -50,7 +50,7 @@ impl Terminal {
 
         Ok(Terminal {
             terminal,
-            state_store: StateStore::default(),
+            store: Store::default(),
             event_recv,
             theme: Theme::default(),
         })
@@ -63,53 +63,32 @@ impl Terminal {
         }
     }
 
-    pub fn draw<'slf, 'render, 'handler, F>(&'slf mut self, f: F) -> Result<EventHandlers<'handler>>
+    pub fn run_frame<'slf, 'render, 'handler, F>(&'slf mut self, f: F) -> Result<()>
     where
         F: FnOnce(&mut Builder<'_, 'render, 'handler>),
-        'slf: 'render,
+        'slf: 'render + 'handler,
     {
         let mut result = None;
 
         self.terminal.draw(|frame| {
-            let mut build_store = BuildStore::new(std::mem::take(&mut self.state_store), &self.theme);
+            let mut build_store = BuildStore::new(&mut self.store, &self.theme);
             f(&mut Builder::new(&mut build_store, frame.area()));
-            build_store.finish();
 
-            self.state_store = build_store.state;
+            let (render, handlers) = build_store.finish();
 
-            for renderable in build_store.render {
+            for renderable in render {
                 renderable.render(frame);
             }
 
-            result = Some(build_store.handlers);
+            result = Some(handlers);
         })?;
 
-        Ok(result.unwrap())
-    }
-
-    pub fn wait_events<'a>(&'a mut self, mut handlers: EventHandlers<'a>) -> Result<()> {
-        let the_err = Cell::new(None);
-
-        if self.state_store.current.can_focus() {
-            handlers.push(Box::new(|event| {
-                match event {
-                    Event::Key(ev) if ev.kind == KeyEventKind::Press => {
-                        let next = match ev.code {
-                            KeyCode::Tab => true,
-                            KeyCode::BackTab => false,
-                            _ => return Handled::No,
-                        };
-                        self.state_store.current.move_focus(next);
-                        Handled::Yes
-                    }
-                    _ => Handled::No,
-                }
-            }));
-        }
+        let mut handlers = result.unwrap();
 
         // TODO: Need to bail out of this loop if there is a state change that
         //       changes how events are routed (e.g. TAB press).
 
+        let the_err = Cell::new(None);
         let mut dispatch = Dispatch::new();
         let mut event_recv = self.event_recv.dispatch(|event| {
             match event {

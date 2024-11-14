@@ -9,3 +9,4 @@ categories = ["command-line-utilities"]
 ratatui = { version = "0.28.1", features = [] }
 unicode-segmentation = { version = "1.12" }
 vctools-utils = { path = "../vctools-utils" }
+vctuik-unsafe-internals = { path = "../vctuik-unsafe-internals" }

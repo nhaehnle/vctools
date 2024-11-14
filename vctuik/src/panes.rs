@@ -74,7 +74,7 @@ struct CompletePane<'panes, 'render, 'handler> {
 }
 
 #[derive(Debug, Default)]
-pub struct PanesState {
+struct PanesState {
     implicit_states: Vec<Option<(String, PaneState)>>,
 }
 
@@ -93,7 +93,7 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
         self.panes.push(CompletePane { pane, build: Box::new(build) });
     }
 
-    pub fn build<'id, Id>(self, builder: &mut Builder<'_, 'render, 'handler>, id: Id, num_lines: u16, state: &'handler mut PanesState)
+    pub fn build<'id, Id>(self, builder: &mut Builder<'_, 'render, 'handler>, id: Id, num_lines: u16)
     where
         Id: Into<Cow<'id, str>>,
     {
@@ -104,7 +104,7 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
         }
 
         let id = id.into();
-        let id = builder.add_id(id, false);
+        let (id, state) = builder.add_state_widget::<PanesState, _>(id, false);
 
         // Re-map and build the implicit states for panes that don't have externally
         // owned state.
@@ -193,7 +193,7 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
                 let inner_area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
 
                 let render = builder.add_render(Renderable::None);
-                let id = builder.add_id(&config.title, false);
+                let id = builder.add_widget(&config.title, false);
 
                 let has_focus =
                     if state.collapsed {
