@@ -16,6 +16,8 @@ fn main() -> Result<()> {
     let mut foo = false;
     let mut bar = false;
 
+    let mut panes_state = vctuik::panes::PanesState::default(); // TODO: Make this implicit
+
     while running {
         let running = RefCell::new(&mut running);
         let callbacks = terminal.draw(|builder| {
@@ -32,7 +34,7 @@ fn main() -> Result<()> {
             panes.add(Pane::new("Running"), |builder| {
                 add_check_box(builder, "Running", &running);
             });
-            panes.build(builder, "panes", builder.viewport().height);
+            panes.build(builder, "panes", builder.viewport().height, &mut panes_state);
             event::on_key_press(builder, KeyCode::Char('q'), |_| {
                 **running.borrow_mut() = false;
             });
