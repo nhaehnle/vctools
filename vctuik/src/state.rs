@@ -54,12 +54,18 @@ struct StateNode {
     state: Option<Box<dyn Any>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Focus {
+    ghost: Option<String>,
+    index: usize,
+}
+
 #[derive(Default)]
 pub struct StateNodes {
     entries: Vec<StateNode>,
     id_map: HashMap<String, usize>,
     focus_chain: Vec<StateId>,
-    focus: Option<StateId>,
+    focus: Option<Focus>,
 }
 impl StateNodes {
     pub fn clear(&mut self) {
@@ -83,22 +89,19 @@ impl StateNodes {
     pub fn move_focus(&mut self, next: bool) {
         assert!(!self.focus_chain.is_empty());
 
-        let old_index =
-            self.focus.and_then(|id| self.focus_chain.iter().position(|&x| x == id));
-
-        let new_index =
+        let index =
             if next {
-                old_index
-                    .map(|index| index + 1)
-                    .filter(|index| index < &self.focus_chain.len())
+                self.focus.as_ref()
+                    .map(|Focus { ghost, index }| index + if ghost.is_some() { 0 } else { 1 })
+                    .filter(|&index| index < self.focus_chain.len())
                     .unwrap_or(0)
             } else {
-                old_index
-                    .and_then(|index| index.checked_sub(1))
+                self.focus.as_ref()
+                    .and_then(|focus| focus.index.checked_sub(1))
                     .unwrap_or(self.focus_chain.len().saturating_sub(1))
             };
 
-        self.focus = Some(self.focus_chain[new_index]);
+        self.focus = Some(Focus { ghost: None, index });
     }
 }
 
@@ -126,6 +129,32 @@ impl<'render, 'handler> BuildStore<'render, 'handler> {
             render: Vec::new(),
             handlers: Vec::new(),
             theme,
+        }
+    }
+
+    pub(crate) fn finish(&mut self) {
+        if self.state.current.focus.is_none() && !self.state.current.focus_chain.is_empty() {
+            if let Some(Focus { mut ghost, index }) = self.state.previous.focus.take() {
+                if ghost.is_none() {
+                    ghost = Some(std::mem::take(&mut self.state.previous.entries[self.state.previous.focus_chain[index].0].id));
+                }
+
+                let ghost_index =
+                    self.state.previous.focus_chain[(index + 1)..]
+                        .iter()
+                        .copied()
+                        .filter_map(|old_id| {
+                            self.state.current.id_map.get(&self.state.previous.entries[old_id.0].id)
+                                .map(|&id| StateId(id))
+                        })
+                        .find_map(|new_id| {
+                            self.state.current.focus_chain.iter()
+                                .enumerate()
+                                .find_map(|(index, &id)| (id == new_id).then_some(index))
+                        })
+                        .unwrap_or(0);
+                self.state.current.focus = Some(Focus { ghost, index: ghost_index });
+            }
         }
     }
 }
@@ -188,7 +217,9 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
     }
 
     pub fn has_focus(&self, id: StateId) -> bool {
-        self.store.state.current.focus == Some(id)
+        matches!(
+            self.store.state.current.focus,
+            Some(Focus { ghost: None, index }) if self.store.state.current.focus_chain[index] == id)
     }
 
     pub fn add_id<'a, Id>(&'a mut self, id: Id, can_focus: bool) -> StateId
@@ -218,33 +249,61 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
             id = format!("{}-##-{}", self.id_prefix, id).into();
         }
 
-        let old_index = self.store.state.previous.id_map.get(&*id);
-        let state = old_index
-            .and_then(|index| self.store.state.previous.entries[*index].state.take())
-            .filter(|state| state.is::<T>());
-        let pre_existing = state.is_some();
+        let previous = &mut self.store.state.previous;
+        let current = &mut self.store.state.current;
 
-        let index = self.store.state.current.entries.len();
+        let mut old_index = previous.id_map.get(&*id).map(|x| *x);
+        let state = old_index
+            .and_then(|index| previous.entries[index].state.take())
+            .filter(|state| state.is::<T>());
+        if state.is_none() {
+            // In the unusual case that the state type has changed, we treat this
+            // as a new widget.
+            old_index = None;
+        }
+
+        let index = current.entries.len();
         let id = id.into_owned();
-        let old = self.store.state.current.id_map.insert(id.clone(), index);
+        let old = current.id_map.insert(id.clone(), index);
         assert!(old.is_none());
 
         if can_focus {
-            if (self.store.state.previous.focus.is_none() && self.store.state.current.focus.is_none()) ||
-               (pre_existing && self.store.state.previous.focus == Some(StateId(*old_index.unwrap()))) {
-                self.store.state.current.focus = Some(StateId(index));
+            let focus = match (&current.focus, &mut previous.focus) {
+                // If nothing was ever previously focused, the first
+                // focusable widget takes the focus.
+                (None, None) => Some(None),
+
+                // If this widget had the focus before turning into a ghost
+                // focus, reclaim the focus.
+                //
+                // The ghost location could be at an earlier widget, so we
+                // need to check the current focus as well.
+                (None, Some(Focus { ghost: Some(ref ghost_id), .. })) |
+                (Some(Focus { ghost: Some(ref ghost_id), .. }), _)
+                    if id == *ghost_id => Some(None),
+
+                // If this widget was previously focus or carries the ghost
+                // location, carry the focus / ghost location forward.
+                (None, Some(Focus { ghost, index }))
+                    if Some(previous.focus_chain[*index].0) == old_index => Some(ghost.take()),
+
+                _ => None,
+            };
+            if let Some(ghost) = focus {
+                current.focus = Some(Focus { ghost, index: current.focus_chain.len() });
             }
-            self.store.state.current.focus_chain.push(StateId(index));
+
+            current.focus_chain.push(StateId(index));
         }
 
-        self.store.state.current.entries.push(StateNode {
+        current.entries.push(StateNode {
             id,
             state,
         });
 
         (
             StateId(index),
-            self.store.state.current.entries[index].state
+            current.entries[index].state
                 .get_or_insert_with(|| Box::new(f()))
                 .downcast_mut().unwrap(),
         )
@@ -265,7 +324,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
 
     pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'render, 'handler> {
         Nest {
-            first_id: StateId(self.store.state.current.entries.len()),
+            initial_focus_chain_len: self.store.state.current.focus_chain.len(),
             builder: Builder { 
                 store: self.store,
                 id_prefix: self.id_prefix.clone(),
@@ -279,7 +338,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
 
 pub struct Nest<'nest, 'render, 'handler> {
     builder: Builder<'nest, 'render, 'handler>,
-    first_id: StateId,
+    initial_focus_chain_len: usize,
 }
 impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
     pub fn build<F>(mut self, f: F) -> NestResult
@@ -288,9 +347,14 @@ impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
     {
         f(&mut self.builder);
 
+        let has_focus =
+            self.builder.store.state.current.focus.as_ref()
+                .filter(|focus| focus.ghost.is_none())
+                .map(|focus| focus.index >= self.initial_focus_chain_len)
+                .unwrap_or(false);
+
         NestResult {
-            has_focus: self.builder.store.state.current.focus
-                        .map(|focus_id| focus_id.0 >= self.first_id.0).unwrap_or(false),
+            has_focus,
         }
     }
 

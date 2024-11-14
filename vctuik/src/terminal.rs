@@ -73,6 +73,7 @@ impl Terminal {
         self.terminal.draw(|frame| {
             let mut build_store = BuildStore::new(std::mem::take(&mut self.state_store), &self.theme);
             f(&mut Builder::new(&mut build_store, frame.area()));
+            build_store.finish();
 
             self.state_store = build_store.state;
 
