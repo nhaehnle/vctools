@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::diff;
 
-pub use vctools_utils::preamble::*;
+pub use vctools_utils::prelude::*;
 
 fn read_bytes_impl(path: &Path) -> Result<Vec<u8>> {
     try_forward(
