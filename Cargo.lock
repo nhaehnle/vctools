@@ -2186,6 +2186,7 @@ name = "vctuik"
 version = "0.1.0"
 dependencies = [
  "ratatui",
+ "tui-tree-widget",
  "unicode-segmentation",
  "vctools-utils",
  "vctuik-unsafe-internals",

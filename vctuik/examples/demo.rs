@@ -1,11 +1,14 @@
 use std::cell::RefCell;
 
+use tui_tree_widget::{Tree, TreeItem};
+
 use vctuik::{
     checkbox::add_check_box,
+    event::{self, KeyCode},
     label::add_label,
     panes::{Pane, Panes},
-    event::{self, KeyCode},
     prelude::*,
+    tree::TreeBuild,
 };
 
 fn main() -> Result<()> {
@@ -15,6 +18,17 @@ fn main() -> Result<()> {
 
     let mut foo = false;
     let mut bar = false;
+
+    let items = vec![
+        TreeItem::new(0, "Root", vec![
+            TreeItem::new_leaf(0, "Child 1"),
+            TreeItem::new_leaf(1, "Child 2"),
+            TreeItem::new(2, "Child 3", vec![
+                TreeItem::new_leaf(0, "Grandchild 1"),
+                TreeItem::new_leaf(1, "Grandchild 2"),
+            ]).unwrap(),
+        ]).unwrap()
+    ];
 
     while running {
         let running = RefCell::new(&mut running);
@@ -31,6 +45,10 @@ fn main() -> Result<()> {
             });
             panes.add(Pane::new("Running"), |builder| {
                 add_check_box(builder, "Running", &running);
+            });
+            panes.add(Pane::new("Tree"), |builder| {
+                Tree::new(&items).unwrap()
+                    .build(builder, "tree", u16::MAX);
             });
             panes.build(builder, "panes", builder.viewport().height);
             event::on_key_press(builder, KeyCode::Char('q'), |_| {

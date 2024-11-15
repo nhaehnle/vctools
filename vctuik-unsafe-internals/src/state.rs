@@ -48,12 +48,22 @@ impl<'frame, K: Eq + Hash> Builder<'frame, K> {
         }
     }
 
-    pub fn get_or_insert_default<T: Default + 'static>(&mut self, new_key: K, old_key: Option<K>)
-            -> &'frame mut T {
+    pub fn get_or_insert_with<T, F>(&mut self, new_key: K, old_key: Option<K>, f: F) -> &'frame mut T
+    where
+        T: 'static,
+        F: FnOnce() -> T,
+    {
         match self.entry(new_key, old_key) {
             Access::Existing(value) => value,
-            Access::New(insert) => insert.insert(Default::default())
+            Access::New(insert) => insert.insert(f())
         }
+    }
+
+    pub fn get_or_insert_default<T>(&mut self, new_key: K, old_key: Option<K>) -> &'frame mut T
+    where
+        T: Default + 'static,
+    {
+        self.get_or_insert_with(new_key, old_key, Default::default)
     }
 }
 

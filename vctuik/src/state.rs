@@ -24,17 +24,13 @@ pub enum Handled {
     No,
 }
 
-pub trait IRenderable {
-    fn render(&self, frame: &mut Frame);
-}
-
 pub enum Renderable<'render> {
     Span(Rect, ratatui::text::Span<'render>),
     Line(Rect, ratatui::text::Line<'render>),
     Text(Rect, ratatui::text::Text<'render>),
     Block(Rect, ratatui::widgets::Block<'render>),
     SetCursor(Position),
-    Other(Box<dyn IRenderable + 'render>),
+    Other(Box<dyn FnOnce(&mut Frame) + 'render>),
     None,
 }
 impl Renderable<'_> {
@@ -45,7 +41,7 @@ impl Renderable<'_> {
             Renderable::Text(area, text) => frame.render_widget(text, area),
             Renderable::Block(area, block) => frame.render_widget(block, area),
             Renderable::SetCursor(position) => frame.set_cursor_position(position),
-            Renderable::Other(other) => other.render(frame),
+            Renderable::Other(other) => other(frame),
             Renderable::None => {},
         }
     }
@@ -319,6 +315,25 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         (
             new_id,
             self.store.state_builder.get_or_insert_default(new_id, old_id),
+        )
+    }
+
+    pub fn add_state_widget_with<'add, S, Id, F>(
+        &'add mut self,
+        id: Id,
+        can_focus: bool,
+        f: F,
+    ) -> (WidgetId, &'handler mut S)
+    where
+        Id: Into<Cow<'add, str>>,
+        S: Default + 'static,
+        F: FnOnce() -> S,
+    {
+        let (new_id, old_id) = self.add_widget_impl(id.into(), can_focus);
+
+        (
+            new_id,
+            self.store.state_builder.get_or_insert_with(new_id, old_id, f),
         )
     }
 

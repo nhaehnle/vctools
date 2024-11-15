@@ -5,8 +5,17 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 categories = ["command-line-utilities"]
 
+[features]
+default = ["tree-widget"]
+tree-widget = ["dep:tui-tree-widget"]
+
 [dependencies]
 ratatui = { version = "0.28.1", features = [] }
+tui-tree-widget = { version = "0.22.0", optional = true }
 unicode-segmentation = { version = "1.12" }
 vctools-utils = { path = "../vctools-utils" }
 vctuik-unsafe-internals = { path = "../vctuik-unsafe-internals" }
+
+[[example]]
+name = "demo"
+required-features = ["tree-widget"]

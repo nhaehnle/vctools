@@ -99,7 +99,7 @@ fn make_solarized(dark: bool) -> Theme {
             normal: Style::default().fg(base00),
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
-            selected: Style::default().bg(base02).fg(base1),
+            selected: Style::default().bg(base2).fg(base01),
         },
         pane_background: Style::default().bg(base3),
         pane_frame_normal: Style::default().fg(base00).bold(),
@@ -108,7 +108,7 @@ fn make_solarized(dark: bool) -> Theme {
             normal: Style::default().fg(base00),
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
-            selected: Style::default().bg(base02).fg(base1),
+            selected: Style::default().bg(base2).fg(base01),
         },
         modal_background: Style::default().bg(base2),
         modal_frame: Style::default().fg(yellow).bold(),
@@ -116,7 +116,7 @@ fn make_solarized(dark: bool) -> Theme {
             normal: Style::default().fg(base00),
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
-            selected: Style::default().bg(base02).fg(base1),
+            selected: Style::default().bg(base2).fg(base01),
         },
     }
 }
