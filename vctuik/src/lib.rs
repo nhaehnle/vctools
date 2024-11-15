@@ -2,6 +2,7 @@
 pub mod checkbox;
 pub mod event;
 pub mod label;
+pub mod layout;
 pub mod panes;
 pub mod prelude;
 pub mod state;

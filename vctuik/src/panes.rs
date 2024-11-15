@@ -1,11 +1,9 @@
 use std::borrow::Cow;
 
-use ratatui::{layout::Rect, widgets::{Block, BorderType, Borders}};
+use ratatui::{layout::{Alignment, Rect}, widgets::{block::Title, Block, BorderType, Borders}};
 
 use crate::{
-    event::{Event, MouseButton, MouseEventKind},
-    state::{Builder, Handled, Renderable},
-    theme::Context,
+    event::{Event, MouseButton, MouseEventKind}, layout::{Constrained1D, Constraint1D}, state::{Builder, Handled, Renderable}, theme::Context
 };
 
 #[derive(Debug, Default)]
@@ -35,6 +33,14 @@ struct PaneConfig {
 impl PaneConfig {
     fn get_id(&self) -> &str {
         &self.title
+    }
+
+    fn constraint(&self, state: &PaneState) -> Constraint1D {
+        if state.collapsed {
+            Constraint1D::new_exact(1)
+        } else {
+            Constraint1D::new_min(1 + self.min_inner_height)
+        }
     }
 }
 
@@ -73,9 +79,15 @@ struct CompletePane<'panes, 'render, 'handler> {
     build: Box<dyn FnOnce(&mut Builder<'_, 'render, 'handler>) + 'panes>,
 }
 
+#[derive(Debug)]
+struct DragState {
+    pane_id: String,
+}
+
 #[derive(Debug, Default)]
 struct PanesState {
     implicit_states: Vec<Option<(String, PaneState)>>,
+    mouse_capture: Option<DragState>,
 }
 
 pub struct Panes<'panes, 'render, 'handler> {
@@ -97,13 +109,17 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
     where
         Id: Into<Cow<'id, str>>,
     {
+        self.build_impl(builder, id.into(), num_lines);
+    }
+
+    fn build_impl(self, builder: &mut Builder<'_, 'render, 'handler>, id: Cow<'_, str>, num_lines: u16)
+    {
         assert!(self.panes.len() <= u16::MAX as usize);
 
         if self.panes.is_empty() {
             return;
         }
 
-        let id = id.into();
         let (id, state) = builder.add_state_widget::<PanesState, _>(id, false);
 
         // Re-map and build the implicit states for panes that don't have externally
@@ -121,8 +137,16 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
             }
         }).collect();
 
+        // Update mouse drag.
+        let drag_pane_idx =
+            state.mouse_capture.as_ref()
+                .and_then(|drag| self.panes.iter().position(|pane| pane.pane.config.get_id() == drag.pane_id));
+        if drag_pane_idx.is_none() {
+            state.mouse_capture = None;
+        }
+
         // Normalize the pane data
-        let mut panes = self.panes.into_iter().zip(&mut state.implicit_states)
+        let panes = self.panes.into_iter().zip(&mut state.implicit_states)
             .map(|(pane, implicit_state)| {
                 (
                     pane.pane.config,
@@ -132,65 +156,39 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
             })
             .collect::<Vec<_>>();
 
-        // Calculate the initial height and distribute height to new uncollapsed panes
-        let new_panes: Vec<_> =
-            panes.iter().enumerate()
-                .filter(|(_, (_, state, _))| !state.collapsed && state.inner_height.is_none())
-                .map(|(idx, _)| idx)
-                .collect();
-
-        let mut height =
-            panes.iter_mut()
-                .map(|(config, state, _)| {
-                    if state.inner_height.unwrap_or(0) < config.min_inner_height {
-                        state.inner_height = Some(config.min_inner_height);
-                    }
-                    1 + (!state.collapsed).then_some(state.inner_height).flatten().unwrap_or(0)
+        // Compute the layout
+        let constraints = panes.iter()
+            .map(|(config, state, _)| config.constraint(state))
+            .collect();
+        let sizes = panes.iter()
+            .map(|(_, state, _)|
+                if state.collapsed {
+                    Some(1)
+                } else {
+                    state.inner_height.map(|height| height.saturating_add(1))
                 })
-                .fold(0, u16::saturating_add);
+            .collect();
+        let layout = Constrained1D::constrain(constraints, num_lines, sizes);
 
-        if !new_panes.is_empty() {
-            let remaining_height = num_lines.saturating_sub(height);
-            let height_assignment = remaining_height / (new_panes.len() as u16);
-
-            for idx in &new_panes {
-                *panes[*idx].1.inner_height.as_mut().unwrap() += height_assignment;
-            }
-
-            height += height_assignment * new_panes.len() as u16;
-        }
-
-        // Fixup heights to outer constraint
-        for (config, state, _) in panes.iter_mut().rev() {
-            if height == num_lines {
-                break;
-            }
-            if state.collapsed {
-                continue;
-            }
-
-            let inner_height = state.inner_height.as_mut().unwrap();
-            if height < num_lines {
-                *inner_height += num_lines - height;
-                height = num_lines;
-                break;
-            }
-
-            let excess = height - num_lines;
-            let shrink = std::cmp::min(*inner_height - config.min_inner_height, excess);
-            *inner_height -= shrink;
-            height -= shrink;
-        }
+        let area = builder.take_lines(num_lines);
 
         builder.nest().id(id).build(|builder| {
-            let mut panes = panes.into_iter().filter_map(|(config, state, build)| {
-                let height = 1 + (!state.collapsed).then_some(state.inner_height).flatten().unwrap_or(0);
-                let area = builder.take_lines(height);
-                if area.is_empty() {
+            let mut row = 0;
+
+            let panes = panes.into_iter().enumerate().filter_map(|(pane_idx, (config, state, build))| {
+                let height = std::cmp::min(layout.layout()[pane_idx], area.height - row);
+                let pane_area = Rect {
+                    y: row,
+                    height,
+                    ..area
+                };
+                row += height;
+
+                if pane_area.is_empty() {
                     return None
                 }
 
-                let inner_area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+                let inner_area = Rect::new(pane_area.x, pane_area.y + 1, pane_area.width, pane_area.height - 1);
 
                 let render = builder.add_render(Renderable::None);
                 let id = builder.add_widget(&config.title, false);
@@ -206,7 +204,7 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
                 let title = match (config.collapsible, state.collapsed()) {
                     (true, true) => format!("▶ {}", config.title),
                     (true, false) => format!("▼ {}", config.title),
-                    (false, _) => config.title,
+                    (false, _) => config.title.clone(),
                 };
 
                 let mut block = Block::default()
@@ -222,34 +220,102 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
                     block = block.border_style(builder.theme().pane_frame_normal);
                 }
 
-                *builder.get_render_mut(render).unwrap() = Renderable::Block(area, block);
+                if pane_idx != 0 {
+                    block = block.title(Title::from("↕").alignment(Alignment::Right));
+                }
 
-                Some((state, config.collapsible, area))
+                *builder.get_render_mut(render).unwrap() = Renderable::Block(pane_area, block);
+
+                Some((state, config, pane_area))
             }).collect::<Vec<_>>();
 
-            if height < num_lines {
-                let area = builder.take_lines(num_lines - height);
+            if row < area.height {
+                let area = Rect {
+                    y: row,
+                    height: area.height - row,
+                    ..area
+                };
                 builder.add_render(
                     Renderable::Block(area,
                         Block::default()
                             .borders(Borders::NONE)
-                            .style(builder.theme().pane_background)));
+                            .style(builder.theme().modal_background)));
             }
 
-            builder.add_event_handler(move |ev| {
-                match ev {
-                    Event::Mouse(ev) if ev.kind == MouseEventKind::Down(MouseButton::Left) => {
-                        for (state, collapsible, area) in &mut panes {
-                            if *collapsible && ev.column == area.x && ev.row == area.y {
-                                state.set_collapsed(!state.collapsed());
-                                return Handled::Yes;
-                            }
+            struct PanesHandlerState<'handler> {
+                panes: Vec<(&'handler mut PaneState, PaneConfig, Rect)>,
+                mouse_capture: &'handler mut Option<DragState>,
+                layout: Constrained1D,
+            }
+            impl PanesHandlerState<'_> {
+                fn sync_layout(&mut self) {
+                    for ((state, _, _), height) in self.panes.iter_mut().zip(self.layout.layout()) {
+                        if !state.collapsed {
+                            state.inner_height = Some(height.saturating_sub(1));
                         }
-                        Handled::No
-                    },
-                    _ => { Handled::No },
+                    } 
                 }
-            });
+            }
+            let mut state = PanesHandlerState {
+                panes,
+                mouse_capture: &mut state.mouse_capture,
+                layout,
+            };
+            state.sync_layout();
+
+            if let Some(drag_pane_idx) = drag_pane_idx {
+                builder.add_mouse_capture_handler(move |ev| {
+                    match ev {
+                        Event::Mouse(ev) => {
+                            match ev.kind {
+                                MouseEventKind::Drag(_) => {
+                                    let row = std::cmp::min(std::cmp::max(ev.row, area.y), area.y + area.height - 1);
+                                    state.layout.move_start(drag_pane_idx, row - area.y);
+                                    state.sync_layout();
+                                },
+                                _ => *state.mouse_capture = None,
+                            }
+                            Handled::Yes
+                        },
+                        _ => Handled::No,
+                    }
+                });
+            } else {
+                builder.add_event_handler(move |ev| {
+                    match ev {
+                        Event::Mouse(ev) if ev.kind == MouseEventKind::Down(MouseButton::Left) => {
+                            for (pane_idx, (pane_state, config, area)) in state.panes.iter_mut().enumerate() {
+                                if ev.row != area.y || ev.column < area.x || ev.column >= area.x + area.width {
+                                    continue;
+                                }
+                                if ev.column == area.x && config.collapsible {
+                                    let new_collapsed = !pane_state.collapsed();
+                                    pane_state.set_collapsed(new_collapsed);
+                                    state.layout.morph(
+                                        pane_idx,
+                                        config.constraint(pane_state),
+                                        if new_collapsed {
+                                            1
+                                        } else {
+                                            1 + pane_state.inner_height.unwrap_or(0)
+                                        });
+                                    state.sync_layout();
+                                    return Handled::Yes;
+                                }
+
+                                if ev.column >= area.x + if config.collapsible { 2 } else { 0 } {
+                                    *state.mouse_capture = Some(DragState {
+                                        pane_id: config.get_id().into(),
+                                    });
+                                    return Handled::Yes;
+                                }
+                            }
+                            Handled::No
+                        },
+                        _ => Handled::No,
+                    }
+                });
+            }
         });
     }
 }

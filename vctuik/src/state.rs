@@ -335,6 +335,10 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         self.store.handlers.push(Box::new(h));
     }
 
+    pub fn add_mouse_capture_handler<H: (FnMut(&Event) -> Handled) + 'handler>(&mut self, h: H) {
+        self.store.handlers.insert(0, Box::new(h));
+    }
+
     pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'render, 'handler> {
         Nest {
             initial_focus_chain_len: self.store.ids.current.focus_chain.len(),
