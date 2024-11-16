@@ -195,6 +195,7 @@ impl<'panes, 'render, 'handler: 'render> Panes<'panes,'render, 'handler> {
 
                 let has_focus =
                     if state.collapsed {
+                        builder.preserve_child_states(id);
                         false
                     } else {
                         let nest = builder.nest().id(id).context(Context::Pane).viewport(inner_area).build(build);

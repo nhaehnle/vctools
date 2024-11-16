@@ -65,6 +65,22 @@ impl<'frame, K: Eq + Hash> Builder<'frame, K> {
     {
         self.get_or_insert_with(new_key, old_key, Default::default)
     }
+
+    pub fn preserve(&mut self, new_key: K, old_key: K) -> bool {
+        let entry = self.store.current.entry(new_key);
+        match entry {
+            hash_map::Entry::Occupied(_) =>
+                panic!("Key inserted again in the same frame"),
+            hash_map::Entry::Vacant(entry) => {
+                if let Some(value) = self.store.previous.remove(&old_key) {
+                    entry.insert(value);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 pub enum Access<'frame, 'entry, K, T> {

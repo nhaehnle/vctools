@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::{hash_map, HashMap}};
 
 use ratatui::{
     layout::{Position, Rect},
@@ -53,10 +53,16 @@ struct Focus {
     index: usize,
 }
 
+#[derive(Debug)]
+struct IdEntry {
+    id: String,
+    num_descendants: usize,
+}
+
 #[derive(Default)]
 struct IdState {
     id_map: HashMap<String, WidgetId>,
-    ids: Vec<String>,
+    ids: Vec<IdEntry>,
     focus_chain: Vec<WidgetId>,
     focus: Option<Focus>,
 }
@@ -136,7 +142,7 @@ impl<'render, 'handler> BuildStore<'render, 'handler> {
         if current.focus.is_none() && !current.focus_chain.is_empty() {
             if let Some(Focus { mut ghost, index }) = previous.focus.take() {
                 if ghost.is_none() {
-                    ghost = Some(std::mem::take(&mut previous.ids[previous.focus_chain[index].0]));
+                    ghost = Some(std::mem::take(&mut previous.ids[previous.focus_chain[index].0].id));
                 }
 
                 let ghost_index =
@@ -144,7 +150,7 @@ impl<'render, 'handler> BuildStore<'render, 'handler> {
                         .iter()
                         .copied()
                         .filter_map(|old_id| {
-                            current.id_map.get(&previous.ids[old_id.0])
+                            current.id_map.get(&previous.ids[old_id.0].id)
                                 .map(|&id| id)
                         })
                         .find_map(|new_id| {
@@ -289,7 +295,10 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
             current.focus_chain.push(new_id);
         }
 
-        current.ids.push(id);
+        current.ids.push(IdEntry {
+            id,
+            num_descendants: 0,
+        });
 
         (new_id, old_id)
     }
@@ -337,6 +346,50 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         )
     }
 
+    pub fn preserve_child_states(&mut self, id: WidgetId) {
+        let previous = &self.store.ids.previous;
+        let current = &mut self.store.ids.current;
+
+        assert!(id.0 == current.ids.len() - 1);
+
+        let Some(&old_id) = previous.id_map.get(&current.ids[id.0].id) else { return };
+
+        let mut stack = Vec::<(WidgetId, usize)>::new();
+        let num_outer_descendants = previous.ids[old_id.0].num_descendants;
+        stack.push((id, num_outer_descendants));
+
+        for offset in 0..num_outer_descendants {
+            let old_descendant_id = WidgetId(old_id.0 + 1 + offset);
+            let new_descendant_id = WidgetId(current.ids.len());
+            let previous = &previous.ids[old_descendant_id.0];
+
+            if self.store.state_builder.preserve(new_descendant_id, old_descendant_id) {
+                let entry = current.id_map.entry(previous.id.clone());
+                let hash_map::Entry::Vacant(entry) = entry else {
+                    panic!("Key inserted again in the same frame");
+                };
+                entry.insert(new_descendant_id);
+                current.ids.push(IdEntry {
+                    id: previous.id.clone(),
+                    num_descendants: 0,
+                });
+            }
+
+            stack.last_mut().unwrap().1 -= 1 + previous.num_descendants;
+            if previous.num_descendants > 0 {
+                stack.push((new_descendant_id, previous.num_descendants));
+            } else {
+                while let Some(top) = stack.last() {
+                    if top.1 != 0 {
+                        break;
+                    }
+                    current.ids[top.0.0].num_descendants = current.ids.len() - top.0.0 - 1;
+                    stack.pop();
+                }
+            }
+        }
+    }
+
     pub fn add_render(&mut self, renderable: Renderable<'render>) -> RenderId {
         self.store.render.push(renderable);
         RenderId(self.store.render.len() - 1)
@@ -357,6 +410,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
     pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'render, 'handler> {
         Nest {
             initial_focus_chain_len: self.store.ids.current.focus_chain.len(),
+            parent: None,
             builder: Builder { 
                 store: self.store,
                 id_prefix: self.id_prefix.clone(),
@@ -370,6 +424,7 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
 
 pub struct Nest<'nest, 'render, 'handler> {
     builder: Builder<'nest, 'render, 'handler>,
+    parent: Option<WidgetId>,
     initial_focus_chain_len: usize,
 }
 impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
@@ -385,6 +440,11 @@ impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
                 .map(|focus| focus.index >= self.initial_focus_chain_len)
                 .unwrap_or(false);
 
+        if let Some(parent) = self.parent {
+            self.builder.store.ids.current.ids[parent.0].num_descendants =
+                self.builder.store.ids.current.ids.len() - parent.0 - 1;
+        }
+
         NestResult {
             has_focus,
         }
@@ -392,14 +452,16 @@ impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
 
     pub fn id(self, id: WidgetId) -> Self {
         assert!(id.0 == self.builder.store.ids.current.ids.len() - 1);
+        assert!(self.parent.is_none());
 
-        let id_prefix = self.builder.store.ids.current.ids[id.0].clone();
+        let id_prefix = self.builder.store.ids.current.ids[id.0].id.clone();
 
         Nest {
             builder: Builder {
                 id_prefix,
                 ..self.builder
             },
+            parent: Some(id),
             ..self
         }
     }
