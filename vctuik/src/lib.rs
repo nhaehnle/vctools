@@ -1,5 +1,5 @@
 
-pub mod checkbox;
+pub mod check_box;
 pub mod event;
 pub mod label;
 pub mod layout;

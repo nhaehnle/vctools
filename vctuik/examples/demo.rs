@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use tui_tree_widget::{Tree, TreeItem};
 
 use vctuik::{
-    checkbox::add_check_box,
+    check_box::add_check_box,
     event::{self, KeyCode},
     label::add_label,
     panes::{Pane, Panes},
@@ -50,7 +50,7 @@ fn main() -> Result<()> {
                 Tree::new(&items).unwrap()
                     .build(builder, "tree", u16::MAX);
             });
-            panes.build(builder, "panes", builder.viewport().height);
+            panes.build(builder, "panes", builder.viewport().height - 1);
             event::on_key_press(builder, KeyCode::Char('q'), |_| {
                 **running.borrow_mut() = false;
             });
