@@ -1,10 +1,11 @@
 use std::{borrow::Cow, cell::RefCell, hash::Hash};
 
+use ratatui::layout::Position;
 pub use tui_tree_widget::{Tree, TreeItem};
 use tui_tree_widget::TreeState;
 
 use crate::{
-    event::{Event, KeyCode, KeyEventKind},
+    event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind},
     state::{Builder, Handled, Renderable},
 };
 
@@ -51,28 +52,43 @@ where
             }
         })));
 
-        if builder.has_focus(id) {
-            builder.add_event_handler(move |ev| {
-                let mut state = state.borrow_mut();
-                match ev {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        match key.code {
-                            KeyCode::Left => { state.key_left(); },
-                            KeyCode::Right => { state.key_right(); },
-                            KeyCode::Down => { state.key_down(); },
-                            KeyCode::Up => { state.key_up(); },
-                            KeyCode::Esc => { state.select(Vec::new()); },
-                            KeyCode::Home => { state.select_first(); },
-                            KeyCode::End => { state.select_last(); },
-                            KeyCode::PageDown => { for _ in 0..(area.height / 2) { state.key_down(); } },
-                            KeyCode::PageUp => { for _ in 0..(area.height / 2) { state.key_up(); } },
-                            _ => return Handled::No,
-                        }
-                        Handled::Yes
+        builder.add_event_handler(move |ev| {
+            let mut state = state.borrow_mut();
+            match ev {
+                Event::Key(key) if has_focus && key.kind == KeyEventKind::Press => {
+                    match key.code {
+                        KeyCode::Left => { state.key_left(); },
+                        KeyCode::Right => { state.key_right(); },
+                        KeyCode::Down => { state.key_down(); },
+                        KeyCode::Up => { state.key_up(); },
+                        KeyCode::Esc => { state.select(Vec::new()); },
+                        KeyCode::Home => { state.select_first(); },
+                        KeyCode::End => { state.select_last(); },
+                        KeyCode::PageDown => { for _ in 0..(area.height.div_ceil(3)) { state.key_down(); } },
+                        KeyCode::PageUp => { for _ in 0..(area.height.div_ceil(3)) { state.key_up(); } },
+                        _ => return Handled::No,
                     }
-                    _ => Handled::No,
+                    Handled::Yes
                 }
-            });
-        }
+                Event::Mouse(ev) if area.contains(Position::new(ev.column, ev.row)) => {
+                    match ev.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            state.click_at(Position::new(ev.column, ev.row));
+                            Handled::Yes
+                        }
+                        MouseEventKind::ScrollUp => {
+                            for _ in 0..(area.height.div_ceil(5)) { state.key_up(); }
+                            Handled::Yes
+                        }
+                        MouseEventKind::ScrollDown => {
+                            for _ in 0..(area.height.div_ceil(5)) { state.key_down(); }
+                            Handled::Yes
+                        }
+                        _ => Handled::No
+                    }
+                }
+                _ => Handled::No,
+            }
+        });
     }
 }
