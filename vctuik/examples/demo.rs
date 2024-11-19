@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use tui_tree_widget::{Tree, TreeItem};
 
@@ -14,7 +14,7 @@ use vctuik::{
 fn main() -> Result<()> {
     let mut terminal = vctuik::init()?;
 
-    let mut running = true;
+    let running = Cell::new(true);
 
     let mut foo = false;
     let mut bar = false;
@@ -30,8 +30,7 @@ fn main() -> Result<()> {
         ]).unwrap()
     ];
 
-    while running {
-        let running = RefCell::new(&mut running);
+    while running.get() {
         terminal.run_frame(|builder| {
             let mut panes = Panes::new();
             panes.add(Pane::new("Settings"), |builder| {
@@ -52,7 +51,7 @@ fn main() -> Result<()> {
             });
             panes.build(builder, "panes", builder.viewport().height - 1);
             event::on_key_press(builder, KeyCode::Char('q'), |_| {
-                **running.borrow_mut() = false;
+                running.set(false);
             });
         })?;
     }

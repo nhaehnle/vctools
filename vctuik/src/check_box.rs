@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -58,6 +58,21 @@ impl<'a> CheckBoxStateRef<'a> for &'a RefCell<&'a mut bool> {
             fn toggle(&mut self) {
                 let mut state = self.0.borrow_mut();
                 **state = !**state;
+            }
+        }
+        CheckBoxStateImpl(self)
+    }
+}
+
+impl<'a> CheckBoxStateRef<'a> for &'a Cell<bool> {
+    fn as_check_box_state(self) -> impl CheckBoxState + 'a {
+        struct CheckBoxStateImpl<'a>(&'a Cell<bool>);
+        impl CheckBoxState for CheckBoxStateImpl<'_> {
+            fn get(&self) -> bool {
+                self.0.get()
+            }
+            fn toggle(&mut self) {
+                self.0.set(!self.0.get());
             }
         }
         CheckBoxStateImpl(self)
