@@ -16,6 +16,9 @@ unicode-segmentation = { version = "1.12" }
 vctools-utils = { path = "../vctools-utils" }
 vctuik-unsafe-internals = { path = "../vctuik-unsafe-internals" }
 
+[dev-dependencies]
+rand = { version = "0.8" }
+
 [[example]]
 name = "demo"
 required-features = ["tree-widget"]
