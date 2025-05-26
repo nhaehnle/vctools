@@ -9,9 +9,14 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 diff-modulo-base = { path = "../diff-modulo-base" }
+vctools-utils = { path = "../vctools-utils" }
+vctuik = { path = "../vctuik" }
+
 clap = { version = "3.2", features = ["derive"] }
 directories = "6.0.0"
+itertools = "0.14"
 lazy_static = { version = "1.4" }
+ratatui = { version = "0.28.1", features = [] }
 regex = { version = "1.7", default-features = false, features = ["std", "perf"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1.0", features = ["derive"] }

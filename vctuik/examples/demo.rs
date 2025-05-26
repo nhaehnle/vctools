@@ -49,7 +49,7 @@ fn main() -> Result<()> {
                 Tree::new(&items).unwrap()
                     .build(builder, "tree", u16::MAX);
             });
-            panes.build(builder, "panes", builder.viewport().height - 1);
+            panes.build(builder, "panes", builder.viewport().height);
             event::on_key_press(builder, KeyCode::Char('q'), |_| {
                 running.set(false);
             });
