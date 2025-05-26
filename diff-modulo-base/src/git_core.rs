@@ -12,7 +12,7 @@ pub use std::ops::Range;
 /// a reference.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ref {
-    name: String,
+    pub name: String,
 }
 impl Ref {
     pub fn new<S: Into<String>>(name: S) -> Self {
@@ -43,6 +43,58 @@ impl Default for ShowOptions {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Url {
+    Ssh {
+        user: Option<String>,
+        host: String,
+        path: String,
+    },
+    Url(reqwest::Url),
+}
+impl Url {
+    pub fn hostname(&self) -> Option<&str> {
+        match self {
+            Url::Ssh { host, .. } => Some(&host),
+            Url::Url(url) => url.host_str(),
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        match self {
+            Url::Ssh { path, .. } => &path,
+            Url::Url(url) => url.path().strip_prefix("/").unwrap_or_default(),
+        }
+    }
+
+    // Returns (organization, repository) from a GitHub URL.
+    pub fn github_path(&self) -> Option<(&str, &str)> {
+        let path = self.path();
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        let mut iter = path.split("/");
+        let organization = iter.next()?;
+        let repo = iter.next()?;
+        if iter.next().is_some() {
+            None
+        } else {
+            Some((organization, repo))
+        }
+    }
+}
+impl Display for Url {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Url::Ssh { user, host, path } => {
+                if let Some(user) = user {
+                    write!(f, "{}@", user)?;
+                }
+                write!(f, "{}:{}", host, path)
+            }
+            Url::Url(url) => write!(f, "{}", url),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Repository {
     pub path: std::path::PathBuf,
@@ -60,7 +112,7 @@ impl Repository {
         }
     }
 
-    fn exec<'a, I, A>(&self, subcommand: &str, args: I) -> Result<Vec<u8>>
+    fn exec_with_stderr<'a, I, A>(&self, subcommand: &str, args: I) -> Result<(Vec<u8>, Vec<u8>)>
     where
         I: Iterator<Item = A>,
         A: AsRef<std::ffi::OsStr>,
@@ -89,7 +141,7 @@ impl Repository {
             let mut contents = Vec::new();
             file.read_to_end(&mut contents)?;
 
-            return Ok(contents);
+            return Ok((contents, Vec::new()));
         }
 
         let mut cmd = std::process::Command::new("git");
@@ -125,7 +177,7 @@ impl Repository {
         let output = child.wait_with_output()?;
         let stderr = stderr_thread.join().unwrap()?;
 
-        if !output.status.success() || !stderr.is_empty() {
+        if !output.status.success() {
             return Err(format!(
                 "git subcommand failed: {}\n{}",
                 output.status,
@@ -134,7 +186,53 @@ impl Repository {
             .into());
         }
 
-        Ok(output.stdout)
+        Ok((output.stdout, output.stderr))
+    }
+
+    fn exec<'a, I, A>(&self, subcommand: &str, args: I) -> Result<Vec<u8>>
+    where
+        I: Iterator<Item = A>,
+        A: AsRef<std::ffi::OsStr>,
+    {
+        let (stdout, stderr) = self.exec_with_stderr(subcommand, args)?;
+
+        if !stderr.is_empty() {
+            Err(format!(
+                "git subcommand produced unexpected stderr: {}",
+                String::from_utf8_lossy(&stderr),
+            ))?;
+        }
+
+        Ok(stdout)
+    }
+
+    pub fn get_url(&self, remote: &str) -> Result<Url> {
+        try_forward(
+            || -> Result<Url> {
+                let raw = self.exec("remote", [&"get-url", remote].iter())?;
+                let url = String::from_utf8(raw)?;
+                let url = url.trim();
+
+                lazy_static! {
+                    static ref GIT_RE: regex::Regex =
+                        regex::Regex::new(r"^(?:([^@/:]+)@)?([^@/:]+):([^@:]+)$").unwrap();
+                }
+
+                if let Some(captures) = GIT_RE.captures(&url) {
+                    let host = captures.get(2).unwrap().as_str();
+                    let path = captures.get(3).unwrap().as_str();
+
+                    return Ok(Url::Ssh {
+                        user: captures.get(1).map(|x| x.as_str().into()),
+                        host: host.into(),
+                        path: path.into(),
+                    });
+                }
+
+                Ok(Url::Url(reqwest::Url::parse(&url)?))
+            },
+            || format!("failed to query URL for remote {}", remote),
+        )
     }
 
     pub fn diff(&self, range: Range<&Ref>, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
@@ -200,6 +298,36 @@ impl Repository {
                 Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
             },
             || "failed to obtain parsed revision",
+        )
+    }
+
+    pub fn fetch_missing(&self, remote: &str, refs: &[Ref]) -> Result<()> {
+        try_forward(
+            || -> Result<()> {
+                // Test if the refs are present
+                if self
+                    .exec(
+                        "show",
+                        ["--oneline"]
+                            .into_iter()
+                            .chain(refs.iter().map(|r| r.name.as_str())),
+                    )
+                    .is_ok()
+                {
+                    return Ok(());
+                }
+
+                // At least one failed, try to fetch them
+                self.exec_with_stderr(
+                    "fetch",
+                    [remote]
+                        .into_iter()
+                        .chain(refs.iter().map(|r| r.name.as_str())),
+                )?;
+
+                Ok(())
+            },
+            || "failed to fetch missing refs",
         )
     }
 

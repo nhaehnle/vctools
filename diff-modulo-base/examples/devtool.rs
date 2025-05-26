@@ -41,7 +41,7 @@ enum Command {
     },
     GitDiffModuloBase {
         #[clap(flatten)]
-        gdmb: tool::GitDiffModuloBaseOptions,
+        gdmb: tool::GitDiffModuloBaseArgs,
 
         #[clap(long)]
         mock_data: std::path::PathBuf,

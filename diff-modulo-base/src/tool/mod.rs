@@ -2,4 +2,4 @@
 
 mod gdmb;
 
-pub use gdmb::{git_diff_modulo_base, GitDiffModuloBaseOptions};
+pub use gdmb::{git_diff_modulo_base, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions};

@@ -11,13 +11,19 @@ use utils::Result;
 
 #[derive(Parser, Debug)]
 pub struct GitDiffModuloBaseOptions {
+    /// Combine the diff of all commits in a range, instead of showing per-commit diffs.
+    #[clap(long)]
+    pub combined: bool,
+}
+
+#[derive(Parser, Debug)]
+pub struct GitDiffModuloBaseArgs {
     pub base: Option<String>,
     pub old: Option<String>,
     pub new: Option<String>,
 
-    /// Combine the diff of all commits in a range, instead of showing per-commit diffs.
-    #[clap(long)]
-    pub combined: bool,
+    #[clap(flatten)]
+    pub options: GitDiffModuloBaseOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -47,7 +53,7 @@ fn parse_rev_or_range(name: &str) -> Result<RevSpec> {
 }
 
 pub fn git_diff_modulo_base(
-    mut args: GitDiffModuloBaseOptions,
+    mut args: GitDiffModuloBaseArgs,
     repo: git_core::Repository,
     out: &mut dyn termcolor::WriteColor,
 ) -> Result<()> {
@@ -85,7 +91,7 @@ pub fn git_diff_modulo_base(
 
     match (old, new) {
         (old @ RevSpec::Range(_, _), new @ RevSpec::Range(_, _)) => {
-            if args.combined {
+            if args.options.combined {
                 git::diff_ranges_full(&repo, old.to_range(), new.to_range(), &mut writer)?;
             } else {
                 let range_diff = repo.range_diff(old.to_range(), new.to_range())?;

@@ -39,7 +39,7 @@ fn dmb_test() -> Result<()> {
             )
             .collect();
         println!("{:?}", &args);
-        let args = tool::GitDiffModuloBaseOptions::try_parse_from(args)?;
+        let args = tool::GitDiffModuloBaseArgs::try_parse_from(args)?;
 
         let mut repo = git_core::Repository::new(&std::path::PathBuf::from("."));
         repo.mock_data_path = Some(path);

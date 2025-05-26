@@ -8,7 +8,7 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 pub struct Options {
     #[clap(flatten)]
-    pub gdmb: tool::GitDiffModuloBaseOptions,
+    pub gdmb: tool::GitDiffModuloBaseArgs,
 
     /// Behave as if run from the given path.
     #[clap(short = 'C', default_value = ".")]
