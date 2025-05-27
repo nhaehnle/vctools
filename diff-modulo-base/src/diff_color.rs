@@ -5,6 +5,7 @@ use termcolor::{Color, ColorSpec};
 
 use crate::*;
 use diff::*;
+use git_core::{RangeDiffMatch, RangeDiffWriter};
 
 #[derive(Default)]
 struct Colors {
@@ -62,31 +63,60 @@ fn get_line_color(context: Context, state: HunkLineStatus) -> &'static ColorSpec
     }
 }
 
-pub struct Writer<'a> {
-    pub out: &'a mut dyn termcolor::WriteColor,
+#[derive(Debug)]
+enum Element {
+    Chunk(Chunk),
+    RangeDiffMatch(RangeDiffMatch),
 }
-impl Writer<'_> {
-    pub fn new(out: &mut dyn termcolor::WriteColor) -> Writer {
-        Writer { out }
+
+pub struct Writer {
+    elements: Vec<Element>,
+    rdm_column_widths: (usize, usize, usize, usize),
+}
+impl Writer {
+    pub fn new() -> Writer {
+        Writer {
+            elements: Vec::new(),
+            rdm_column_widths: (1, 1, 1, 1),
+        }
     }
 
-    fn push_fallible(&mut self, chunk: Chunk) -> std::io::Result<()> {
+    pub fn write(mut self, out: &mut dyn termcolor::WriteColor) -> std::io::Result<()> {
+        for element in std::mem::take(&mut self.elements) {
+            match element {
+                Element::Chunk(chunk) => {
+                    self.write_chunk(out, chunk)?;
+                }
+                Element::RangeDiffMatch(rdm) => {
+                    self.write_range_diff_match(out, rdm)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_chunk(
+        &self,
+        out: &mut dyn termcolor::WriteColor,
+        chunk: Chunk,
+    ) -> std::io::Result<()> {
         let prefix = chunk.context.prefix_bytes();
 
         match &chunk.contents {
             DiffChunkContents::FileHeader {
                 old_path, new_path, ..
             } => {
-                self.out.set_color(&COLORS.file_header)?;
-                self.out.write(prefix)?;
-                self.out.write(b"--- ")?;
-                self.out.write(old_path)?;
-                self.out.write(b"\n")?;
-                self.out.set_color(&COLORS.file_header)?;
-                self.out.write(prefix)?;
-                self.out.write(b"+++ ")?;
-                self.out.write(new_path)?;
-                self.out.write(b"\n")?;
+                out.set_color(&COLORS.file_header)?;
+                out.write(prefix)?;
+                out.write(b"--- ")?;
+                out.write(old_path)?;
+                out.write(b"\n")?;
+                out.set_color(&COLORS.file_header)?;
+                out.write(prefix)?;
+                out.write(b"+++ ")?;
+                out.write(new_path)?;
+                out.write(b"\n")?;
             }
             DiffChunkContents::HunkHeader {
                 old_begin,
@@ -94,38 +124,104 @@ impl Writer<'_> {
                 new_begin,
                 new_count,
             } => {
-                self.out.set_color(&COLORS.hunk_header)?;
-                self.out.write(prefix)?;
-                self.out.write(
+                out.set_color(&COLORS.hunk_header)?;
+                out.write(prefix)?;
+                out.write(
                     format!(
                         "@@ -{},{} +{},{} @@\n",
                         old_begin, old_count, new_begin, new_count
                     )
                     .as_bytes(),
                 )?;
-                self.out.reset()?;
+                out.reset()?;
             }
             DiffChunkContents::Line { line } => {
                 let color = get_line_color(chunk.context, line.status);
                 if color != &COLORS.default {
-                    self.out.set_color(color)?;
+                    out.set_color(color)?;
                 }
-                self.out.write(prefix)?;
-                self.out.write(&[line.status.symbol_byte()])?;
-                self.out.write(&line.contents)?;
+                out.write(prefix)?;
+                out.write(&[line.status.symbol_byte()])?;
+                out.write(&line.contents)?;
                 if line.no_newline {
-                    self.out.write(b"\n\\ No newline at end of file\n")?;
+                    out.write(b"\n\\ No newline at end of file\n")?;
                 } else {
-                    self.out.write(b"\n")?;
+                    out.write(b"\n")?;
                 }
             }
         }
 
         Ok(())
     }
+
+    fn write_range_diff_match(
+        &self,
+        out: &mut dyn termcolor::WriteColor,
+        rdm: RangeDiffMatch,
+    ) -> std::io::Result<()> {
+        struct Column(usize, Option<String>);
+        impl std::fmt::Display for Column {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match &self.1 {
+                    Some(string) => write!(f, "{string:0$}", self.0),
+                    None => write!(f, "{0:-<1$}", '-', self.0),
+                }
+            }
+        }
+
+        out.set_color(
+            ColorSpec::new()
+                .set_bg(Some(Color::Cyan))
+                .set_fg(Some(Color::Black)),
+        )?;
+
+        let change = match (rdm.changed, &rdm.old, &rdm.new) {
+            (false, _, _) => "=",
+            (true, Some(_), None) => "<",
+            (true, None, Some(_)) => ">",
+            _ => "!",
+        };
+
+        let (old_idx, old_hash) = rdm.old.as_ref().map_or((None, None), |(idx, hash)| {
+            (Some(format!("{idx}")), Some(format!("{hash}")))
+        });
+        let (new_idx, new_hash) = rdm.new.as_ref().map_or((None, None), |(idx, hash)| {
+            (Some(format!("{idx}")), Some(format!("{hash}")))
+        });
+
+        writeln!(
+            out,
+            "{}: {} {} {}: {} {}",
+            Column(self.rdm_column_widths.0, old_idx),
+            Column(self.rdm_column_widths.1, old_hash),
+            change,
+            Column(self.rdm_column_widths.2, new_idx),
+            Column(self.rdm_column_widths.3, new_hash),
+            String::from_utf8_lossy(&rdm.title)
+        )?;
+
+        Ok(())
+    }
 }
-impl ChunkWriter for Writer<'_> {
-    fn push(&mut self, chunk: Chunk) {
-        self.push_fallible(chunk).unwrap_or_default();
+impl ChunkWriter for Writer {
+    fn push_chunk(&mut self, chunk: Chunk) {
+        self.elements.push(Element::Chunk(chunk));
+    }
+}
+impl RangeDiffWriter for Writer {
+    fn push_range_diff_match(&mut self, rdm: RangeDiffMatch) {
+        let old_widths = rdm.old.as_ref().map_or((0, 0), |(idx, hash)| {
+            (format!("{idx}").len(), format!("{hash}").len())
+        });
+        let new_widths = rdm.new.as_ref().map_or((0, 0), |(idx, hash)| {
+            (format!("{idx}").len(), format!("{hash}").len())
+        });
+
+        self.rdm_column_widths.0 = self.rdm_column_widths.0.max(old_widths.0);
+        self.rdm_column_widths.1 = self.rdm_column_widths.1.max(old_widths.1);
+        self.rdm_column_widths.2 = self.rdm_column_widths.2.max(new_widths.0);
+        self.rdm_column_widths.3 = self.rdm_column_widths.3.max(new_widths.1);
+
+        self.elements.push(Element::RangeDiffMatch(rdm));
     }
 }

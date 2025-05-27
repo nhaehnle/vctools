@@ -447,6 +447,10 @@ pub struct RangeDiffMatch {
     pub title: Vec<u8>,
 }
 
+pub trait RangeDiffWriter {
+    fn push_range_diff_match(&mut self, rdm: RangeDiffMatch);
+}
+
 #[derive(Debug)]
 pub struct RangeDiff {
     pub matches: Vec<RangeDiffMatch>,

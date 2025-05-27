@@ -278,7 +278,7 @@ impl Chunk {
 
 /// An object that receives [`Chunk`]s, e.g. to write them to a text file.
 pub trait ChunkWriter {
-    fn push(&mut self, chunk: Chunk);
+    fn push_chunk(&mut self, chunk: Chunk);
 }
 
 pub trait ChunkWriterExt: ChunkWriter {
@@ -293,10 +293,10 @@ impl<T: ChunkWriter + ?Sized> ChunkWriterExt for T {
             context: Context,
         }
         impl<'writer, U: ChunkWriter + ?Sized> ChunkWriter for WithContext<'writer, U> {
-            fn push(&mut self, chunk: Chunk) {
+            fn push_chunk(&mut self, chunk: Chunk) {
                 let mut chunk = chunk;
                 chunk.context = self.context;
-                self.this.push(chunk);
+                self.this.push_chunk(chunk);
             }
         }
         WithContext {
@@ -316,7 +316,7 @@ impl ChunkByteBufferWriter {
     }
 }
 impl ChunkWriter for ChunkByteBufferWriter {
-    fn push(&mut self, chunk: Chunk) {
+    fn push_chunk(&mut self, chunk: Chunk) {
         chunk.render_text(&mut self.out);
     }
 }
@@ -480,7 +480,7 @@ impl Hunk {
         if header {
             // TODO: Correct hunk header when one of old/new is an empty file
             let (old_count, new_count) = self.counts();
-            writer.push(Chunk {
+            writer.push_chunk(Chunk {
                 context: Context::Unknown,
                 contents: DiffChunkContents::HunkHeader {
                     old_begin: self.old_begin,
@@ -492,7 +492,7 @@ impl Hunk {
         }
 
         for line in &self.lines {
-            writer.push(Chunk {
+            writer.push_chunk(Chunk {
                 context: Context::Unknown,
                 contents: DiffChunkContents::Line { line: line.clone() },
             });
@@ -719,7 +719,7 @@ impl<'a> Iterator for Hunkify<'a> {
 
 impl DiffFile {
     pub fn render_header(&self, writer: &mut dyn ChunkWriter) {
-        writer.push(Chunk {
+        writer.push_chunk(Chunk {
             context: Context::Unknown,
             contents: DiffChunkContents::FileHeader {
                 old_path: self.old_path.clone(),

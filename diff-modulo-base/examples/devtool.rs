@@ -107,7 +107,9 @@ fn do_main() -> Result<()> {
             let mut repo = git_core::Repository::new(&std::path::PathBuf::from("."));
             repo.mock_data_path = Some(mock_data);
 
-            tool::git_diff_modulo_base(gdmb, repo, &mut out)?;
+            let mut writer = diff_color::Writer::new();
+            tool::git_diff_modulo_base(gdmb, repo, &mut writer)?;
+            writer.write(&mut out)?;
         }
     }
 

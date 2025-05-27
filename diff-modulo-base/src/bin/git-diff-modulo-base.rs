@@ -25,7 +25,11 @@ fn do_main() -> Result<()> {
 
     let repo = git_core::Repository::new(&args.path);
 
-    tool::git_diff_modulo_base(args.gdmb, repo, out)
+    let mut writer = diff_color::Writer::new();
+    tool::git_diff_modulo_base(args.gdmb, repo, &mut writer)?;
+    writer.write(out)?;
+
+    Ok(())
 }
 
 fn main() {

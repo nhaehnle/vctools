@@ -47,7 +47,9 @@ fn dmb_test() -> Result<()> {
         let mut out_buffer: Vec<u8> = Vec::new();
         let mut out = termcolor::NoColor::new(&mut out_buffer);
 
-        tool::git_diff_modulo_base(args, repo, &mut out)?;
+        let mut writer = diff_color::Writer::new();
+        tool::git_diff_modulo_base(args, repo, &mut writer)?;
+        writer.write(&mut out)?;
 
         assert_eq!(
             String::from_utf8_lossy(&expected),

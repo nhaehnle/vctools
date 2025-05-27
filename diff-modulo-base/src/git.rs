@@ -151,7 +151,7 @@ fn diff_optional_commits_impl(
         meta_diff: Option<diff::DiffFile>,
     }
     impl<'a> ChunkWriter for DelayedMetaWriter<'a> {
-        fn push(&mut self, chunk: diff::Chunk) {
+        fn push_chunk(&mut self, chunk: diff::Chunk) {
             if let Some(meta_diff) = self.meta_diff.take() {
                 meta_diff.render_full_body(
                     &self.meta_diff_buffer,
@@ -160,7 +160,7 @@ fn diff_optional_commits_impl(
                         .with_context(diff::Context::CommitMessage),
                 );
             }
-            self.writer.push(chunk);
+            self.writer.push_chunk(chunk);
         }
     }
 

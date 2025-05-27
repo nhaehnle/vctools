@@ -184,7 +184,9 @@ fn do_main() -> Result<()> {
         options: args.dmb_options,
     };
 
-    tool::git_diff_modulo_base(dmb_args, git_repo, out)?;
+    let mut writer = diff_color::Writer::new();
+    tool::git_diff_modulo_base(dmb_args, git_repo, &mut writer)?;
+    writer.write(out)?;
 
     Ok(())
 }
