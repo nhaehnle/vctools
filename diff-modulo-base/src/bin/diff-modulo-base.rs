@@ -2,7 +2,6 @@
 
 use clap::Parser;
 
-use diff::ChunkFreeWriterExt;
 use diff_modulo_base::*;
 use utils::Result;
 
@@ -30,7 +29,7 @@ fn do_main() -> Result<()> {
         target_diff,
         &base_old_diff,
         &base_new_diff,
-        &mut writer.with_buffer(&buffer),
+        &mut writer,
     )?;
     print!("{}", String::from_utf8_lossy(&writer.out));
 

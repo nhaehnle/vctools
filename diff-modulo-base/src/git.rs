@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::*;
-use diff::{ChunkFreeWriterExt, ChunkWriterExt};
+use diff::{ChunkWriter, ChunkWriterExt};
 use git_core::{Range, Ref};
 use utils::Result;
 
@@ -11,7 +11,7 @@ fn diff_ranges_full_impl(
     repo: &git_core::Repository,
     old: Option<Range<&Ref>>,
     new: Option<Range<&Ref>>,
-    writer: &mut dyn diff::ChunkFreeWriter,
+    writer: &mut dyn ChunkWriter,
 ) -> Result<()> {
     let mut buffer = diff::Buffer::new();
 
@@ -55,7 +55,7 @@ fn diff_ranges_full_impl(
         target_diff,
         &base_old_diff,
         &base_new_diff,
-        &mut writer.with_buffer(&buffer),
+        writer,
     )?;
 
     Ok(())
@@ -67,7 +67,7 @@ pub fn diff_optional_ranges_full<R>(
     repo: &git_core::Repository,
     old: Option<Range<R>>,
     new: Option<Range<R>>,
-    writer: &mut dyn diff::ChunkFreeWriter,
+    writer: &mut dyn ChunkWriter,
 ) -> Result<()>
 where
     R: std::borrow::Borrow<Ref>,
@@ -87,7 +87,7 @@ pub fn diff_ranges_full<R>(
     repo: &git_core::Repository,
     old: Range<R>,
     new: Range<R>,
-    writer: &mut dyn diff::ChunkFreeWriter,
+    writer: &mut dyn ChunkWriter,
 ) -> Result<()>
 where
     R: std::borrow::Borrow<Ref>,
@@ -104,7 +104,7 @@ fn diff_optional_commits_impl(
     repo: &git_core::Repository,
     old: Option<&Ref>,
     new: Option<&Ref>,
-    writer: &mut dyn diff::ChunkFreeWriter,
+    writer: &mut dyn ChunkWriter,
 ) -> Result<()> {
     fn get_meta(
         buffer: &mut diff::Buffer,
@@ -146,21 +146,21 @@ fn diff_optional_commits_impl(
     )?;
 
     struct DelayedMetaWriter<'a> {
-        writer: &'a mut dyn diff::ChunkFreeWriter,
+        writer: &'a mut dyn ChunkWriter,
         meta_diff_buffer: &'a diff::Buffer,
         meta_diff: Option<diff::DiffFile>,
     }
-    impl<'a> diff::ChunkFreeWriter for DelayedMetaWriter<'a> {
-        fn push(&mut self, buffer: &diff::Buffer, chunk: diff::Chunk) {
+    impl<'a> ChunkWriter for DelayedMetaWriter<'a> {
+        fn push(&mut self, chunk: diff::Chunk) {
             if let Some(meta_diff) = self.meta_diff.take() {
                 meta_diff.render_full_body(
+                    &self.meta_diff_buffer,
                     &mut self
                         .writer
-                        .with_buffer(self.meta_diff_buffer)
                         .with_context(diff::Context::CommitMessage),
                 );
             }
-            self.writer.push(buffer, chunk);
+            self.writer.push(chunk);
         }
     }
 
@@ -181,9 +181,9 @@ fn diff_optional_commits_impl(
     if let Some(meta_diff) = delayed_meta_writer.meta_diff.take() {
         if !meta_diff.is_unchanged() {
             meta_diff.render_full_body(
+                &buffer,
                 &mut delayed_meta_writer
                     .writer
-                    .with_buffer(&buffer)
                     .with_context(diff::Context::CommitMessage),
             );
         }
@@ -199,7 +199,7 @@ pub fn diff_optional_commits<R>(
     repo: &git_core::Repository,
     old: Option<R>,
     new: Option<R>,
-    writer: &mut dyn diff::ChunkFreeWriter,
+    writer: &mut dyn ChunkWriter,
 ) -> Result<()>
 where
     R: std::borrow::Borrow<Ref>,
@@ -218,7 +218,7 @@ pub fn diff_commits(
     repo: &git_core::Repository,
     old: &Ref,
     new: &Ref,
-    writer: &mut dyn diff::ChunkFreeWriter,
+    writer: &mut dyn ChunkWriter,
 ) -> Result<()> {
     let show_options = git_core::ShowOptions {
         show_patch: false,
@@ -246,8 +246,8 @@ pub fn diff_commits(
     )?;
 
     meta_diff.render_full_body(
+        &buffer,
         &mut writer
-            .with_buffer(&buffer)
             .with_context(diff::Context::CommitMessage),
     );
     diff_ranges_full(

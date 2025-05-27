@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-use diff::ChunkFreeWriterExt;
 use diff_modulo_base::*;
 use utils::Result;
 
@@ -50,7 +49,7 @@ fn diff_test() -> Result<()> {
         diff.add_file(file);
 
         let mut writer = diff::ChunkByteBufferWriter::new();
-        diff.render(&mut writer.with_buffer(&buffer));
+        diff.render(&buffer, &mut writer);
 
         assert_eq!(String::from_utf8(expected)?, String::from_utf8(writer.out)?);
     }

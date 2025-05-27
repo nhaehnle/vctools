@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-use diff::ChunkFreeWriterExt;
 use diff_modulo_base::*;
 use utils::Result;
 
@@ -31,7 +30,7 @@ fn dmb_test() -> Result<()> {
             target_diff,
             &old_base_diff,
             &new_base_diff,
-            &mut writer.with_buffer(&buffer),
+            &mut writer,
         )?;
 
         assert_eq!(expected, writer.out);

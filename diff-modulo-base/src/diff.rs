@@ -165,17 +165,18 @@ impl HunkLineStatus {
 #[derive(Debug, Clone)]
 pub struct HunkLine {
     pub status: HunkLineStatus,
-    pub contents: DiffRef,
+    pub contents: Vec<u8>,
     pub no_newline: bool,
 }
 impl HunkLine {
-    fn from_range(
+    fn from_range<'a>(
+        buffer: &'a Buffer,
         status: HunkLineStatus,
-        lines: &[DiffRef],
-    ) -> impl IntoIterator<Item = HunkLine> + '_ {
+        lines: &'a [DiffRef],
+    ) -> impl IntoIterator<Item = HunkLine> + 'a {
         lines.iter().map(move |&line| HunkLine {
             status,
-            contents: line,
+            contents: buffer[line].to_vec(),
             no_newline: false,
         })
     }
@@ -201,9 +202,16 @@ impl Context {
 #[derive(Debug, Clone)]
 pub enum DiffChunkContents {
     FileHeader {
-        old_path: DiffRef,
+        /// Old path as found in the "---" line
+        old_path: Vec<u8>,
+
+        /// Old name, taking /dev/null and strip_path_components into account.
         old_name: FileName,
-        new_path: DiffRef,
+
+        /// New path as found in the "+++" line
+        new_path: Vec<u8>,
+
+        /// New name, taking /dev/null and strip_path_components into account.
         new_name: FileName,
     },
     HunkHeader {
@@ -223,7 +231,7 @@ pub struct Chunk {
     pub contents: DiffChunkContents,
 }
 impl Chunk {
-    pub fn render_text(&self, buffer: &Buffer, out: &mut Vec<u8>) {
+    pub fn render_text(&self, out: &mut Vec<u8>) {
         let prefix = self.context.prefix_bytes();
 
         match &self.contents {
@@ -232,11 +240,11 @@ impl Chunk {
             } => {
                 out.extend(prefix);
                 out.extend(b"--- ");
-                out.extend(buffer[*old_path].iter());
+                out.extend(old_path);
                 out.push(b'\n');
                 out.extend(prefix);
                 out.extend(b"+++ ");
-                out.extend(buffer[*new_path].iter());
+                out.extend(new_path);
                 out.push(b'\n');
             }
             DiffChunkContents::HunkHeader {
@@ -257,7 +265,7 @@ impl Chunk {
             DiffChunkContents::Line { line } => {
                 out.extend(prefix);
                 out.push(line.status.symbol_byte());
-                out.extend(&buffer[line.contents]);
+                out.extend(&line.contents);
                 if line.no_newline {
                     out.extend(b"\n\\ No newline at end of file\n");
                 } else {
@@ -298,29 +306,6 @@ impl<T: ChunkWriter + ?Sized> ChunkWriterExt for T {
     }
 }
 
-/// A trait that receives [`Chunk`]s, e.g. to write them to a text file.
-pub trait ChunkFreeWriter {
-    fn push(&mut self, buffer: &Buffer, chunk: Chunk);
-}
-
-pub trait ChunkFreeWriterExt: ChunkFreeWriter {
-    fn with_buffer<'buffer>(&'buffer mut self, buffer: &'buffer Buffer) -> impl ChunkWriter;
-}
-impl<T: ChunkFreeWriter + ?Sized> ChunkFreeWriterExt for T {
-    fn with_buffer<'buffer>(&'buffer mut self, buffer: &'buffer Buffer) -> impl ChunkWriter {
-        struct WithBuffer<'writer, T: ?Sized> {
-            this: &'writer mut T,
-            buffer: &'writer Buffer,
-        }
-        impl<'writer, T: ChunkFreeWriter + ?Sized> ChunkWriter for WithBuffer<'writer, T> {
-            fn push(&mut self, chunk: Chunk) {
-                self.this.push(self.buffer, chunk);
-            }
-        }
-        WithBuffer { this: self, buffer }
-    }
-}
-
 /// Write [`Chunk`]s into a byte buffer.
 pub struct ChunkByteBufferWriter {
     pub out: Vec<u8>,
@@ -330,9 +315,9 @@ impl ChunkByteBufferWriter {
         Self { out: Vec::new() }
     }
 }
-impl ChunkFreeWriter for ChunkByteBufferWriter {
-    fn push(&mut self, buffer: &Buffer, chunk: Chunk) {
-        chunk.render_text(buffer, &mut self.out);
+impl ChunkWriter for ChunkByteBufferWriter {
+    fn push(&mut self, chunk: Chunk) {
+        chunk.render_text(&mut self.out);
     }
 }
 
@@ -518,13 +503,13 @@ impl Hunk {
 #[derive(Debug, Clone)]
 pub struct DiffFile {
     // Old path as found in the "---" line
-    old_path: DiffRef,
+    old_path: Vec<u8>,
 
     // Old name, taking /dev/null and strip_path_components into account.
     pub old_name: FileName,
 
     /// New path as found in the "+++" line
-    new_path: DiffRef,
+    new_path: Vec<u8>,
 
     /// New name, taking /dev/null and strip_path_components into account.
     pub new_name: FileName,
@@ -534,6 +519,7 @@ pub struct DiffFile {
 
 #[derive(Debug, Clone)]
 struct Hunkify<'a> {
+    buffer: &'a Buffer,
     blocks: &'a [Block],
     num_context_lines: Option<usize>,
     hunk: Hunk,
@@ -558,7 +544,7 @@ impl<'a> Hunkify<'a> {
 
     fn add_unimportant(&mut self, status: HunkLineStatus, lines: &[DiffRef]) -> Option<Hunk> {
         if self.num_context_lines.is_none() {
-            self.hunk.lines.extend(HunkLine::from_range(status, lines));
+            self.hunk.lines.extend(HunkLine::from_range(self.buffer, status, lines));
             return None;
         }
 
@@ -578,11 +564,11 @@ impl<'a> Hunkify<'a> {
             // lines. This is so we don't split hunks with changed lines separated by at most
             // twice the context.
             if lines.len() <= missing_context + num_context_lines {
-                self.hunk.lines.extend(HunkLine::from_range(status, lines));
+                self.hunk.lines.extend(HunkLine::from_range(self.buffer, status, lines));
             } else {
                 self.hunk
                     .lines
-                    .extend(HunkLine::from_range(status, &lines[..missing_context]));
+                    .extend(HunkLine::from_range(self.buffer, status, &lines[..missing_context]));
                 taken += missing_context;
 
                 result = self.flush_hunk();
@@ -599,7 +585,7 @@ impl<'a> Hunkify<'a> {
 
             self.hunk
                 .lines
-                .extend(HunkLine::from_range(status, &lines[lines.len() - count..]));
+                .extend(HunkLine::from_range(self.buffer, status, &lines[lines.len() - count..]));
             taken += count;
 
             if status.covers_old() {
@@ -614,7 +600,7 @@ impl<'a> Hunkify<'a> {
     }
 
     fn add_important(&mut self, status: HunkLineStatus, lines: &[DiffRef]) {
-        self.hunk.lines.extend(HunkLine::from_range(status, lines));
+        self.hunk.lines.extend(HunkLine::from_range(self.buffer, status, lines));
         self.important_end = self.hunk.lines.len();
     }
 
@@ -736,17 +722,17 @@ impl DiffFile {
         writer.push(Chunk {
             context: Context::Unknown,
             contents: DiffChunkContents::FileHeader {
-                old_path: self.old_path,
+                old_path: self.old_path.clone(),
                 old_name: self.old_name.clone(),
-                new_path: self.new_path,
+                new_path: self.new_path.clone(),
                 new_name: self.new_name.clone(),
             },
         });
     }
 
-    pub fn render(&self, num_context_lines: usize, writer: &mut dyn ChunkWriter) {
+    pub fn render(&self, buffer: &Buffer, num_context_lines: usize, writer: &mut dyn ChunkWriter) {
         let mut printed_header = false;
-        for hunk in self.hunks(Some(num_context_lines)) {
+        for hunk in self.hunks(buffer, Some(num_context_lines)) {
             if !printed_header {
                 self.render_header(writer);
                 printed_header = true;
@@ -755,8 +741,8 @@ impl DiffFile {
         }
     }
 
-    pub fn render_full_body(&self, writer: &mut dyn ChunkWriter) {
-        let mut hunks = self.hunks(None).peekable();
+    pub fn render_full_body(&self, buffer: &Buffer, writer: &mut dyn ChunkWriter) {
+        let mut hunks = self.hunks(buffer, None).peekable();
         let mut is_first = true;
         while let Some(hunk) = hunks.next() {
             let header = !is_first || hunks.peek().is_some();
@@ -776,8 +762,9 @@ impl DiffFile {
     ///
     /// Otherwise, hunks will be reduced to at most the given number of lines
     /// surrounding important changes.
-    fn hunks(&self, num_context_lines: Option<usize>) -> impl Iterator<Item = Hunk> + '_ {
+    fn hunks<'a>(&'a self, buffer: &'a Buffer, num_context_lines: Option<usize>) -> impl Iterator<Item = Hunk> + 'a {
         Hunkify {
+            buffer,
             blocks: &self.blocks,
             num_context_lines,
             hunk: Hunk {
@@ -1205,9 +1192,9 @@ impl Diff {
                     if let Some(file) = parser.file.take() {
                         if file.new_path.is_some() {
                             parser.diff_files.push(DiffFile {
-                                old_path: file.old_path.unwrap(),
+                                old_path: buffer[file.old_path.unwrap()].to_vec(),
                                 old_name: file.old_name.unwrap(),
-                                new_path: file.new_path.unwrap(),
+                                new_path: buffer[file.new_path.unwrap()].to_vec(),
                                 new_name: file.new_name.unwrap(),
                                 blocks: file.blocks,
                             });
@@ -1297,9 +1284,9 @@ impl Diff {
         })
     }
 
-    pub fn render(&self, writer: &mut dyn ChunkWriter) {
+    pub fn render(&self, buffer: &Buffer, writer: &mut dyn ChunkWriter) {
         for file in &self.files {
-            file.render(self.options.num_context_lines, writer);
+            file.render(buffer, self.options.num_context_lines, writer);
         }
     }
 
@@ -1323,7 +1310,7 @@ pub struct LossyDiffDisplay<'a> {
 impl<'a> std::fmt::Display for LossyDiffDisplay<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut writer = ChunkByteBufferWriter::new();
-        self.diff.render(&mut writer.with_buffer(self.buffer));
+        self.diff.render(self.buffer, &mut writer);
         write!(f, "{}", String::from_utf8_lossy(&writer.out))
     }
 }
@@ -1414,9 +1401,9 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
     for first_file in &first.files {
         if let Some(second_file) = second_diff_idx.find_old_file(&first_file.new_name) {
             let mut file = DiffFile {
-                old_path: first_file.old_path,
+                old_path: first_file.old_path.clone(),
                 old_name: first_file.old_name.clone(),
-                new_path: second_file.new_path,
+                new_path: second_file.new_path.clone(),
                 new_name: second_file.new_name.clone(),
                 blocks: Vec::new(),
             };
@@ -1662,9 +1649,9 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                     };
 
                     result.files.push(DiffFile {
-                        old_path: first_file.old_path,
+                        old_path: first_file.old_path.clone(),
                         old_name: first_file.old_name.clone(),
-                        new_path: second_file.new_path,
+                        new_path: second_file.new_path.clone(),
                         new_name: second_file.new_name.clone(),
                         blocks: [
                             Block {
@@ -1845,8 +1832,8 @@ pub fn diff_modulo_base(
             let mut need_base_header = false;
             let mut need_target_header = false;
 
-            let mut base_hunks = base_file.hunks(Some(num_context_lines)).peekable();
-            let mut target_hunks = target_file.hunks(Some(num_context_lines)).peekable();
+            let mut base_hunks = base_file.hunks(buffer, Some(num_context_lines)).peekable();
+            let mut target_hunks = target_file.hunks(buffer, Some(num_context_lines)).peekable();
 
             let mut hunks: Vec<(Context, Hunk)> = Vec::new();
 
@@ -1892,6 +1879,7 @@ pub fn diff_modulo_base(
             }
         } else {
             base_file.render(
+                buffer,
                 num_context_lines,
                 &mut writer.with_context(Context::Baseline),
             );
@@ -1908,7 +1896,7 @@ pub fn diff_modulo_base(
                     .and_then(|base_new_file| base_index.find_new_file(&base_new_file.old_name))
             });
         if base_file.is_none() {
-            target_file.render(num_context_lines, &mut writer.with_context(Context::Change));
+            target_file.render(buffer, num_context_lines, &mut writer.with_context(Context::Change));
         }
     }
 
@@ -1943,9 +1931,9 @@ pub fn diff_file(
     let num_new_lines = new_lines.len() as u32;
 
     let file = DiffFile {
-        old_path,
+        old_path: buffer[old_path].to_owned(),
         old_name: FileName::extract(&buffer[old_path], options.strip_path_components)?,
-        new_path,
+        new_path: buffer[new_path].to_owned(),
         new_name: FileName::extract(&buffer[new_path], options.strip_path_components)?,
         blocks: [
             Block {

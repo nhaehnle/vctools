@@ -70,7 +70,7 @@ impl Writer<'_> {
         Writer { out }
     }
 
-    fn push_fallible(&mut self, buffer: &Buffer, chunk: Chunk) -> std::io::Result<()> {
+    fn push_fallible(&mut self, chunk: Chunk) -> std::io::Result<()> {
         let prefix = chunk.context.prefix_bytes();
 
         match &chunk.contents {
@@ -80,12 +80,12 @@ impl Writer<'_> {
                 self.out.set_color(&COLORS.file_header)?;
                 self.out.write(prefix)?;
                 self.out.write(b"--- ")?;
-                self.out.write(&buffer[*old_path])?;
+                self.out.write(old_path)?;
                 self.out.write(b"\n")?;
                 self.out.set_color(&COLORS.file_header)?;
                 self.out.write(prefix)?;
                 self.out.write(b"+++ ")?;
-                self.out.write(&buffer[*new_path])?;
+                self.out.write(new_path)?;
                 self.out.write(b"\n")?;
             }
             DiffChunkContents::HunkHeader {
@@ -112,7 +112,7 @@ impl Writer<'_> {
                 }
                 self.out.write(prefix)?;
                 self.out.write(&[line.status.symbol_byte()])?;
-                self.out.write(&buffer[line.contents])?;
+                self.out.write(&line.contents)?;
                 if line.no_newline {
                     self.out.write(b"\n\\ No newline at end of file\n")?;
                 } else {
@@ -124,8 +124,8 @@ impl Writer<'_> {
         Ok(())
     }
 }
-impl ChunkFreeWriter for Writer<'_> {
-    fn push(&mut self, buffer: &Buffer, chunk: Chunk) {
-        self.push_fallible(buffer, chunk).unwrap_or_default();
+impl ChunkWriter for Writer<'_> {
+    fn push(&mut self, chunk: Chunk) {
+        self.push_fallible(chunk).unwrap_or_default();
     }
 }

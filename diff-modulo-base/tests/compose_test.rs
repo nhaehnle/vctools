@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-use diff::ChunkFreeWriterExt;
 use diff_modulo_base::*;
 use utils::Result;
 
@@ -26,7 +25,7 @@ fn compose_test() -> Result<()> {
 
         let result_diff = diff::compose(&first_diff, &second_diff)?;
         let mut writer = diff::ChunkByteBufferWriter::new();
-        result_diff.render(&mut writer.with_buffer(&buffer));
+        result_diff.render(&buffer, &mut writer);
 
         assert_eq!(expected, writer.out);
     }
