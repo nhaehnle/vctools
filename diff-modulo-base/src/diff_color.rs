@@ -69,16 +69,14 @@ enum Element {
     RangeDiffMatch(RangeDiffMatch),
 }
 
+#[derive(Default)]
 pub struct Writer {
     elements: Vec<Element>,
-    rdm_column_widths: (usize, usize, usize, usize),
+    rdm_column_widths: git_core::RangeDiffMatchColumnWidths,
 }
 impl Writer {
-    pub fn new() -> Writer {
-        Writer {
-            elements: Vec::new(),
-            rdm_column_widths: (1, 1, 1, 1),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn write(mut self, out: &mut dyn termcolor::WriteColor) -> std::io::Result<()> {
@@ -159,46 +157,13 @@ impl Writer {
         out: &mut dyn termcolor::WriteColor,
         rdm: RangeDiffMatch,
     ) -> std::io::Result<()> {
-        struct Column(usize, Option<String>);
-        impl std::fmt::Display for Column {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match &self.1 {
-                    Some(string) => write!(f, "{string:0$}", self.0),
-                    None => write!(f, "{0:-<1$}", '-', self.0),
-                }
-            }
-        }
-
         out.set_color(
             ColorSpec::new()
                 .set_bg(Some(Color::Cyan))
                 .set_fg(Some(Color::Black)),
         )?;
 
-        let change = match (rdm.changed, &rdm.old, &rdm.new) {
-            (false, _, _) => "=",
-            (true, Some(_), None) => "<",
-            (true, None, Some(_)) => ">",
-            _ => "!",
-        };
-
-        let (old_idx, old_hash) = rdm.old.as_ref().map_or((None, None), |(idx, hash)| {
-            (Some(format!("{idx}")), Some(format!("{hash}")))
-        });
-        let (new_idx, new_hash) = rdm.new.as_ref().map_or((None, None), |(idx, hash)| {
-            (Some(format!("{idx}")), Some(format!("{hash}")))
-        });
-
-        writeln!(
-            out,
-            "{}: {} {} {}: {} {}",
-            Column(self.rdm_column_widths.0, old_idx),
-            Column(self.rdm_column_widths.1, old_hash),
-            change,
-            Column(self.rdm_column_widths.2, new_idx),
-            Column(self.rdm_column_widths.3, new_hash),
-            String::from_utf8_lossy(&rdm.title)
-        )?;
+        writeln!(out, "{}", rdm.format(self.rdm_column_widths))?;
 
         Ok(())
     }
@@ -210,17 +175,7 @@ impl ChunkWriter for Writer {
 }
 impl RangeDiffWriter for Writer {
     fn push_range_diff_match(&mut self, rdm: RangeDiffMatch) {
-        let old_widths = rdm.old.as_ref().map_or((0, 0), |(idx, hash)| {
-            (format!("{idx}").len(), format!("{hash}").len())
-        });
-        let new_widths = rdm.new.as_ref().map_or((0, 0), |(idx, hash)| {
-            (format!("{idx}").len(), format!("{hash}").len())
-        });
-
-        self.rdm_column_widths.0 = self.rdm_column_widths.0.max(old_widths.0);
-        self.rdm_column_widths.1 = self.rdm_column_widths.1.max(old_widths.1);
-        self.rdm_column_widths.2 = self.rdm_column_widths.2.max(new_widths.0);
-        self.rdm_column_widths.3 = self.rdm_column_widths.3.max(new_widths.1);
+        self.rdm_column_widths = self.rdm_column_widths.max(rdm.column_widths());
 
         self.elements.push(Element::RangeDiffMatch(rdm));
     }

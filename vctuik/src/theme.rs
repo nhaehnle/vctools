@@ -13,6 +13,11 @@ pub struct Text {
     pub highlight: Style,
     pub inactive: Style,
     pub selected: Style,
+    pub header0: Style,
+    pub header1: Style,
+    pub header2: Style,
+    pub added: Style,
+    pub removed: Style,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,12 +85,12 @@ fn make_solarized(dark: bool) -> Theme {
     let mut base3 =     Color::Rgb(0xfd, 0xf6, 0xe3);
     let yellow =        Color::Rgb(0xb5, 0x89, 0x00);
     let _orange =       Color::Rgb(0xcb, 0x4b, 0x16);
-    let _red =          Color::Rgb(0xdc, 0x32, 0x2f);
+    let red =           Color::Rgb(0xdc, 0x32, 0x2f);
     let _magenta =      Color::Rgb(0xd3, 0x36, 0x82);
-    let _violet =       Color::Rgb(0x6c, 0x71, 0xc4);
-    let _blue =         Color::Rgb(0x26, 0x8b, 0xd2);
-    let _cyan =         Color::Rgb(0x2a, 0xa1, 0x98);
-    let _green =        Color::Rgb(0x85, 0x99, 0x00);
+    let violet =        Color::Rgb(0x6c, 0x71, 0xc4);
+    let blue =          Color::Rgb(0x26, 0x8b, 0xd2);
+    let cyan =          Color::Rgb(0x2a, 0xa1, 0x98);
+    let green =         Color::Rgb(0x85, 0x99, 0x00);
 
     if dark {
         std::mem::swap(&mut base0, &mut base00);
@@ -100,6 +105,11 @@ fn make_solarized(dark: bool) -> Theme {
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
             selected: Style::default().bg(base2).fg(base01),
+            header0: Style::default().fg(blue),
+            header1: Style::default().fg(violet),
+            header2: Style::default().fg(cyan),
+            added: Style::default().fg(green),
+            removed: Style::default().fg(red),
         },
         pane_background: Style::default().bg(base3),
         pane_frame_normal: Style::default().fg(base00).bold(),
@@ -109,6 +119,11 @@ fn make_solarized(dark: bool) -> Theme {
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
             selected: Style::default().bg(base2).fg(base01),
+            header0: Style::default().fg(blue),
+            header1: Style::default().fg(violet),
+            header2: Style::default().fg(cyan),
+            added: Style::default().fg(green),
+            removed: Style::default().fg(red),
         },
         modal_background: Style::default().bg(base2),
         modal_frame: Style::default().fg(yellow).bold(),
@@ -117,6 +132,11 @@ fn make_solarized(dark: bool) -> Theme {
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
             selected: Style::default().bg(base2).fg(base01),
+            header0: Style::default().fg(blue),
+            header1: Style::default().fg(violet),
+            header2: Style::default().fg(cyan),
+            added: Style::default().fg(green),
+            removed: Style::default().fg(red),
         },
     }
 }

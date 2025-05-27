@@ -4,9 +4,17 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
+use git_review::{pager, stringtools::StrScan};
+use ratatui::prelude::*;
 use reqwest::header;
 use serde::Deserialize;
-use utils::{Result, try_forward};
+use std::fmt::Write;
+use utils::{try_forward, Result};
+use vctuik::{
+    self,
+    event::{self, KeyCode},
+    theme,
+};
 
 use git_core::{Ref, Repository};
 
@@ -62,18 +70,18 @@ struct Cli {
     /// Behave as if run from the given path.
     #[clap(short = 'C', default_value = ".")]
     path: std::path::PathBuf,
-
-    #[clap(flatten)]
-    cli_options: cli::Options,
 }
 
 trait JsonRequest {
     fn send_json<'a, J>(self) -> Result<J>
-    where J: serde::de::DeserializeOwned;
+    where
+        J: serde::de::DeserializeOwned;
 }
 impl JsonRequest for reqwest::blocking::RequestBuilder {
     fn send_json<'a, J>(self) -> Result<J>
-    where J: serde::de::DeserializeOwned {
+    where
+        J: serde::de::DeserializeOwned,
+    {
         let (client, request) = self.build_split();
         let request = request?;
         let request_clone = request.try_clone();
@@ -96,17 +104,158 @@ impl JsonRequest for reqwest::blocking::RequestBuilder {
     }
 }
 
+#[derive(Debug)]
+enum Element {
+    ReviewHeader(String),
+    Chunk(diff::Chunk),
+    Commit(git_core::RangeDiffMatch),
+}
+impl Element {
+    fn num_lines(&self) -> usize {
+        match self {
+            Element::ReviewHeader(text) => text.lines().count(),
+            Element::Chunk(chunk) => match &chunk.contents {
+                diff::DiffChunkContents::FileHeader { .. } => 2,
+                _ => 1,
+            },
+            Element::Commit(_) => 1,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ReviewPagerSource {
+    /// Flat list of all elements of the review
+    elements: Vec<Element>,
+
+    /// Global (uncollapsed) line number for every element in `elements`
+    global_lines: Vec<usize>,
+
+    /// Indices into `elements` of commit headers
+    commits: Vec<usize>,
+
+    /// Indices into `elements` of all file headers
+    files: Vec<usize>,
+
+    /// Column widths for range diff matches
+    rdm_column_widths: git_core::RangeDiffMatchColumnWidths,
+
+    /// Persistent cursors
+    cursors: std::cell::RefCell<pager::PersistentCursors<(usize, usize)>>,
+}
+impl ReviewPagerSource {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn num_global_lines(&self) -> usize {
+        self.global_lines
+            .last()
+            .map_or(0, |&l| l + self.elements.last().unwrap().num_lines())
+    }
+
+    fn push_header(&mut self, text: String) {
+        self.global_lines.push(self.num_global_lines());
+        self.elements.push(Element::ReviewHeader(text));
+    }
+}
+impl diff::ChunkWriter for ReviewPagerSource {
+    fn push_chunk(&mut self, chunk: diff::Chunk) {
+        self.global_lines.push(self.num_global_lines());
+
+        if matches!(chunk.contents, diff::DiffChunkContents::FileHeader { .. }) {
+            self.files.push(self.elements.len());
+        }
+
+        self.elements.push(Element::Chunk(chunk));
+    }
+}
+impl git_core::RangeDiffWriter for ReviewPagerSource {
+    fn push_range_diff_match(&mut self, rdm: git_core::RangeDiffMatch) {
+        self.rdm_column_widths = self.rdm_column_widths.max(rdm.column_widths());
+
+        self.global_lines.push(self.num_global_lines());
+        self.commits.push(self.elements.len());
+        self.elements.push(Element::Commit(rdm));
+    }
+}
+impl pager::PagerSource for ReviewPagerSource {
+    fn num_lines(&self) -> usize {
+        self.num_global_lines()
+    }
+
+    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line {
+        let idx = self.global_lines.partition_point(|&l| l <= line) - 1;
+        let line = line - self.global_lines[idx];
+
+        let (text, style) = match &self.elements[idx] {
+            Element::ReviewHeader(text) => (text.clone(), theme.highlight),
+            Element::Chunk(chunk) => {
+                let style = match &chunk.contents {
+                    diff::DiffChunkContents::FileHeader { .. } => theme.header1,
+                    diff::DiffChunkContents::HunkHeader { .. } => theme.header2,
+                    diff::DiffChunkContents::Line { line } => match line.status {
+                        diff::HunkLineStatus::Unchanged => theme.normal,
+                        diff::HunkLineStatus::Old(_) => theme.removed,
+                        diff::HunkLineStatus::New(_) => theme.added,
+                    },
+                };
+
+                let mut text = Vec::new();
+                chunk.render_text(&mut text);
+
+                (String::from_utf8_lossy(&text).into(), style)
+            }
+            Element::Commit(rdm) => (rdm.format(self.rdm_column_widths), theme.header0),
+        };
+
+        let offset = text
+            .row_col_scan((0, 0))
+            .find_map(|((l, c), offset)| {
+                if l > line {
+                    Some(None)
+                } else if l == line && c >= col_no {
+                    Some(Some(offset))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(None);
+        let Some(offset) = offset else {
+            return Line::default();
+        };
+
+        let text = text[offset..].get_first_line(max_cols);
+        Line::from(Span::styled(text.to_owned(), style))
+    }
+
+    fn persist_cursor(
+        &self,
+        line: usize,
+        col: usize,
+        _gravity: pager::Gravity,
+    ) -> pager::PersistentCursor {
+        self.cursors.borrow_mut().add((line, col))
+    }
+
+    fn retrieve_cursor(&self, cursor: pager::PersistentCursor) -> ((usize, usize), bool) {
+        (self.cursors.borrow_mut().take(cursor), false)
+    }
+}
+
 fn do_main() -> Result<()> {
     let args = Cli::parse();
-    let mut cli = cli::Cli::new(args.cli_options);
-    let out = cli.stream();
 
     let dirs = ProjectDirs::from("experimental", "nhaehnle", "diff-modulo-base").unwrap();
     let config: Config = {
         let mut config = dirs.config_dir().to_path_buf();
         config.push("github.toml");
         try_forward(
-            || Ok(toml::from_str(&String::from_utf8(utils::read_bytes(config)?)?)?),
+            || {
+                Ok(toml::from_str(&String::from_utf8(utils::read_bytes(
+                    config,
+                )?)?)?)
+            },
             || "Error parsing configuration",
         )?
     };
@@ -155,12 +304,34 @@ fn do_main() -> Result<()> {
         .rev()
         .find(|review| review.user.login == host.user);
 
-    writeln!(out, "Review {}/{}#{}", organization, gh_repo, args.pull)?;
+    let mut review_header = String::new();
+    writeln!(
+        &mut review_header,
+        "Review {}/{}#{}",
+        organization, gh_repo, args.pull
+    )?;
     if let Some(review) = &most_recent_review {
-        writeln!(out, "  Most recent review: {}", review.commit_id)?;
+        writeln!(
+            &mut review_header,
+            "  Most recent review: {}",
+            review.commit_id
+        )?;
     }
-    writeln!(out, "  Current head:       {}", pull.head.sha)?;
-    writeln!(out, "  Target branch:      {}", pull.base.ref_)?;
+    writeln!(
+        &mut review_header,
+        "  Current head:       {}",
+        pull.head.sha
+    )?;
+    writeln!(
+        &mut review_header,
+        "  Target branch:      {}",
+        pull.base.ref_
+    )?;
+
+    print!("{review_header}");
+
+    let mut pager_source = ReviewPagerSource::new();
+    pager_source.push_header(review_header);
 
     let refs: Vec<_> = [&pull.head.sha, &pull.base.sha]
         .into_iter()
@@ -184,9 +355,20 @@ fn do_main() -> Result<()> {
         options: args.dmb_options,
     };
 
-    let mut writer = diff_color::Writer::new();
-    tool::git_diff_modulo_base(dmb_args, git_repo, &mut writer)?;
-    writer.write(out)?;
+    tool::git_diff_modulo_base(dmb_args, git_repo, &mut pager_source)?;
+
+    let mut terminal = vctuik::init()?;
+
+    let mut running = true;
+
+    while running {
+        terminal.run_frame(|builder| {
+            pager::Pager::new(&pager_source).build(builder, "pager", builder.viewport().height);
+            event::on_key_press(builder, KeyCode::Char('q'), |_| {
+                running = false;
+            });
+        })?;
+    }
 
     Ok(())
 }

@@ -439,12 +439,83 @@ pub struct LogEntry {
     pub title: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RangeDiffMatchColumnWidths(usize, usize, usize, usize);
+impl RangeDiffMatchColumnWidths {
+    pub fn max(self, rhs: RangeDiffMatchColumnWidths) -> Self {
+        Self(
+            self.0.max(rhs.0),
+            self.1.max(rhs.1),
+            self.2.max(rhs.2),
+            self.3.max(rhs.3),
+        )
+    }
+}
+impl Default for RangeDiffMatchColumnWidths {
+    fn default() -> Self {
+        Self(1, 1, 1, 1)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RangeDiffMatch {
     pub changed: bool,
     pub old: Option<(u32, Ref)>,
     pub new: Option<(u32, Ref)>,
     pub title: Vec<u8>,
+}
+impl RangeDiffMatch {
+    pub fn column_widths(&self) -> RangeDiffMatchColumnWidths {
+        let old_idx = self.old.as_ref().map_or((1, 1), |(idx, hash)| {
+            (format!("{idx}").len(), format!("{hash}").len())
+        });
+        let new_idx = self.new.as_ref().map_or((1, 1), |(idx, hash)| {
+            (format!("{idx}").len(), format!("{hash}").len())
+        });
+
+        RangeDiffMatchColumnWidths(
+            old_idx.0,
+            old_idx.1,
+            new_idx.0,
+            new_idx.1,
+        )
+    }
+
+    pub fn format(&self, widths: RangeDiffMatchColumnWidths) -> String {
+        struct Column(usize, Option<String>);
+        impl std::fmt::Display for Column {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match &self.1 {
+                    Some(string) => write!(f, "{string:0$}", self.0),
+                    None => write!(f, "{0:-<1$}", '-', self.0),
+                }
+            }
+        }
+
+        let change = match (self.changed, &self.old, &self.new) {
+            (false, _, _) => "=",
+            (true, Some(_), None) => "<",
+            (true, None, Some(_)) => ">",
+            _ => "!",
+        };
+
+        let (old_idx, old_hash) = self.old.as_ref().map_or((None, None), |(idx, hash)| {
+            (Some(format!("{idx}")), Some(format!("{hash}")))
+        });
+        let (new_idx, new_hash) = self.new.as_ref().map_or((None, None), |(idx, hash)| {
+            (Some(format!("{idx}")), Some(format!("{hash}")))
+        });
+
+        format!(
+            "{}: {} {} {}: {} {}",
+            Column(widths.0, old_idx),
+            Column(widths.1, old_hash),
+            change,
+            Column(widths.2, new_idx),
+            Column(widths.3, new_hash),
+            String::from_utf8_lossy(&self.title)
+        ).to_string()
+    }
 }
 
 pub trait RangeDiffWriter {

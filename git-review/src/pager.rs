@@ -8,7 +8,10 @@ use vctuik::{
     event::{self, Event, KeyCode, KeyEventKind, MouseEventKind},
     prelude::*,
     state::{Builder, Handled, Renderable},
+    theme,
 };
+
+use crate::stringtools::StrScan;
 
 /// A persistent cursor into a `PagerSource`.
 ///
@@ -33,7 +36,7 @@ pub enum Gravity {
 /// Stores a value of type `T` for each persistent cursor.
 ///
 /// Implementations of `PagerSource` must use an instance of this type to manage persistent cursors.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PersistentCursors<T> {
     cursors: Vec<Option<T>>,
 }
@@ -99,7 +102,7 @@ pub trait PagerSource {
     ///
     /// As a hint, `max_cols` indicates a maximum number of characters that the caller is interested
     /// in. Implementations are encouraged not to return more data, even if the line is longer.
-    fn get_line(&self, line: usize, col_no: usize, max_cols: usize) -> Line;
+    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line;
 
     /// Return a persistent cursor for the given line and column.
     ///
@@ -173,7 +176,7 @@ impl<'source> Pager<'source> {
 
             let line = self
                 .source
-                .get_line(line_no, scroll_col, area.width as usize)
+                .get_line(builder.theme().text(builder.context()), line_no, scroll_col, area.width as usize)
                 .style(builder.theme().text.normal);
             builder.add_render(Renderable::Line(
                 Rect {
@@ -266,83 +269,6 @@ impl<'source> Pager<'source> {
     }
 }
 
-trait State<T> {
-    fn get(&self) -> T;
-    fn set(&mut self, t: T);
-}
-impl<T: Copy> State<T> for Cell<T> {
-    fn get(&self) -> T {
-        Cell::get(&self)
-    }
-
-    fn set(&mut self, t: T) {
-        Cell::set(self, t);
-    }
-}
-impl<T: Copy> State<T> for &mut T {
-    fn get(&self) -> T {
-        **self
-    }
-
-    fn set(&mut self, t: T) {
-        **self = t;
-    }
-}
-
-struct StrScanner<P, I> {
-    pos: P,
-    iter: I,
-}
-impl<P: State<(usize, usize)>, I: Iterator<Item = (usize, char)>> Iterator for StrScanner<P, I> {
-    type Item = ((usize, usize), usize);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|(byte_offset, ch)| {
-            let orig_pos = self.pos.get();
-            let (mut row, mut col) = self.pos.get();
-            col += 1;
-            if ch == '\n' {
-                row += 1;
-                col = 0;
-            }
-            self.pos.set((row, col));
-            (orig_pos, byte_offset)
-        })
-    }
-}
-
-trait StrScan {
-    fn row_col_scan(
-        self,
-        init_pos: (usize, usize),
-    ) -> impl Iterator<Item = ((usize, usize), usize)>;
-    fn row_col_scan_mut(
-        self,
-        pos: &mut (usize, usize),
-    ) -> impl Iterator<Item = ((usize, usize), usize)>;
-}
-impl StrScan for &str {
-    fn row_col_scan(
-        self,
-        init_pos: (usize, usize),
-    ) -> impl Iterator<Item = ((usize, usize), usize)> {
-        StrScanner {
-            pos: Cell::new(init_pos),
-            iter: self.char_indices(),
-        }
-    }
-
-    fn row_col_scan_mut(
-        self,
-        pos: &mut (usize, usize),
-    ) -> impl Iterator<Item = ((usize, usize), usize)> {
-        StrScanner {
-            pos,
-            iter: self.char_indices(),
-        }
-    }
-}
-
 pub struct StringPagerSource<'text> {
     text: &'text str,
 
@@ -412,16 +338,9 @@ impl<'text> PagerSource for StringPagerSource<'text> {
         }
     }
 
-    fn get_line(&self, line: usize, col_no: usize, max_cols: usize) -> Line {
+    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line {
         let start = self.get_index(line, col_no);
-        let bytes = &self.text[start..]
-            .char_indices()
-            .take_while_inclusive(|&(_, ch)| ch != '\n')
-            .take(max_cols.saturating_add(1))
-            .last()
-            .map_or(0, |(byte_offset, _)| byte_offset);
-
-        Line::from(&self.text[start..start + bytes])
+        Line::from(self.text[start..].get_first_line(max_cols)).style(theme.normal)
     }
 
     fn persist_cursor(&self, line: usize, col: usize, _gravity: Gravity) -> PersistentCursor {
@@ -466,26 +385,28 @@ mod test {
             &filler +
             "Fifth line\n";
         let source = StringPagerSource::new(&text);
+        let theme = theme::Theme::default().text;
         assert_eq!(source.num_lines(), 5);
-        assert_eq!(source.get_line(0, 0, usize::MAX).to_string(), "First line");
-        assert_eq!(source.get_line(2, 3, usize::MAX).to_string(), "rd line");
-        assert_eq!(source.get_line(4, 3, usize::MAX).to_string(), "th line");
-        assert_eq!(source.get_line(0, 10, usize::MAX).width(), 0);
-        assert_eq!(source.get_line(0, 11, usize::MAX).width(), 0);
-        assert_eq!(source.get_line(2, 10, usize::MAX).width(), 0);
-        assert_eq!(source.get_line(2, 11, usize::MAX).width(), 0);
-        assert_eq!(source.get_line(4, 10, usize::MAX).width(), 0);
-        assert_eq!(source.get_line(5, 0, usize::MAX).width(), 0);
-        assert!(source.get_line(0, 0, 3).width() >= 3);
+        assert_eq!(source.get_line(&theme, 0, 0, usize::MAX).to_string(), "First line");
+        assert_eq!(source.get_line(&theme, 2, 3, usize::MAX).to_string(), "rd line");
+        assert_eq!(source.get_line(&theme, 4, 3, usize::MAX).to_string(), "th line");
+        assert_eq!(source.get_line(&theme, 0, 10, usize::MAX).width(), 0);
+        assert_eq!(source.get_line(&theme, 0, 11, usize::MAX).width(), 0);
+        assert_eq!(source.get_line(&theme, 2, 10, usize::MAX).width(), 0);
+        assert_eq!(source.get_line(&theme, 2, 11, usize::MAX).width(), 0);
+        assert_eq!(source.get_line(&theme, 4, 10, usize::MAX).width(), 0);
+        assert_eq!(source.get_line(&theme, 5, 0, usize::MAX).width(), 0);
+        assert!(source.get_line(&theme, 0, 0, 3).width() >= 3);
     }
 
     #[test]
     fn sps_empty() {
         let source = StringPagerSource::new("");
+        let theme = theme::Theme::default().text;
         assert_eq!(source.num_lines(), 0);
-        assert_eq!(source.get_line(0, 0, usize::MAX).width(), 0);
-        assert_eq!(source.get_line(0, 0, 3).width(), 0);
-        assert_eq!(source.get_line(1, 0, usize::MAX).width(), 0);
-        assert_eq!(source.get_line(1, 0, 3).width(), 0);
+        assert_eq!(source.get_line(&theme, 0, 0, usize::MAX).width(), 0);
+        assert_eq!(source.get_line(&theme, 0, 0, 3).width(), 0);
+        assert_eq!(source.get_line(&theme, 1, 0, usize::MAX).width(), 0);
+        assert_eq!(source.get_line(&theme, 1, 0, 3).width(), 0);
     }
 }
