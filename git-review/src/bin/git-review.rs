@@ -4,7 +4,7 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
-use git_review::{pager, stringtools::StrScan};
+use git_review::{pager, powerbar, stringtools::StrScan};
 use ratatui::prelude::*;
 use reqwest::header;
 use serde::Deserialize;
@@ -360,8 +360,11 @@ fn do_main() -> Result<()> {
     let mut terminal = vctuik::init()?;
 
     let mut running = true;
+    let mut power_bar_source: Option<Box<dyn powerbar::PowerBarSource>> = None;
 
     while running {
+        let power_bar = powerbar::PowerBar::new();
+
         terminal.run_frame(|builder| {
             pager::Pager::new(&pager_source).build(builder, "pager", builder.viewport().height);
             event::on_key_press(builder, KeyCode::Char('q'), |_| {
