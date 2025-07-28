@@ -4,7 +4,7 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
-use git_review::{pager, stringtools::StrScan};
+use git_review::{pager, command, stringtools::StrScan};
 use ratatui::prelude::*;
 use reqwest::header;
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use std::fmt::Write;
 use utils::{try_forward, Result};
 use vctuik::{
     self,
-    event::{self, KeyCode},
+    event::KeyCode,
     theme,
 };
 
@@ -246,7 +246,7 @@ impl pager::PagerSource for ReviewPagerSource {
 fn do_main() -> Result<()> {
     let args = Cli::parse();
 
-    let dirs = ProjectDirs::from("experimental", "nhaehnle", "diff-modulo-base").unwrap();
+    let dirs = ProjectDirs::from("experimental", "nhaehnle", "vctools").unwrap();
     let config: Config = {
         let mut config = dirs.config_dir().to_path_buf();
         config.push("github.toml");
@@ -360,13 +360,20 @@ fn do_main() -> Result<()> {
     let mut terminal = vctuik::init()?;
 
     let mut running = true;
+    let mut command: Option<String> = None;
 
     while running {
         terminal.run_frame(|builder| {
-            pager::Pager::new(&pager_source).build(builder, "pager", builder.viewport().height);
-            event::on_key_press(builder, KeyCode::Char('q'), |_| {
+            pager::Pager::new(&pager_source).build(builder, "pager");
+
+            command::CommandLine::new("command", &mut command)
+                .help("q to quit")
+                .build(builder);
+
+            if builder.on_key_press(KeyCode::Char('q')) {
                 running = false;
-            });
+                return;
+            }
         })?;
     }
 

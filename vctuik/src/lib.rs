@@ -1,10 +1,12 @@
 
 pub mod check_box;
 pub mod event;
+#[cfg(feature = "input-widget")]
+pub mod input;
 pub mod label;
 pub mod layout;
-pub mod panes;
 pub mod prelude;
+pub mod section;
 pub mod state;
 pub mod signals;
 pub mod terminal;

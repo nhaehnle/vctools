@@ -1,17 +1,18 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use itertools::Itertools;
 use ratatui::{prelude::*, text::Line, widgets::Block};
+use regex::Regex;
+use std::borrow::Cow;
 use std::{
-    borrow::Cow,
-    cell::{Cell, RefCell},
+    cell::RefCell,
 };
 use vctuik::{
-    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind},
-    prelude::*,
-    state::{Builder, Handled, Renderable},
-    theme,
+    event::KeyCode, layout::{Constraint1D, LayoutItem1D}, prelude::*, state::Builder, theme
 };
 
 use crate::stringtools::StrScan;
+use crate::command;
 
 /// A persistent cursor into a `PagerSource`.
 ///
@@ -123,47 +124,84 @@ struct PagerState {
     last_height: u16,
 }
 
-pub struct Pager<'source> {
-    source: &'source dyn PagerSource,
+pub struct Pager<'pager> {
+    source: &'pager dyn PagerSource,
+    search_pattern: Option<Cow<'pager, Regex>>,
 }
-impl<'source> Pager<'source> {
-    pub fn new(source: &'source impl PagerSource) -> Self {
-        Pager { source }
+impl<'pager> Pager<'pager> {
+    pub fn new(source: &'pager impl PagerSource) -> Self {
+        Pager {
+            source,
+            search_pattern: None,
+        }
     }
 
-    pub fn build<'render, 'handler, 'id, Id>(
-        self,
-        builder: &mut Builder<'_, 'render, 'handler>,
-        id: Id,
-        num_lines: u16,
-    ) where
-        Id: Into<Cow<'id, str>>,
-        'source: 'render,
-        'source: 'handler,
-    {
-        self.build_impl(builder, id.into(), num_lines);
+    pub fn search(self, pattern: impl Into<Cow<'pager, Regex>>) -> Self {
+        Self {
+            search_pattern: Some(pattern.into()),
+            ..self
+        }
     }
 
-    fn build_impl<'render, 'handler>(
-        self,
-        builder: &mut Builder<'_, 'render, 'handler>,
-        id: Cow<'_, str>,
-        num_lines: u16,
-    ) where
-        'source: 'render,
-        'source: 'handler,
+    pub fn build(self, builder: &mut Builder, id: impl Into<String>)
     {
-        let (id, state) = builder.add_state_widget::<PagerState, _>(id, true);
-        let area = builder.take_lines(num_lines);
+        let state_id = builder.add_state_id(id.into().into());
+        let state: &mut PagerState = builder.get_state(state_id);
+        let area = builder.take_lines(LayoutItem1D::new(Constraint1D::new_min(5)).id(state_id, true));
+        let has_focus = builder.check_focus(state_id);
 
         state.last_height = area.height;
 
-        let has_focus = builder.has_focus(id);
+        // Handle events
+        let vertical_page_size = std::cmp::max((area.height / 2) as isize + 1,
+                                               area.height as isize - 5);
+        let horizontal_page_size = std::cmp::max(1, (area.width / 2) as isize);
+        let mouse_page_size = std::cmp::min(5, vertical_page_size);
 
-        builder.add_render(Renderable::Block(
-            area,
-            Block::default().style(builder.theme().pane_background),
-        ));
+        if has_focus {
+            if builder.on_key_press(KeyCode::Up) {
+                self.scroll(state, -1, 0);
+            }
+            if builder.on_key_press(KeyCode::Down) {
+                self.scroll(state, 1, 0);
+            }
+            if builder.on_key_press(KeyCode::Left) {
+                self.scroll(state, 0, -horizontal_page_size);
+            }
+            if builder.on_key_press(KeyCode::Right) {
+                self.scroll(state, 0, horizontal_page_size);
+            }
+            if builder.on_key_press(KeyCode::PageUp) {
+                self.scroll(state, -vertical_page_size, 0);
+            }
+            if builder.on_key_press(KeyCode::PageDown) {
+                self.scroll(state, vertical_page_size, 0);
+            }
+            if builder.on_key_press_any(&[KeyCode::Home, KeyCode::Char('g')]) {
+                state.scroll = Some(self.source.persist_cursor(0, 0, Gravity::Left));
+            }
+            if builder.on_key_press_any(&[KeyCode::End, KeyCode::Char('G')]) {
+                let line = self.source.num_lines().saturating_sub(area.height as usize);
+                state.scroll = Some(self.source.persist_cursor(line, 0, Gravity::Left));
+            }
+        }
+
+        if builder.on_mouse_scroll_down(area).is_some() {
+            self.scroll(state, mouse_page_size, 0);
+        }
+        if builder.on_mouse_scroll_up(area).is_some() {
+            self.scroll(state, -mouse_page_size, 0);
+        }
+        if builder.on_mouse_scroll_left(area).is_some() {
+            self.scroll(state, 0, -mouse_page_size);
+        }
+        if builder.on_mouse_scroll_right(area).is_some() {
+            self.scroll(state, 0, mouse_page_size);
+        }
+
+        // Render widget
+        let block = Block::default().style(builder.theme().pane_background);
+        builder.frame().render_widget(block, area);
 
         let num_lines = self.source.num_lines();
         let (scroll_row, scroll_col) = self.scroll(state, 0, 0);
@@ -174,81 +212,133 @@ impl<'source> Pager<'source> {
                 break;
             }
 
-            let line = self
-                .source
-                .get_line(builder.theme().text(builder.context()), line_no, scroll_col, area.width as usize)
-                .style(builder.theme().text.normal);
-            builder.add_render(Renderable::Line(
-                Rect {
-                    y: area.y + ry,
-                    height: 1,
-                    ..area
-                },
-                line,
-            ));
-        }
+            if let Some(pattern) = &self.search_pattern {
+                // Get the complete line and extract the raw text.
+                //
+                // TODO: This loses a whole bunch of the efficiency that PagerSource was built for.
+                let line =
+                    self.source.get_line(
+                        builder.theme().text(builder.context()),
+                        line_no, 0, usize::MAX);
+                let text = line.spans.iter()
+                    .map(|span: &Span| span.content.as_ref())
+                    .join("");
 
-        let vertical_page_size = std::cmp::max((area.height / 2) as isize + 1,
-                                               area.height as isize - 5);
-        let horizontal_page_size = std::cmp::max(1, (area.width / 2) as isize);
-        let mouse_page_size = std::cmp::min(5, vertical_page_size);
+                // Find matches.
+                let matches =
+                    pattern.find_iter(&text)
+                        .map(|m| m.range())
+                        .collect::<Vec<_>>();
 
-        builder.add_event_handler(move |event| {
-            match event {
-                Event::Key(ev) if has_focus && ev.kind == KeyEventKind::Press => {
-                    match ev.code {
-                        KeyCode::Up => {
-                            self.scroll(state, -1, 0);
+                // Combine the pre-existing styles with matches and render spans on the fly.
+                let selected = builder.theme().text(builder.context()).selected;
+                let normal = builder.theme().text(builder.context()).normal;
+
+                let mut styles = line.spans.iter()
+                    .scan(0, |idx, span| {
+                        let start = *idx;
+                        *idx += span.content.len();
+                        Some((start, span.style))
+                    })
+                    .peekable();
+                let mut matches = matches.iter()
+                    .flat_map(|m| [(m.start, true), (m.end, false)])
+                    .peekable();
+
+                let mut base_style = Style::default();
+                let mut in_match = false;
+                let mut row_col = text.row_col_scan((0, 0)).peekable();
+
+                'line: while let Some(&((_, mut begin_col), mut begin_idx)) = row_col.peek() {
+                    let (next_style_idx, next_style) =
+                        styles.peek()
+                            .map(Clone::clone)
+                            .unwrap_or((usize::MAX, Style::default()));
+                    let (next_match_idx, next_match) =
+                        matches.peek()
+                            .map(Clone::clone)
+                            .unwrap_or((usize::MAX, false));
+                    let end_idx = std::cmp::min(text.len(), std::cmp::min(next_style_idx, next_match_idx));
+
+                    while begin_col < scroll_col && begin_idx < end_idx {
+                        row_col.next();
+                        if let Some(&((_, col), idx)) = row_col.peek() {
+                            begin_col = col;
+                            begin_idx = idx;
+                        } else {
+                            break 'line;
                         }
-                        KeyCode::Down => {
-                            self.scroll(state, 1, 0);
+                    }
+
+                    if begin_col >= scroll_col + area.width as usize {
+                        break;
+                    }
+
+                    if begin_idx != end_idx {
+                        let style =
+                            if in_match {
+                                if base_style == normal {
+                                    selected
+                                } else {
+                                    selected.patch(base_style)
+                                }
+                            } else {
+                                base_style
+                            };
+
+                        let span = Span::from(&text[begin_idx..end_idx]).style(style);
+                        let rx = (begin_col - scroll_col) as u16;
+                        builder.frame().render_widget(
+                            span,
+                            Rect {
+                                y: area.y + ry,
+                                x: area.x + rx,
+                                width: area.width - rx,
+                                height: 1,
+                            },
+                        );
+
+                        while begin_idx < end_idx {
+                            row_col.next();
+                            #[allow(unused_assignments)]
+                            if let Some(&((_, col), idx)) = row_col.peek() {
+                                begin_col = col;
+                                begin_idx = idx;
+                            } else {
+                                break 'line;
+                            }
                         }
-                        KeyCode::Left => {
-                            self.scroll(state, 0, -horizontal_page_size);
-                        }
-                        KeyCode::Right => {
-                            self.scroll(state, 0, horizontal_page_size);
-                        }
-                        KeyCode::PageUp => {
-                            self.scroll(state, -vertical_page_size, 0);
-                        }
-                        KeyCode::PageDown => {
-                            self.scroll(state, vertical_page_size, 0);
-                        }
-                        KeyCode::Home | KeyCode::Char('g') => {
-                            state.scroll = Some(self.source.persist_cursor(0, 0, Gravity::Left));
-                        }
-                        KeyCode::End | KeyCode::Char('G') => {
-                            let line = self.source.num_lines().saturating_sub(area.height as usize);
-                            state.scroll = Some(self.source.persist_cursor(line, 0, Gravity::Left));
-                        }
-                        _ => return Handled::No,
+                    }
+
+                    if end_idx == next_style_idx {
+                        base_style = normal.patch(next_style);
+                        styles.next();
+                    } else if end_idx == next_match_idx {
+                        in_match = next_match;
+                        matches.next();
                     }
                 }
+            } else {
+                let line =
+                    self.source
+                        .get_line(
+                            builder.theme().text(builder.context()),
+                            line_no,
+                            scroll_col,
+                            area.width as usize
+                        )
+                        .style(builder.theme().text.normal);
 
-                Event::Mouse(ev) if area.contains(Position::new(ev.column, ev.row)) => {
-                    match ev.kind {
-                        MouseEventKind::ScrollDown => {
-                            self.scroll(state, mouse_page_size, 0);
-                        }
-                        MouseEventKind::ScrollUp => {
-                            self.scroll(state, -mouse_page_size, 0);
-                        }
-                        MouseEventKind::ScrollLeft => {
-                            self.scroll(state, 0, -mouse_page_size);
-                        }
-                        MouseEventKind::ScrollRight => {
-                            self.scroll(state, 0, mouse_page_size);
-                        }
-                        _ => return Handled::No,
-                    }
-                }
-
-                _ => return Handled::No,
+                builder.frame().render_widget(
+                    line,
+                    Rect {
+                        y: area.y + ry,
+                        height: 1,
+                        ..area
+                    },
+                );
             }
-
-            Handled::Yes
-        });
+        }
     }
 
     fn scroll(&self, state: &mut PagerState, lines: isize, cols: isize) -> (usize, usize) {
@@ -357,15 +447,51 @@ pub fn run(text: String) -> Result<()> {
     let mut terminal = vctuik::init()?;
     let source = StringPagerSource::new(&text);
 
-    let running = Cell::new(true);
+    let mut running = true;
+    let mut command: Option<String> = None;
 
-    while running.get() {
-        terminal.run_frame(|builder| {
-            Pager::new(&source).build(builder, "pager", builder.viewport().height);
-            event::on_key_press(builder, KeyCode::Char('q'), |_| {
-                running.set(false);
-            });
-        })?;
+    while running {
+        while terminal.run_frame(|builder| {
+            let mut pager = Pager::new(&source);
+            if let Some(command) = &command {
+                if command.starts_with('/') {
+                    if command.len() > 1 {
+                        if let Ok(regex) = Regex::new(&command[1..]) {
+                            pager = pager.search(Cow::Owned(regex));
+                        } else {
+                            //builder.show_error(format!("Invalid search pattern: {}", command));
+                        }
+                    }
+                } else {
+                    //builder.show_error(format!("Unknown command: {}", command));
+                }
+            }
+            pager.build(builder, "pager");
+
+            match command::CommandLine::new("command", &mut command)
+                .help("/ to search, q to quit")
+                .build(builder) {
+            command::CommandAction::None => {},
+            command::CommandAction::Command(cmd) => {
+                // TODO
+            },
+            command::CommandAction::Changed => {
+                builder.need_refresh();
+            },
+            }
+
+            // Global key bindings
+            if builder.on_key_press(KeyCode::Char('/')) {
+                command = Some("/".into());
+                builder.need_refresh();
+            }
+            if builder.on_key_press(KeyCode::Char('q')) {
+                running = false;
+                return;
+            }
+        })? {
+            // until state has settled
+        }
     }
 
     Ok(())

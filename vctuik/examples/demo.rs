@@ -1,12 +1,9 @@
-use std::cell::{Cell, RefCell};
-
+use ratatui::widgets::Block;
 use tui_tree_widget::{Tree, TreeItem};
 
 use vctuik::{
-    check_box::add_check_box,
-    event::{self, KeyCode},
-    label::add_label,
-    panes::{Pane, Panes},
+    check_box::add_check_box, section::with_section, event::KeyCode, label::add_label,
+    input::Input,
     prelude::*,
     tree::TreeBuild,
 };
@@ -14,10 +11,11 @@ use vctuik::{
 fn main() -> Result<()> {
     let mut terminal = vctuik::init()?;
 
-    let running = Cell::new(true);
+    let mut running = true;
 
     let mut foo = false;
     let mut bar = false;
+    let mut name: String = "world".into();
 
     let items = vec![
         TreeItem::new(0, "Root", vec![
@@ -30,30 +28,55 @@ fn main() -> Result<()> {
         ]).unwrap()
     ];
 
-    while running.get() {
-        terminal.run_frame(|builder| {
-            let mut panes = Panes::new();
-            panes.add(Pane::new("Settings"), |builder| {
+    while running {
+        while terminal.run_frame(|builder| {
+            // Clear the window
+            let frame_area = builder.frame().area();
+            let block = Block::new()
+                .style(builder.theme().pane_background);
+            builder.frame().render_widget(block, frame_area);
+
+            // Draw UI
+            with_section(builder, "Settings", |builder| {
                 add_check_box(builder, "Foo", &mut foo);
                 add_check_box(builder, "Bar", &mut bar);
+                Input::new("name")
+                    .label("Name:")
+                    .build(builder, &mut name);
+                builder.add_slack();
             });
-            panes.add(Pane::new("Commentary"), |builder| {
+
+            with_section(builder, "Commentary", |builder| {
                 add_label(builder, "Cheddar");
                 add_label(builder, "Provolone");
                 add_label(builder, "Swiss");
+                add_label(builder, format!("Hello, {name}!"));
+                builder.add_slack();
             });
-            panes.add(Pane::new("Running"), |builder| {
-                add_check_box(builder, "Running", &running);
+
+            with_section(builder, "Running", |builder| {
+                add_check_box(builder, "Running", &mut running);
+                if Input::new("name").build(builder, &mut name).is_some() {
+                    builder.need_refresh();
+                }
+                builder.add_slack();
             });
-            panes.add(Pane::new("Tree"), |builder| {
-                Tree::new(&items).unwrap()
-                    .build(builder, "tree", u16::MAX);
+
+            with_section(builder, "Tree", |builder| {
+               Tree::new(&items).unwrap()
+                   .build(builder, "tree");
             });
-            panes.build(builder, "panes", builder.viewport().height);
-            event::on_key_press(builder, KeyCode::Char('q'), |_| {
-                running.set(false);
-            });
-        })?;
+
+            add_label(builder, "Press 'q' to quit");
+
+            // Handle global events
+            if builder.on_key_press(KeyCode::Char('q')) {
+                running = false;
+                return;
+            }
+        })? {
+            // repeat until settled
+        }
     }
 
     Ok(())

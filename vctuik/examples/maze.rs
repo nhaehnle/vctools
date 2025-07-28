@@ -1,11 +1,8 @@
 
-
-use std::cell::Cell;
-
 use rand::prelude::*;
 
 use ratatui::{layout::Rect, widgets::{Block, BorderType, Borders}};
-use vctuik::{event::{self, KeyCode}, prelude::*, state::{Builder, Renderable}};
+use vctuik::{event::KeyCode, prelude::*, state::Builder};
 
 const LEFT: u8 = 1;
 const RIGHT: u8 = 2;
@@ -44,13 +41,9 @@ impl GameState {
     }
 }
 
-fn add_game_view<'render, 'handler>(
-    builder: &mut Builder<'_, 'render, 'handler>,
-    game_state: &'handler mut GameState)
-where
-    'handler: 'render,
+fn add_game_view(builder: &mut Builder, game_state: &mut GameState)
 {
-    let area = builder.take_lines(game_state.height as u16 + 2);
+    let area = builder.take_lines_fixed(game_state.height as u16 + 2);
 
     let game_area = Rect {
         x: area.width.saturating_sub(game_state.width as u16) / 2 - 1,
@@ -60,32 +53,34 @@ where
     let block = Block::new()
         .border_type(BorderType::Thick)
         .borders(Borders::ALL);
-    builder.add_render(Renderable::Block(game_area, block));
-    builder.add_render(Renderable::Other(Box::new(move |frame| {
-        let buffer = frame.buffer_mut();
-        for y in 0..game_state.height {
-            for x in 0..game_state.width {
-                if let Some(cell) = buffer.cell_mut((game_area.x + (x + 1) as u16, game_area.y + (game_state.height - y) as u16)) {
-                    cell.set_char(CONNECTORS[game_state.maze[y * game_state.width + x] as usize]);
-                }
+    builder.frame().render_widget(block, game_area);
+    let buffer = builder.frame().buffer_mut();
+    for y in 0..game_state.height {
+        for x in 0..game_state.width {
+            if let Some(cell) = buffer.cell_mut((game_area.x + (x + 1) as u16, game_area.y + (game_state.height - y) as u16)) {
+                cell.set_char(CONNECTORS[game_state.maze[y * game_state.width + x] as usize]);
             }
         }
-    })));
+    }
 }
 
 fn main() -> Result<()> {
     let mut terminal = vctuik::init()?;
 
-    let running = Cell::new(true);
+    let mut running = true;
     let mut game_state = GameState::new(10, 20);
 
-    while running.get() {
-        terminal.run_frame(|builder| {
+    while running {
+        while terminal.run_frame(|builder| {
+            if builder.on_key_press(KeyCode::Char('q')) {
+                running = false;
+                return;
+            }
+
             add_game_view(builder, &mut game_state);
-            event::on_key_press(builder, KeyCode::Char('q'), |_| {
-                running.set(false);
-            });
-        })?;
+        })? {
+            // repeat until state settles
+        }
     }
 
     Ok(())

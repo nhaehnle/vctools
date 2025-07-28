@@ -1,0 +1,90 @@
+# git-review
+
+A command-line tool for reviewing GitHub pull requests with intelligent diff
+visualization using "diff modulo base" technology.
+
+## Overview
+
+`git-review` is designed to make pull request reviews more efficient by showing
+only the meaningful changes between your last review and the current state of a
+pull request. It integrates with GitHub's API to fetch pull request information
+and uses the powerful "diff modulo base" algorithm to filter out noise from
+rebases and merges.
+
+## Key Features
+
+- **GitHub Integration**: Fetches pull request data directly from the GitHub API
+  and computes diffs locally from commits fetched via `git fetch`
+- **Review Context**: Tracks your previous reviews to show incremental changes
+- **Smart Diff Visualization**: Uses diff-modulo-base algorithm to show only relevant changes
+- **Interactive TUI**: Terminal-based interface for navigation
+- **Range Diff Integration**: Shows commit-by-commit changes for teams that
+  carefully author multiple commit per pull request
+
+## Installation
+
+```bash
+cargo install --path .
+```
+
+Or build from source:
+```bash
+cargo build --release
+```
+
+## Configuration
+
+Create a configuration file at `~/.config/vctools/github.toml`:
+
+```toml
+[[hosts]]
+host="github.com"
+api="https://api.github.com"
+user="<your-github-username>"
+token="ghp_<your-github-token>"
+```
+
+Multiple hosts can be specified, which is useful if you are working with GitHub Enterprise
+or multiple GitHub usernames.
+
+The `host` field must match the host that is used in the remotes set up for your
+Git working directories.
+
+TODO: What's the API endpoint for GHE?
+
+### GitHub Token Setup
+
+1. Go to GitHub Settings → Developer settings → Personal access tokens
+2. Generate a new token and add it to your configuration file
+   - You can use a classic token for simplicity (no special rights needed in
+     that case), but feel free to use a fine-grained token if you're feeling
+     paranoid
+
+## Usage
+
+The most basic usage is, from within a Git working directory
+
+```bash
+git-review <remote> <pull-request-number> [OPTIONS]
+```
+
+## How It Works
+
+1. **Fetch PR Data**: Connects to GitHub API to get pull request information including:
+   - Current head commit
+   - Target branch
+   - Your previous reviews (if any)
+
+2. **Intelligent Diff**: Uses the diff-modulo-base algorithm to generate a meaningful diff:
+   - If you've reviewed before: shows changes since your last review
+   - If first review: shows changes from the merge base
+   - Filters out noise from rebases and conflict resolutions
+
+3. **Interactive Display**: Shows the diff in a terminal UI with:
+   - Navigation controls
+   - Commit-by-commit breakdown
+   - File and hunk navigation (not implemented yet)
+
+## License
+
+Licensed under GPL 3.0 or later.

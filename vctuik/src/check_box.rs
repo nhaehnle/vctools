@@ -3,8 +3,8 @@ use std::cell::{Cell, RefCell};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    event::{Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton},
-    state::{Builder, Handled, Renderable},
+    event::{KeyCode, MouseButton},
+    state::Builder,
     theme::Themed,
 };
 
@@ -79,49 +79,36 @@ impl<'a> CheckBoxStateRef<'a> for &'a Cell<bool> {
     }
 }
 
-pub fn add_check_box<'builder, 'render, 'handler, 'tmp, S>(
-    builder: &mut Builder<'builder, 'render, 'handler>,
-    title: &'tmp str,
-    state: S,
+pub fn add_check_box<'s>(
+    builder: &mut Builder,
+    title: &str,
+    state: impl CheckBoxStateRef<'s>,
 )
-where
-    S: CheckBoxStateRef<'handler>,
 {
+    let state_id = builder.add_state_id(title.into());
     let mut state = state.as_check_box_state();
+    let has_focus = builder.check_focus(state_id);
 
     let text_width = title.graphemes(true).count() as u16;
 
-    let id = builder.add_widget(title, true);
-    let has_focus = builder.has_focus(id);
+    let area = builder.take_lines_fixed(1);
+    let click_area = Rect { width: 4 + text_width, ..area };
+
+    if builder.on_mouse_press(click_area, MouseButton::Left).is_some() ||
+       (has_focus && builder.on_key_press(KeyCode::Char(' '))) {
+        state.toggle();
+    }
+
     let text = format!("[{state_char}] {title}", state_char = if state.get() { '*' } else { ' ' });
-    let area = builder.take_lines(1);
 
     let mut span = Span::from(text);
     if has_focus {
         span = span.theme_highlight(builder);
-        builder.add_render(Renderable::SetCursor(Position::new(area.x + 1, area.y)));
+        builder.frame().set_cursor_position(Position::new(area.x + 1, area.y));
     } else {
         span = span.theme_text(builder);
     }
-    builder.add_render(Renderable::Span(area, span));
-
-    let click_area = Rect { width: 4 + text_width, ..area };
-
-    builder.add_event_handler(move |event| {
-        match event {
-            Event::Key(ev) if has_focus && ev.kind == KeyEventKind::Press
-                    && ev.code == KeyCode::Char(' ') => {
-                state.toggle();
-                Handled::Yes
-            }
-            Event::Mouse(ev) if ev.kind == MouseEventKind::Down(MouseButton::Left)
-                    && click_area.contains(Position::new(ev.column, ev.row)) => {
-                state.toggle();
-                Handled::Yes
-            }
-            _ => Handled::No,
-        }
-    });
+    builder.frame().render_widget(span, area);
 
     // TODO: Set focus via mouse
 }

@@ -1,5 +1,5 @@
 
-use std::cell::Cell;
+use std::{borrow::Cow, cell::Cell, ops::Range};
 use itertools::Itertools;
 
 trait State<T> {
@@ -57,6 +57,12 @@ pub trait StrScan {
         pos: &mut (usize, usize),
     ) -> impl Iterator<Item = ((usize, usize), usize)>;
     fn get_first_line(&self, max_cols: usize) -> &str;
+    fn row_col_index(&self, pos: (usize, usize)) -> usize;
+    fn substr_row_col(
+        &self,
+        start: (usize, usize),
+        end: (usize, usize),
+    ) -> &str;
 }
 impl StrScan for str {
     /// Creates an iterator over ((line, column), byte_offset) tuples.
@@ -86,6 +92,22 @@ impl StrScan for str {
         }
     }
 
+    /// Find the byte offset of the character at the given (line, column) position.
+    ///
+    /// Returns the index of the newline character if the given position refers
+    /// to a column beyond the end of the given line.
+    ///
+    /// Returns the string length for positions beyond the end of the string.
+    fn row_col_index(&self, pos: (usize, usize)) -> usize {
+        self.row_col_scan((0, 0))
+            .skip_while(|&((line, col), byte_offset)| {
+                line < pos.0 || (col < pos.1 && self.as_bytes()[byte_offset] != b'\n')
+            })
+            .next()
+            .map(|(_, byte_offset)| byte_offset)
+            .unwrap_or(self.len())
+    }
+
     /// Returns the first line of the string, truncated to `max_chars` characters.
     fn get_first_line(&self, max_chars: usize) -> &str {
         let bytes = self
@@ -96,5 +118,26 @@ impl StrScan for str {
             .map_or(0, |(byte_offset, _)| byte_offset);
 
         &self[0..bytes]
+    }
+
+    fn substr_row_col(
+        &self,
+        start: (usize, usize),
+        end: (usize, usize),
+    ) -> &str {
+        let mut start_byte = 0;
+        let mut end_byte = 0;
+
+        for ((row, col), byte_offset) in self.row_col_scan(start) {
+            if row == start.0 && col == start.1 {
+                start_byte = byte_offset;
+            }
+            if row == end.0 && col == end.1 {
+                end_byte = byte_offset;
+                break;
+            }
+        }
+
+        &self[start_byte..end_byte]
     }
 }

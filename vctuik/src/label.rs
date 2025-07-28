@@ -2,16 +2,15 @@ use std::borrow::Cow;
 
 use ratatui::text::Span;
 
-use crate::{state::{Builder, Renderable}, theme::Themed};
+use crate::{state::Builder, theme::Themed};
 
-
-pub fn add_label<'builder, 'render, 'handler, T>(
-    builder: &mut Builder<'builder, 'render, 'handler>,
-    title: T)
-where
-    T: Into<Cow<'render, str>>,
+pub fn add_label<'title, T>(
+    builder: &mut Builder,
+    title: T,
+) where
+    T: Into<Cow<'title, str>>,
 {
-    let area = builder.take_lines(1);
+    let area = builder.take_lines_fixed(1);
     let span = Span::from(title).theme_text(builder);
-    builder.add_render(Renderable::Span(area, span));
+    builder.frame().render_widget(span, area);
 }

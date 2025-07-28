@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 
-use std::{fmt::Display, ops::Range};
+use std::ops::Range;
 
 use clap::Parser;
 
 use crate::*;
 use git_core::{RangeDiffWriter, Ref};
 use utils::Result;
-use diff::{ChunkWriter, ChunkWriterExt};
+use diff::ChunkWriter;
 
 #[derive(Parser, Debug)]
 pub struct GitDiffModuloBaseOptions {

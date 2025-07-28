@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::{hash_map, HashMap}};
+use std::{borrow::Cow, collections::HashMap};
 
 use ratatui::{
     layout::{Position, Rect},
@@ -8,62 +8,33 @@ use ratatui::{
 use vctuik_unsafe_internals::state;
 
 use crate::{
-    event::{Event, KeyEventKind, KeyCode},
-    theme::{Context, Theme},
+    event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind},
+    layout::{Constraint1D, LayoutCache, LayoutEngine, LayoutItem1D},
+    theme::{Context, Theme}
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WidgetId(usize);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RenderId(usize);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Handled {
-    Yes,
-    No,
-}
-
-pub enum Renderable<'render> {
-    Span(Rect, ratatui::text::Span<'render>),
-    Line(Rect, ratatui::text::Line<'render>),
-    Text(Rect, ratatui::text::Text<'render>),
-    Block(Rect, ratatui::widgets::Block<'render>),
-    SetCursor(Position),
-    Other(Box<dyn FnOnce(&mut Frame) + 'render>),
-    None,
-}
-impl Renderable<'_> {
-    pub fn render(self, frame: &mut Frame) {
-        match self {
-            Renderable::Span(area, span) => frame.render_widget(span, area),
-            Renderable::Line(area, line) => frame.render_widget(line, area),
-            Renderable::Text(area, text) => frame.render_widget(text, area),
-            Renderable::Block(area, block) => frame.render_widget(block, area),
-            Renderable::SetCursor(position) => frame.set_cursor_position(position),
-            Renderable::Other(other) => other(frame),
-            Renderable::None => {},
-        }
-    }
-}
+pub struct StateId(usize);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Focus {
     ghost: Option<String>,
+
+    /// Index into the focus chain.
     index: usize,
 }
 
 #[derive(Debug)]
 struct IdEntry {
-    id: String,
-    num_descendants: usize,
+    name: String,
+    other_id: Option<StateId>,
 }
 
 #[derive(Default)]
 struct IdState {
-    id_map: HashMap<String, WidgetId>,
+    id_map: HashMap<String, StateId>,
     ids: Vec<IdEntry>,
-    focus_chain: Vec<WidgetId>,
+    focus_chain: Vec<StateId>,
     focus: Option<Focus>,
 }
 impl IdState {
@@ -73,28 +44,6 @@ impl IdState {
         self.focus_chain.clear();
         self.focus = None;
     }
-
-    fn can_focus(&self) -> bool {
-        !self.focus_chain.is_empty()
-    }
-
-    fn move_focus(&mut self, next: bool) {
-        assert!(!self.focus_chain.is_empty());
-
-        let index =
-            if next {
-                self.focus.as_ref()
-                    .map(|Focus { ghost, index }| index + if ghost.is_some() { 0 } else { 1 })
-                    .filter(|&index| index < self.focus_chain.len())
-                    .unwrap_or(0)
-            } else {
-                self.focus.as_ref()
-                    .and_then(|focus| focus.index.checked_sub(1))
-                    .unwrap_or(self.focus_chain.len().saturating_sub(1))
-            };
-
-        self.focus = Some(Focus { ghost: None, index });
-    }
 }
 
 #[derive(Default)]
@@ -102,108 +51,203 @@ struct IdStore {
     previous: IdState,
     current: IdState,
 }
+impl IdStore {
+    pub fn add_state_id(&mut self, name: String) -> StateId {
+        let previous = &mut self.previous;
+        let current = &mut self.current;
+
+        let old_id = previous.id_map.get(&*name).map(|x| *x);
+        let new_id = StateId(current.ids.len());
+
+        if let Some(old_id) = old_id {
+            previous.ids[old_id.0].other_id = Some(new_id);
+        }
+
+        let name: String = name.into();
+        assert!(!self.current.id_map.contains_key(&name));
+        self.current.id_map.insert(name.clone(), new_id);
+        self.current.ids.push(IdEntry { name, other_id: old_id });
+
+        new_id
+    }
+}
+
+#[derive(Default)]
+struct LayoutStore {
+    previous: LayoutCache<StateId>,
+    current: LayoutCache<StateId>,
+}
 
 #[derive(Default)]
 pub(crate) struct Store {
     ids: IdStore,
-    state: state::Store<WidgetId>,
+    layout: LayoutStore,
+    state: state::Store<StateId>,
 }
 
-pub(crate) type EventHandlers<'handler> = Vec<Box<dyn (FnMut(&Event) -> Handled) + 'handler>>;
-
-pub(crate) struct BuildStore<'render, 'handler> {
-    ids: &'handler mut IdStore,
-    state_builder: state::Builder<'handler, WidgetId>,
-    render: Vec<Renderable<'render>>,
-    handlers: EventHandlers<'handler>,
-    theme: &'render Theme,
+pub(crate) struct BuildStore<'store, 'frame> {
+    ids: &'store mut IdStore,
+    layout: &'store mut LayoutStore,
+    state_builder: state::Builder<'store, StateId>,
+    pub(crate) frame: &'store mut Frame<'frame>,
+    theme: &'store Theme,
+    event: Option<Event>,
+    event_handled: bool,
+    pub(crate) need_refresh: bool,
 }
-impl<'render, 'handler> BuildStore<'render, 'handler> {
-    pub(crate) fn new(state: &'handler mut Store, theme: &'render Theme) -> Self {
+impl<'store, 'frame> BuildStore<'store, 'frame> {
+    pub(crate) fn new(state: &'store mut Store, theme: &'store Theme,
+                      frame: &'store mut Frame<'frame>,
+                      event: Option<Event>) -> Self {
         let ids = &mut state.ids;
-        std::mem::swap(&mut ids.previous, &mut ids.current);
-        ids.current.clear();
-
+        let layout = &mut state.layout;
         let state_builder = state::Builder::new(&mut state.state);
 
         BuildStore {
             ids,
+            layout,
             state_builder,
-            render: Vec::new(),
-            handlers: Vec::new(),
+            frame,
             theme,
+            event,
+            event_handled: false,
+            need_refresh: false,
         }
     }
 
-    pub(crate) fn finish(mut self) -> (Vec<Renderable<'render>>, EventHandlers<'handler>) {
-        let previous = &mut self.ids.previous;
-        let current = &mut self.ids.current;
+    fn event_handled(&mut self) -> bool {
+        let ret = !self.event_handled;
+        self.event_handled = true;
+        ret
+    }
 
-        if current.focus.is_none() && !current.focus_chain.is_empty() {
-            if let Some(Focus { mut ghost, index }) = previous.focus.take() {
-                if ghost.is_none() {
-                    ghost = Some(std::mem::take(&mut previous.ids[previous.focus_chain[index].0].id));
-                }
+    pub fn current_layout_mut(&mut self) -> &mut LayoutCache<StateId> {
+        &mut self.layout.current
+    }
 
-                let ghost_index =
-                    previous.focus_chain[(index + 1)..]
-                        .iter()
-                        .copied()
-                        .filter_map(|old_id| {
-                            current.id_map.get(&previous.ids[old_id.0].id)
-                                .map(|&id| id)
-                        })
-                        .find_map(|new_id| {
-                            current.focus_chain.iter()
-                                .enumerate()
-                                .find_map(|(index, &id)| (id == new_id).then_some(index))
+    pub fn end_frame(&mut self) {
+        // Focus handling
+        //
+        // Ghost tracking and initial focus selection
+        if self.ids.current.focus.is_none() {
+            // If we previously had focus (possibly a ghost)...
+            if let Some(focus) = &mut self.ids.previous.focus {
+                let was_ghost = focus.ghost.is_some();
+
+                // ... either maintain the old ghost or raise a new one
+                let ghost =
+                    focus.ghost
+                        .take()
+                        .unwrap_or_else(|| {
+                            let old_id = self.ids.previous.focus_chain[focus.index];
+                            self.ids.previous.ids[old_id.0].name.clone()
+                        });
+                // ... iterate over the old focus chain starting from the old index
+                let index =
+                    self.ids.previous.focus_chain[focus.index..].iter()
+                        .chain(self.ids.previous.focus_chain[..focus.index].iter())
+                        // ... and find the first ID that has a current correspondent
+                        .find_map(|old_id| {
+                            self.ids.previous.ids[old_id.0].other_id
+                                .and_then(|new_id| {
+                                    self.ids.current.focus_chain
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, id)| **id == new_id)
+                                        .map(|(index, _)| index)
+                                })
                         })
                         .unwrap_or(0);
-                current.focus = Some(Focus { ghost, index: ghost_index });
+
+                // Track the ghost
+                self.ids.current.focus = Some(Focus {
+                    ghost: Some(ghost),
+                    index,
+                });
+
+                if !was_ghost {
+                    // May have to redraw a section header
+                    self.need_refresh = true;
+                }
             }
         }
 
-        if current.can_focus() {
-            self.handlers.push(Box::new(|event| {
-                match event {
-                    Event::Key(ev) if ev.kind == KeyEventKind::Press => {
-                        let next = match ev.code {
-                            KeyCode::Tab => true,
-                            KeyCode::BackTab => false,
-                            _ => return Handled::No,
-                        };
-                        current.move_focus(next);
-                        Handled::Yes
+        // We handle keyboard events last, after all other widgets have had a chance to intercept
+        // so that text fields can capture tabs.
+        if !self.ids.current.focus_chain.is_empty() && !self.event_handled {
+            let Some(Focus { ghost, index }) = &self.ids.current.focus else { unreachable!() };
+
+            let new_focus = match self.event {
+                Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press => {
+                    if ev.code == KeyCode::Tab || ev.code == KeyCode::Down {
+                        Some(Focus {
+                            ghost: None,
+                            index:
+                                if ghost.is_some() { *index }
+                                else if index + 1 < self.ids.current.focus_chain.len() { index + 1 }
+                                else { 0 },
+                        })
+                    } else if ev.code == KeyCode::BackTab || ev.code == KeyCode::Up {
+                        Some(Focus {
+                            ghost: None,
+                            index: if *index > 0 { index - 1 } else { self.ids.current.focus_chain.len() - 1},
+                        })
+                    } else {
+                        None
                     }
-                    _ => Handled::No,
-                }
-            }));
+                },
+                _ => None,
+            };
+            if new_focus.is_some() {
+                self.ids.current.focus = new_focus;
+                self.event_handled = true;
+                self.need_refresh = true;
+            }
         }
 
-        (self.render, self.handlers)
+        // State double-buffer management
+        self.layout.current.save_persistent(
+            std::mem::take(&mut self.layout.previous),
+            |old_id| {
+                self.ids.previous.ids[old_id.0].other_id.unwrap_or_else(|| {
+                    self.ids.add_state_id(self.ids.previous.ids[old_id.0].name.clone())
+                })
+            });
+
+        self.ids.previous.clear();
+        self.layout.previous.clear();
+        for IdEntry { other_id, .. } in self.ids.current.ids.iter_mut() {
+            *other_id = None;
+        }
+        std::mem::swap(&mut self.ids.previous, &mut self.ids.current);
+        std::mem::swap(&mut self.layout.previous, &mut self.layout.current);
     }
 }
 
-pub struct Builder<'builder, 'render, 'handler> {
-    store: &'builder mut BuildStore<'render, 'handler>,
-    id_prefix: String,
-    context: Context,
+pub struct Builder<'builder, 'store, 'frame> {
+    store: &'builder mut BuildStore<'store, 'frame>,
+    name_prefix: String,
+    theme_context: Context,
     viewport: Rect,
-    position: Position,
+    layout: &'builder mut LayoutEngine<StateId>,
 }
-impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
-    pub(crate) fn new(store: &'builder mut BuildStore<'render, 'handler>, viewport: Rect) -> Self {
+impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
+    pub(crate) fn new(store: &'builder mut BuildStore<'store, 'frame>, layout: &'builder mut LayoutEngine<StateId>, viewport: Rect) -> Self {
         Builder {
             store,
-            id_prefix: String::new(),
-            context: Context::None,
+            name_prefix: String::new(),
+            theme_context: Context::None,
             viewport,
-            position: Position::new(viewport.x, viewport.y),
+            layout,
         }
     }
 
     pub fn context(&self) -> Context {
-        self.context
+        self.theme_context
+    }
+
+    pub fn frame<'slf>(&'slf mut self) -> &'slf mut Frame<'frame> {
+        &mut self.store.frame
     }
 
     pub fn theme(&self) -> &Theme {
@@ -214,251 +258,273 @@ impl<'builder, 'render, 'handler> Builder<'builder, 'render, 'handler> {
         self.viewport
     }
 
-    pub fn position(&self) -> Position {
-        self.position
+    pub fn is_at_top(&self) -> bool {
+        self.layout.position() == 0
     }
 
-    pub fn set_position(&mut self, position: Position) {
-        self.position = position;
-    }
+    pub fn take_lines(&mut self, item: LayoutItem1D<StateId>) -> Rect {
+        let old_id = item.id.and_then(|id| self.store.ids.current.ids[id.0].other_id);
+        let (pos, size) = self.layout.add(&self.store.layout.previous, old_id, item);
 
-    pub fn take_lines(&mut self, lines: u16) -> Rect {
-        if self.position.x > self.viewport.x {
-            self.position.x = self.viewport.x;
-            self.position.y += 1;
-        }
-
-        let lines = std::cmp::min(lines, self.viewport.height - self.position.y.saturating_sub(self.viewport.y));
+        let rel_y = std::cmp::min(pos, self.viewport.height);
+        let height = std::cmp::min(size, self.viewport.height - rel_y);
 
         let area = Rect {
             x: self.viewport.x,
-            y: self.position.y,
+            y: self.viewport.y + rel_y,
             width: self.viewport.width,
-            height: lines,
+            height,
         };
-        self.position.y += lines;
 
         area
     }
 
-    pub fn has_focus(&self, id: WidgetId) -> bool {
-        matches!(
-            self.store.ids.current.focus,
-            Some(Focus { ghost: None, index }) if self.store.ids.current.focus_chain[index] == id)
+    pub fn take_lines_fixed(&mut self, lines: u16) -> Rect {
+        self.take_lines(LayoutItem1D::new(Constraint1D::new_fixed(lines)))
     }
 
-    pub fn add_widget_impl(&mut self, mut id: Cow<'_, str>, can_focus: bool) -> (WidgetId, Option<WidgetId>)
-    {
-        assert!(!id.is_empty());
-        assert!(id.find("##").is_none(), "id cannot contain '##'");
-
-        if !self.id_prefix.is_empty() {
-            id = format!("{}-##-{}", self.id_prefix, id).into();
-        }
-
-        let previous = &mut self.store.ids.previous;
-        let current = &mut self.store.ids.current;
-
-        let old_id = previous.id_map.get(&*id).map(|x| *x);
-        let new_id = WidgetId(current.ids.len());
-
-        let id = id.into_owned();
-        let old = current.id_map.insert(id.clone(), new_id);
-        assert!(old.is_none());
-
-        if can_focus {
-            let focus = match (&current.focus, &mut previous.focus) {
-                // If nothing was ever previously focused, the first
-                // focusable widget takes the focus.
-                (None, None) => Some(None),
-
-                // If this widget had the focus before turning into a ghost
-                // focus, reclaim the focus.
-                //
-                // The ghost location could be at an earlier widget, so we
-                // need to check the current focus as well.
-                (None, Some(Focus { ghost: Some(ref ghost_id), .. })) |
-                (Some(Focus { ghost: Some(ref ghost_id), .. }), _)
-                    if id == *ghost_id => Some(None),
-
-                // If this widget was previously focus or carries the ghost
-                // location, carry the focus / ghost location forward.
-                (None, Some(Focus { ghost, index }))
-                    if Some(previous.focus_chain[*index]) == old_id => Some(ghost.take()),
-
-                _ => None,
-            };
-            if let Some(ghost) = focus {
-                current.focus = Some(Focus { ghost, index: current.focus_chain.len() });
-            }
-
-            current.focus_chain.push(new_id);
-        }
-
-        current.ids.push(IdEntry {
-            id,
-            num_descendants: 0,
-        });
-
-        (new_id, old_id)
+    pub fn add_slack(&mut self) {
+        let state_id = self.add_state_id("_slack".into());
+        self.take_lines(LayoutItem1D::new(Constraint1D::unconstrained()).id(state_id, true));
     }
 
-    pub fn add_widget<'add, Id>(&'add mut self, id: Id, can_focus: bool) -> WidgetId
-    where
-        Id: Into<Cow<'add, str>>,
-    {
-        self.add_widget_impl(id.into(), can_focus).0
+    pub fn layout_drag(&mut self, y: u16, delta: i16) {
+        self.layout.drag(y, delta);
     }
 
-    pub fn add_state_widget<'add, S, Id>(
-        &'add mut self,
-        id: Id,
-        can_focus: bool,
-    ) -> (WidgetId, &'handler mut S)
-    where
-        Id: Into<Cow<'add, str>>,
-        S: Default + 'static,
-    {
-        let (new_id, old_id) = self.add_widget_impl(id.into(), can_focus);
-
-        (
-            new_id,
-            self.store.state_builder.get_or_insert_default(new_id, old_id),
-        )
-    }
-
-    pub fn add_state_widget_with<'add, S, Id, F>(
-        &'add mut self,
-        id: Id,
-        can_focus: bool,
-        f: F,
-    ) -> (WidgetId, &'handler mut S)
-    where
-        Id: Into<Cow<'add, str>>,
-        S: Default + 'static,
-        F: FnOnce() -> S,
-    {
-        let (new_id, old_id) = self.add_widget_impl(id.into(), can_focus);
-
-        (
-            new_id,
-            self.store.state_builder.get_or_insert_with(new_id, old_id, f),
-        )
-    }
-
-    pub fn preserve_child_states(&mut self, id: WidgetId) {
-        let previous = &self.store.ids.previous;
-        let current = &mut self.store.ids.current;
-
-        assert!(id.0 == current.ids.len() - 1);
-
-        let Some(&old_id) = previous.id_map.get(&current.ids[id.0].id) else { return };
-
-        let mut stack = Vec::<(WidgetId, usize)>::new();
-        let num_outer_descendants = previous.ids[old_id.0].num_descendants;
-        stack.push((id, num_outer_descendants));
-
-        for offset in 0..num_outer_descendants {
-            let old_descendant_id = WidgetId(old_id.0 + 1 + offset);
-            let new_descendant_id = WidgetId(current.ids.len());
-            let previous = &previous.ids[old_descendant_id.0];
-
-            if self.store.state_builder.preserve(new_descendant_id, old_descendant_id) {
-                let entry = current.id_map.entry(previous.id.clone());
-                let hash_map::Entry::Vacant(entry) = entry else {
-                    panic!("Key inserted again in the same frame");
-                };
-                entry.insert(new_descendant_id);
-                current.ids.push(IdEntry {
-                    id: previous.id.clone(),
-                    num_descendants: 0,
+    pub fn has_group_focus(&self) -> bool {
+        let name =
+            // See if we already found focus this frame...
+            self.store.ids.current.focus
+                .as_ref()
+                .map(|focus| {
+                    let id = self.store.ids.current.focus_chain[focus.index];
+                    &self.store.ids.current.ids[id.0].name
+                })
+                // ... else use the focus from last frame if there was one
+                .or_else(|| {
+                    self.store.ids.previous.focus
+                        .as_ref()
+                        .and_then(|focus| {
+                            focus.ghost.is_none()
+                                .then(|| {
+                                    let id = self.store.ids.previous.focus_chain[focus.index];
+                                    &self.store.ids.previous.ids[id.0].name
+                                })
+                        })
                 });
-            }
+        name.and_then(|name| {
+            name.strip_prefix(&self.name_prefix)
+                .map(|suffix| suffix.starts_with("-##-"))
+        }).unwrap_or(false)
+    }
 
-            stack.last_mut().unwrap().1 -= 1 + previous.num_descendants;
-            if previous.num_descendants > 0 {
-                stack.push((new_descendant_id, previous.num_descendants));
+    pub fn check_focus(&mut self, id: StateId) -> bool {
+        // Register the state ID as being able to receive focus.
+        self.store.ids.current.focus_chain.push(id);
+
+        let Some(old_focus) = self.store.ids.previous.focus.as_ref() else {
+            // Initial focus selection in the first frame.
+            if self.store.ids.current.focus.is_none() {
+                self.store.ids.current.focus = Some(Focus {
+                    ghost: None,
+                    index: self.store.ids.current.focus_chain.len() - 1,
+                });
+                self.store.need_refresh = true;
+                return true;
             } else {
-                while let Some(top) = stack.last() {
-                    if top.1 != 0 {
-                        break;
-                    }
-                    current.ids[top.0.0].num_descendants = current.ids.len() - top.0.0 - 1;
-                    stack.pop();
+                return false;
+            }
+        };
+
+        // Carry old focus forward.
+        let inherit_focus =
+            if let Some(old_id) = self.store.ids.current.ids[id.0].other_id {
+                old_focus.ghost.is_none() &&
+                    self.store.ids.previous.focus_chain[old_focus.index] == old_id
+            } else if let Some(ghost) = &old_focus.ghost {
+                ghost == &self.store.ids.current.ids[id.0].name
+            } else {
+                false
+            };
+
+        if inherit_focus {
+            self.store.ids.current.focus = Some(Focus {
+                ghost: None,
+                index: self.store.ids.current.focus_chain.len() - 1,
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn grab_focus(&mut self, id: StateId) {
+        let (idx, _) = self.store.ids.current.focus_chain
+            .iter()
+            .enumerate()
+            .find(|(_, &x)| x == id)
+            .unwrap();
+        self.store.ids.current.focus = Some(Focus {
+            ghost: None,
+            index: idx,
+        });
+        self.store.need_refresh = true;
+    }
+
+    pub fn drop_focus(&mut self, id: StateId) {
+        if let Some(focus) = &mut self.store.ids.current.focus {
+            if focus.ghost.is_none() && self.store.ids.current.focus_chain[focus.index] == id {
+                focus.ghost = Some(self.store.ids.current.ids[id.0].name.clone());
+            } 
+        }
+        self.store.need_refresh = true;
+    }
+
+    pub fn need_refresh(&mut self) {
+        self.store.need_refresh = true;
+    }
+
+    pub fn peek_event(&self) -> Option<&Event> {
+        self.store.event.as_ref()
+    }
+
+    pub fn with_event<F, R>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&Event) -> Option<R>,
+    {
+        if !self.store.event_handled {
+            if let Some(event) = &self.store.event {
+                if let Some(result) = f(event) {
+                    self.store.event_handled = true;
+                    return Some(result);
                 }
             }
         }
+        None
     }
 
-    pub fn add_render(&mut self, renderable: Renderable<'render>) -> RenderId {
-        self.store.render.push(renderable);
-        RenderId(self.store.render.len() - 1)
+    pub fn on_key_press(&mut self, key_code: KeyCode) -> bool {
+        matches!(
+            self.store.event,
+            Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press && ev.code == key_code) &&
+            self.store.event_handled()
     }
 
-    pub fn get_render_mut(&mut self, id: RenderId) -> Option<&mut Renderable<'render>> {
-        self.store.render.get_mut(id.0)
+    pub fn on_key_press_any(&mut self, key_codes: &[KeyCode]) -> bool {
+        match self.store.event {
+        Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press => {
+            key_codes.contains(&ev.code) && self.store.event_handled()
+        },
+        _ => false,
+        }
     }
 
-    pub fn add_event_handler<H: (FnMut(&Event) -> Handled) + 'handler>(&mut self, h: H) {
-        self.store.handlers.push(Box::new(h));
+    pub fn on_mouse_press(&mut self, area: Rect, button: MouseButton) -> Option<Position> {
+        match self.store.event {
+            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::Down(button) => {
+                let pos = Position::new(ev.column, ev.row);
+                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
+            },
+            _ => None,
+        }
     }
 
-    pub fn add_mouse_capture_handler<H: (FnMut(&Event) -> Handled) + 'handler>(&mut self, h: H) {
-        self.store.handlers.insert(0, Box::new(h));
+    pub fn on_mouse_scroll_down(&mut self, area: Rect) -> Option<Position> {
+        match self.store.event {
+            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollDown => {
+                let pos = Position::new(ev.column, ev.row);
+                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
+            },
+            _ => None,
+        }
     }
 
-    pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'render, 'handler> {
+    pub fn on_mouse_scroll_up(&mut self, area: Rect) -> Option<Position> {
+        match self.store.event {
+            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollUp => {
+                let pos = Position::new(ev.column, ev.row);
+                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
+            },
+            _ => None,
+        }
+    }
+
+    pub fn on_mouse_scroll_left(&mut self, area: Rect) -> Option<Position> {
+        match self.store.event {
+            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollLeft => {
+                let pos = Position::new(ev.column, ev.row);
+                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
+            },
+            _ => None,
+        }
+    }
+
+    pub fn on_mouse_scroll_right(&mut self, area: Rect) -> Option<Position> {
+        match self.store.event {
+            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollRight => {
+                let pos = Position::new(ev.column, ev.row);
+                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
+            },
+            _ => None,
+        }
+    }
+
+    pub fn add_state_id(&mut self, mut name: Cow<'_, str>) -> StateId {
+        assert!(!name.is_empty());
+        assert!(name.find("##").is_none(), "id cannot contain '##'");
+
+        if !self.name_prefix.is_empty() {
+            name = format!("{}-##-{}", self.name_prefix, name).into();
+        }
+
+        self.store.ids.add_state_id(name.into())
+    }
+
+    pub fn get_state<'add, S>(&mut self, id: StateId) -> &'add mut S
+    where
+        S: Default + 'static,
+        'store: 'add,
+    {
+        let old_id = self.store.ids.current.ids[id.0].other_id;
+        self.store.state_builder.get_or_insert_default(id, old_id)
+    }
+
+    pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'store, 'frame> {
         Nest {
-            initial_focus_chain_len: self.store.ids.current.focus_chain.len(),
             parent: None,
             builder: Builder { 
                 store: self.store,
-                id_prefix: self.id_prefix.clone(),
-                context: self.context,
+                name_prefix: self.name_prefix.clone(),
+                theme_context: self.theme_context,
                 viewport: self.viewport,
-                position: self.position,
+                layout: self.layout,
             },
         }
     }
 }
 
-pub struct Nest<'nest, 'render, 'handler> {
-    builder: Builder<'nest, 'render, 'handler>,
-    parent: Option<WidgetId>,
-    initial_focus_chain_len: usize,
+pub struct Nest<'nest, 'store, 'frame> {
+    builder: Builder<'nest, 'store, 'frame>,
+    parent: Option<StateId>,
 }
-impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
-    pub fn build<F>(mut self, f: F) -> NestResult
+impl<'nest, 'store, 'frame> Nest<'nest, 'store, 'frame> {
+    pub fn build<F, R>(mut self, f: F) -> R
     where
-        F: FnOnce(&mut Builder<'_, 'render, 'handler>),
+        F: FnOnce(&mut Builder<'nest, 'store, 'frame>) -> R,
     {
-        f(&mut self.builder);
-
-        let has_focus =
-            self.builder.store.ids.current.focus.as_ref()
-                .filter(|focus| focus.ghost.is_none())
-                .map(|focus| focus.index >= self.initial_focus_chain_len)
-                .unwrap_or(false);
-
-        if let Some(parent) = self.parent {
-            self.builder.store.ids.current.ids[parent.0].num_descendants =
-                self.builder.store.ids.current.ids.len() - parent.0 - 1;
-        }
-
-        NestResult {
-            has_focus,
-        }
+        f(&mut self.builder)
     }
 
-    pub fn id(self, id: WidgetId) -> Self {
+    pub fn id(self, id: StateId) -> Self {
         assert!(id.0 == self.builder.store.ids.current.ids.len() - 1);
         assert!(self.parent.is_none());
 
-        let id_prefix = self.builder.store.ids.current.ids[id.0].id.clone();
+        let name_prefix = self.builder.store.ids.current.ids[id.0].name.clone();
 
         Nest {
             builder: Builder {
-                id_prefix,
+                name_prefix,
                 ..self.builder
             },
             parent: Some(id),
@@ -466,21 +532,21 @@ impl<'nest, 'render, 'handler> Nest<'nest, 'render, 'handler> {
         }
     }
 
-    pub fn viewport(self, viewport: Rect) -> Self {
-        Nest {
-            builder: Builder {
-                viewport,
-                position: Position::new(viewport.x, viewport.y),
-                ..self.builder
-            },
-            ..self
-        }
-    }
+//    pub fn viewport(self, viewport: Rect) -> Self {
+//        Nest {
+//            builder: Builder {
+//                viewport,
+//                position: Position::new(viewport.x, viewport.y),
+//                ..self.builder
+//            },
+//            ..self
+//        }
+//    }
 
-    pub fn context(self, context: Context) -> Self {
+    pub fn theme_context(self, theme_context: Context) -> Self {
         Nest {
             builder: Builder {
-                context,
+                theme_context,
                 ..self.builder
             },
             ..self

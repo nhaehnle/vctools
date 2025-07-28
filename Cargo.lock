@@ -2308,6 +2308,7 @@ version = "0.1.0"
 dependencies = [
  "rand",
  "ratatui",
+ "tui-input",
  "tui-tree-widget",
  "unicode-segmentation",
  "vctools-utils",

@@ -1,5 +1,3 @@
-use std::cell::Cell;
-
 use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
@@ -9,9 +7,10 @@ use ratatui::{
 
 use crate::{
     event::{self, Event},
+    layout::{self, Constraint1D},
     prelude::*,
     signals::{self, Dispatch, Receiver},
-    state::{BuildStore, Builder, EventHandlers, Handled, Store},
+    state::{BuildStore, Builder, Store},
     theme::Theme,
 };
 
@@ -20,6 +19,7 @@ pub struct Terminal {
     store: Store,
     event_recv: Receiver<Result<Event>>,
     theme: Theme,
+    need_refresh: bool,
 }
 impl Terminal {
     pub(crate) fn init() -> Result<Terminal> {
@@ -53,6 +53,7 @@ impl Terminal {
             store: Store::default(),
             event_recv,
             theme: Theme::default(),
+            need_refresh: true,
         })
     }
 
@@ -63,60 +64,55 @@ impl Terminal {
         }
     }
 
-    pub fn run_frame<'slf, 'render, 'handler, F>(&'slf mut self, f: F) -> Result<()>
+    /// Run one frame.
+    ///
+    /// Returns true if the frame should be run again immediately as some refresh is needed.
+    pub fn run_frame<F>(&mut self, f: F) -> Result<bool>
     where
-        F: FnOnce(&mut Builder<'_, 'render, 'handler>),
-        'slf: 'render + 'handler,
+        F: FnOnce(&mut Builder),
     {
-        let mut result = None;
+        let mut the_event = None;
+
+        if !self.need_refresh {
+            let mut the_err = None;
+            let mut dispatch = Dispatch::new();
+            dispatch.add(self.event_recv.dispatch_one(|event| {
+                match event {
+                    Ok(event) => {
+                        the_event = Some(event);
+                    }
+                    Err(err) => {
+                        the_err = Some(err);
+                    }
+                }
+            }));
+            dispatch.poll(true);
+
+            if let Some(err) = the_err.take() {
+                Err(err)?
+            }
+
+            assert!(the_event.is_some());
+        }
 
         self.terminal.draw(|frame| {
-            let mut build_store = BuildStore::new(&mut self.store, &self.theme);
-            f(&mut Builder::new(&mut build_store, frame.area()));
+            let area = frame.area();
+            let mut build_store = BuildStore::new(&mut self.store, &self.theme, frame, the_event);
 
-            let (render, handlers) = build_store.finish();
-
-            for renderable in render {
-                renderable.render(frame);
+            {
+                let mut layout = layout::LayoutEngine::new();
+                let mut builder = Builder::new(&mut build_store, &mut layout, area);
+                f(&mut builder);
+                if layout.finish(Constraint1D::new_fixed(area.height), &mut build_store.current_layout_mut()) {
+                    self.need_refresh = true;
+                }
             }
 
-            result = Some(handlers);
+            build_store.end_frame();
+            self.need_refresh = build_store.need_refresh;
         })?;
 
-        let mut handlers = result.unwrap();
-
-        // TODO: Need to bail out of this loop if there is a state change that
-        //       changes how events are routed (e.g. TAB press).
-
-        let the_err = Cell::new(None);
-        let mut dispatch = Dispatch::new();
-        let mut event_recv = self.event_recv.dispatch(|event| {
-            match event {
-                Ok(event) => {
-                    Terminal::handle_event(event, &mut handlers);
-                }
-                Err(err) => {
-                    the_err.set(Some(err));
-                }
-            }
-        });
-        dispatch.add(&mut event_recv);
-        dispatch.wait_then_poll();
-
-        match the_err.take() {
-            Some(err) => Err(err),
-            None => Ok(()),
-        }
-    }
-
-    fn handle_event(event: Event, handlers: &mut EventHandlers<'_>) -> Handled {
-        for handler in handlers {
-            let handled = handler(&event);
-            if handled != Handled::No {
-                return handled;
-            }
-        }
-        Handled::No
+        Ok(self.need_refresh)
     }
 }
 impl Drop for Terminal {
