@@ -103,7 +103,7 @@ impl Terminal {
                 let mut layout = layout::LayoutEngine::new();
                 let mut builder = Builder::new(&mut build_store, &mut layout, area);
                 f(&mut builder);
-                if layout.finish(Constraint1D::new_fixed(area.height), &mut build_store.current_layout_mut()) {
+                if layout.finish(Constraint1D::new_fixed(area.height), &mut build_store.current_layout_mut()).0 {
                     self.need_refresh = true;
                 }
             }

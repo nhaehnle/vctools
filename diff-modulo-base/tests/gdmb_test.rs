@@ -48,7 +48,7 @@ fn dmb_test() -> Result<()> {
         let mut out = termcolor::NoColor::new(&mut out_buffer);
 
         let mut writer = diff_color::Writer::new();
-        tool::git_diff_modulo_base(args, repo, &mut writer)?;
+        tool::git_diff_modulo_base(&args, &repo, &mut writer)?;
         writer.write(&mut out)?;
 
         assert_eq!(

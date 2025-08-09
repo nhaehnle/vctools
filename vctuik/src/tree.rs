@@ -57,7 +57,7 @@ where
         }
 
         // Render tree
-        let text_theme = builder.theme().text(builder.context());
+        let text_theme = builder.theme().text(builder.theme_context());
         let mut selected = text_theme.selected;
         if has_focus {
             selected = selected.patch(text_theme.highlight);

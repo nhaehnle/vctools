@@ -16,6 +16,7 @@ fn main() -> Result<()> {
     let mut foo = false;
     let mut bar = false;
     let mut name: String = "world".into();
+    let mut last_event = None;
 
     let items = vec![
         TreeItem::new(0, "Root", vec![
@@ -59,6 +60,16 @@ fn main() -> Result<()> {
                 if Input::new("name").build(builder, &mut name).is_some() {
                     builder.need_refresh();
                 }
+
+                if let Some(ev) = builder.peek_event() {
+                    last_event = Some(ev.clone());
+                }
+                if let Some(ev) = last_event.as_ref() {
+                    add_label(builder, format!("Last event: {ev:?}"));
+                } else {
+                    add_label(builder, "No events yet");
+                }
+
                 builder.add_slack();
             });
 

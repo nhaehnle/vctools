@@ -9,14 +9,14 @@ use git_core::{RangeDiffWriter, Ref};
 use utils::Result;
 use diff::ChunkWriter;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 pub struct GitDiffModuloBaseOptions {
     /// Combine the diff of all commits in a range, instead of showing per-commit diffs.
     #[clap(long)]
     pub combined: bool,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 pub struct GitDiffModuloBaseArgs {
     pub base: Option<String>,
     pub old: Option<String>,
@@ -56,24 +56,27 @@ pub trait DiffModuloBaseWriter : ChunkWriter + RangeDiffWriter {}
 impl<T: ChunkWriter + RangeDiffWriter> DiffModuloBaseWriter for T {}
 
 pub fn git_diff_modulo_base(
-    mut args: GitDiffModuloBaseArgs,
-    repo: git_core::Repository,
+    args: &GitDiffModuloBaseArgs,
+    repo: &git_core::Repository,
     writer: &mut dyn DiffModuloBaseWriter,
 ) -> Result<()> {
     if args.old.is_none() {
         return Err("need both an old and a new revision".into());
     }
 
-    if args.new.is_none() {
-        (args.base, args.old, args.new) = (None, args.base, args.old)
-    }
+    let (base, old, new) =
+        if args.new.is_some() {
+            (args.base.as_ref(), args.old.as_ref(), args.new.as_ref())
+        } else {
+            (None, args.base.as_ref(), args.old.as_ref())
+        };
 
-    let base = match args.base {
+    let base = match base {
         Some(s) => Some(parse_rev_or_range(&s)?),
         None => None,
     };
-    let mut old = parse_rev_or_range(&args.old.unwrap())?;
-    let mut new = parse_rev_or_range(&args.new.unwrap())?;
+    let mut old = parse_rev_or_range(old.unwrap())?;
+    let mut new = parse_rev_or_range(new.unwrap())?;
 
     if let Some(base) = base {
         let RevSpec::Commit(base) = base else {

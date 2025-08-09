@@ -108,7 +108,7 @@ fn do_main() -> Result<()> {
             repo.mock_data_path = Some(mock_data);
 
             let mut writer = diff_color::Writer::new();
-            tool::git_diff_modulo_base(gdmb, repo, &mut writer)?;
+            tool::git_diff_modulo_base(&gdmb, &repo, &mut writer)?;
             writer.write(&mut out)?;
         }
     }

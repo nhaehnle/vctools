@@ -68,6 +68,19 @@ The most basic usage is, from within a Git working directory
 git-review <remote> <pull-request-number> [OPTIONS]
 ```
 
+## Key bindings
+
+* `q`: quit
+* `/`: search
+* `n`: find next
+* `N`: find previous
+* Up / down / page up / page down: navigate vertically
+* Alt+Up / down / page up / page down: scroll vertically
+* `g`: go to top
+* `G`: go to bottom
+* `C`: toggle combined diff vs. range diff
+* `d`: cycle through diff styles (unified / only old / only new)
+
 ## How It Works
 
 1. **Fetch PR Data**: Connects to GitHub API to get pull request information including:

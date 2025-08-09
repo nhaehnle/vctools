@@ -102,7 +102,7 @@ impl Writer {
         let prefix = chunk.context.prefix_bytes();
 
         match &chunk.contents {
-            DiffChunkContents::FileHeader {
+            ChunkContents::FileHeader {
                 old_path, new_path, ..
             } => {
                 out.set_color(&COLORS.file_header)?;
@@ -116,7 +116,7 @@ impl Writer {
                 out.write(new_path)?;
                 out.write(b"\n")?;
             }
-            DiffChunkContents::HunkHeader {
+            ChunkContents::HunkHeader {
                 old_begin,
                 old_count,
                 new_begin,
@@ -133,7 +133,7 @@ impl Writer {
                 )?;
                 out.reset()?;
             }
-            DiffChunkContents::Line { line } => {
+            ChunkContents::Line { line } => {
                 let color = get_line_color(chunk.context, line.status);
                 if color != &COLORS.default {
                     out.set_color(color)?;

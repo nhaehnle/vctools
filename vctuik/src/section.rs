@@ -1,4 +1,4 @@
-use ratatui::{layout::{Alignment, Rect}, widgets::{block::Title, Block, BorderType, Borders}};
+use ratatui::{crossterm::event::KeyCode, layout::{Alignment, Rect}, widgets::{block::Title, Block, BorderType, Borders}};
 
 use crate::{
     event::{Event, MouseButton, MouseEventKind}, state::{Builder, StateId}
@@ -38,24 +38,21 @@ impl Section {
         self
     }
 
-    pub fn build<'a, 'outer_builder, 'inner_builder, 'store, 'frame, F>(
+    pub fn build<F>(
         self,
-        builder: &'a mut Builder<'outer_builder, 'store, 'frame>,
+        builder: &mut Builder,
         f: F) -> bool
     where
-        F: FnOnce(&mut Builder<'inner_builder, 'store, 'frame>),
-        'store: 'inner_builder,
-        'frame: 'inner_builder,
-        'a: 'inner_builder,
+        F: FnOnce(&mut Builder),
     {
-        let state_id = self.id.unwrap_or_else(|| builder.add_state_id(self.title.clone().into()));
+        let state_id = self.id.unwrap_or_else(|| builder.add_state_id(&self.title));
         let state: &mut State = builder.get_state(state_id);
 
         let is_first = builder.is_at_top();
 
         builder.nest().id(state_id).build(|builder| {
             let header_area = builder.take_lines_fixed(1);
-            let has_focus = builder.has_group_focus();
+            let has_focus = builder.check_group_focus(state_id);
 
             // Handle input
             let adjust = std::cmp::min(header_area.width, if self.collapsible { 2 } else { 0 });
@@ -115,21 +112,34 @@ impl Section {
             if !state.collapsed {
                 f(builder);
             }
+
+            if self.collapsible && has_focus {
+                if builder.on_key_press(KeyCode::Left) && !state.collapsed {
+                    state.collapsed = true;
+                    builder.need_refresh();
+                }
+                if builder.on_key_press(KeyCode::Right) && state.collapsed {
+                    state.collapsed = false;
+                    builder.need_refresh();
+                }
+            }
+
         });
 
         !state.collapsed
     }
 }
 
-pub fn with_section<'a, 'outer_builder, 'inner_builder, 'store, 'frame, F>(
+pub fn with_section<'a, 'outer_builder, 'inner_builder, 'store, 'frame, F, R>(
     builder: &'a mut Builder<'outer_builder, 'store, 'frame>,
     title: impl Into<String>,
-    f: F)
+    f: F) -> Option<R>
 where
-    F: FnOnce(&mut Builder<'inner_builder, 'store, 'frame>),
-    'store: 'inner_builder,
-    'frame: 'inner_builder,
-    'a: 'inner_builder,
+    F: FnOnce(&mut Builder<'_, '_, '_>) -> R,
 {
-    Section::new(title).collapsible(true).build(builder, f);
+    let mut result = None;
+    Section::new(title).collapsible(true).build(builder, |builder| {
+        result = Some(f(builder));
+    });
+    result
 }

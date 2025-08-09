@@ -85,7 +85,7 @@ pub fn add_check_box<'s>(
     state: impl CheckBoxStateRef<'s>,
 )
 {
-    let state_id = builder.add_state_id(title.into());
+    let state_id = builder.add_state_id(title);
     let mut state = state.as_check_box_state();
     let has_focus = builder.check_focus(state_id);
 

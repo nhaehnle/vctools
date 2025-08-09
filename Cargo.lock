@@ -549,6 +549,7 @@ dependencies = [
  "directories 6.0.0",
  "itertools 0.14.0",
  "lazy_static",
+ "log",
  "ratatui",
  "regex",
  "reqwest",
@@ -556,6 +557,7 @@ dependencies = [
  "serde_json",
  "termcolor",
  "toml",
+ "tui-logger",
  "vctools-utils",
  "vctuik",
 ]

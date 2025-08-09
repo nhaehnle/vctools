@@ -200,7 +200,7 @@ impl Context {
 }
 
 #[derive(Debug, Clone)]
-pub enum DiffChunkContents {
+pub enum ChunkContents {
     FileHeader {
         /// Old path as found in the "---" line
         old_path: Vec<u8>,
@@ -228,14 +228,14 @@ pub enum DiffChunkContents {
 #[derive(Debug, Clone)]
 pub struct Chunk {
     pub context: Context,
-    pub contents: DiffChunkContents,
+    pub contents: ChunkContents,
 }
 impl Chunk {
     pub fn render_text(&self, out: &mut Vec<u8>) {
         let prefix = self.context.prefix_bytes();
 
         match &self.contents {
-            DiffChunkContents::FileHeader {
+            ChunkContents::FileHeader {
                 old_path, new_path, ..
             } => {
                 out.extend(prefix);
@@ -247,7 +247,7 @@ impl Chunk {
                 out.extend(new_path);
                 out.push(b'\n');
             }
-            DiffChunkContents::HunkHeader {
+            ChunkContents::HunkHeader {
                 old_begin,
                 old_count,
                 new_begin,
@@ -262,7 +262,7 @@ impl Chunk {
                     .as_bytes(),
                 );
             }
-            DiffChunkContents::Line { line } => {
+            ChunkContents::Line { line } => {
                 out.extend(prefix);
                 out.push(line.status.symbol_byte());
                 out.extend(&line.contents);
@@ -482,7 +482,7 @@ impl Hunk {
             let (old_count, new_count) = self.counts();
             writer.push_chunk(Chunk {
                 context: Context::Unknown,
-                contents: DiffChunkContents::HunkHeader {
+                contents: ChunkContents::HunkHeader {
                     old_begin: self.old_begin,
                     old_count,
                     new_begin: self.new_begin,
@@ -494,7 +494,7 @@ impl Hunk {
         for line in &self.lines {
             writer.push_chunk(Chunk {
                 context: Context::Unknown,
-                contents: DiffChunkContents::Line { line: line.clone() },
+                contents: ChunkContents::Line { line: line.clone() },
             });
         }
     }
@@ -721,7 +721,7 @@ impl DiffFile {
     pub fn render_header(&self, writer: &mut dyn ChunkWriter) {
         writer.push_chunk(Chunk {
             context: Context::Unknown,
-            contents: DiffChunkContents::FileHeader {
+            contents: ChunkContents::FileHeader {
                 old_path: self.old_path.clone(),
                 old_name: self.old_name.clone(),
                 new_path: self.new_path.clone(),

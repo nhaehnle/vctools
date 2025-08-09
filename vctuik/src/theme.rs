@@ -13,11 +13,30 @@ pub struct Text {
     pub highlight: Style,
     pub inactive: Style,
     pub selected: Style,
+    pub search: Style,
     pub header0: Style,
     pub header1: Style,
     pub header2: Style,
     pub added: Style,
     pub removed: Style,
+    pub error: Style,
+}
+impl Text {
+    pub fn unstyled() -> Self {
+        Text {
+            normal: Style::default(),
+            highlight: Style::default(),
+            inactive: Style::default(),
+            selected: Style::default(),
+            search: Style::default(),
+            header0: Style::default(),
+            header1: Style::default(),
+            header2: Style::default(),
+            added: Style::default(),
+            removed: Style::default(),
+            error: Style::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,11 +124,13 @@ fn make_solarized(dark: bool) -> Theme {
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
             selected: Style::default().bg(base2).fg(base01),
+            search: Style::default().bg(base03).fg(base0),
             header0: Style::default().fg(blue),
             header1: Style::default().fg(violet),
             header2: Style::default().fg(cyan),
             added: Style::default().fg(green),
             removed: Style::default().fg(red),
+            error: Style::default().fg(red),
         },
         pane_background: Style::default().bg(base3),
         pane_frame_normal: Style::default().fg(base00).bold(),
@@ -119,11 +140,13 @@ fn make_solarized(dark: bool) -> Theme {
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
             selected: Style::default().bg(base2).fg(base01),
+            search: Style::default().bg(base03).fg(base0),
             header0: Style::default().fg(blue),
             header1: Style::default().fg(violet),
             header2: Style::default().fg(cyan),
             added: Style::default().fg(green),
             removed: Style::default().fg(red),
+            error: Style::default().fg(red),
         },
         modal_background: Style::default().bg(base2),
         modal_frame: Style::default().fg(yellow).bold(),
@@ -132,11 +155,13 @@ fn make_solarized(dark: bool) -> Theme {
             highlight: Style::default().fg(yellow),
             inactive: Style::default().fg(base1),
             selected: Style::default().bg(base2).fg(base01),
+            search: Style::default().bg(base02).fg(base0),
             header0: Style::default().fg(blue),
             header1: Style::default().fg(violet),
             header2: Style::default().fg(cyan),
             added: Style::default().fg(green),
             removed: Style::default().fg(red),
+            error: Style::default().fg(red),
         },
     }
 }
@@ -160,18 +185,18 @@ impl<I: Styled<Item = I>> Themed for I {
     type Item = I;
 
     fn theme_text(self, builder: &Builder) -> Self::Item {
-        self.set_style(builder.theme().text(builder.context()).normal)
+        self.set_style(builder.theme().text(builder.theme_context()).normal)
     }
 
     fn theme_highlight(self, builder: &Builder) -> Self::Item {
-        self.set_style(builder.theme().text(builder.context()).highlight)
+        self.set_style(builder.theme().text(builder.theme_context()).highlight)
     }
 
     fn theme_inactive(self, builder: &Builder) -> Self::Item {
-        self.set_style(builder.theme().text(builder.context()).inactive)
+        self.set_style(builder.theme().text(builder.theme_context()).inactive)
     }
 
     fn theme_selected(self, builder: &Builder) -> Self::Item {
-        self.set_style(builder.theme().text(builder.context()).selected)
+        self.set_style(builder.theme().text(builder.theme_context()).selected)
     }
 }

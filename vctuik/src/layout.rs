@@ -118,13 +118,18 @@ pub struct LayoutEngine<Id> {
     drags: Vec<(usize, i16)>,
     size: u16,
 }
-impl<Id: Eq + Hash> LayoutEngine<Id> {
-    pub fn new() -> Self {
+impl<Id> Default for LayoutEngine<Id> {
+    fn default() -> Self {
         Self {
             items: Vec::new(),
             drags: Vec::new(),
             size: 0,
         }
+    }
+}
+impl<Id: Eq + Hash> LayoutEngine<Id> {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn position(&self) -> u16 {
@@ -169,13 +174,13 @@ impl<Id: Eq + Hash> LayoutEngine<Id> {
         self.drags.push((idx, delta))
     }
 
-    pub fn finish(mut self, constraint: Constraint1D, cache: &mut LayoutCache<Id>) -> bool {
+    pub fn finish(mut self, constraint: Constraint1D, cache: &mut LayoutCache<Id>) -> (bool, u16) {
         // Apply drags
         self.drags.sort();
 
         let mut calc = Calculator1D::new(self.size, constraint, &mut self.items);
 
-        for (item_idx, delta) in self.drags.into_iter() {
+        for (item_idx, delta) in self.drags {
             calc.move_start(item_idx, delta);
         }
 
@@ -201,9 +206,9 @@ impl<Id: Eq + Hash> LayoutEngine<Id> {
         }
 
         // Build new layout cache
-        let changed = calc.changed;
+        let result = (calc.changed, calc.total);
 
-        for item in self.items.into_iter() {
+        for item in self.items {
             if let Some(id) = item.item.id {
                 cache.items.insert(id, CacheItem {
                     size: item.size,
@@ -212,7 +217,7 @@ impl<Id: Eq + Hash> LayoutEngine<Id> {
             }
         }
 
-        changed
+        result
     }
 }
 

@@ -2,4 +2,5 @@
 
 pub mod pager;
 pub mod command;
+pub mod logview;
 pub mod stringtools;

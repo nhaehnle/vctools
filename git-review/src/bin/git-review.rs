@@ -4,16 +4,15 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
-use git_review::{pager, command, stringtools::StrScan};
+use git_review::{command, logview::add_log_view, pager::{self, PagerSource}, stringtools::StrScan};
+use log::{trace, debug, info, warn, error, LevelFilter};
 use ratatui::prelude::*;
 use reqwest::header;
 use serde::Deserialize;
-use std::fmt::Write;
+use std::{borrow::Cow, fmt::Write, ops::{Range}};
 use utils::{try_forward, Result};
 use vctuik::{
-    self,
-    event::KeyCode,
-    theme,
+    self, event::{Event, KeyCode, KeyEventKind, MouseEventKind}, prelude::*, section::with_section, theme
 };
 
 use git_core::{Ref, Repository};
@@ -115,10 +114,31 @@ impl Element {
         match self {
             Element::ReviewHeader(text) => text.lines().count(),
             Element::Chunk(chunk) => match &chunk.contents {
-                diff::DiffChunkContents::FileHeader { .. } => 2,
+                diff::ChunkContents::FileHeader { .. } => 2,
                 _ => 1,
             },
             Element::Commit(_) => 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiffDisplayMode {
+    Unified,
+    OnlyOld,
+    OnlyNew,
+}
+impl Default for DiffDisplayMode {
+    fn default() -> Self {
+        DiffDisplayMode::Unified
+    }
+}
+impl DiffDisplayMode {
+    fn toggled(self) -> Self {
+        match self {
+            DiffDisplayMode::Unified => DiffDisplayMode::OnlyOld,
+            DiffDisplayMode::OnlyOld => DiffDisplayMode::OnlyNew,
+            DiffDisplayMode::OnlyNew => DiffDisplayMode::Unified,
         }
     }
 }
@@ -137,11 +157,16 @@ struct ReviewPagerSource {
     /// Indices into `elements` of all file headers
     files: Vec<usize>,
 
+    /// Indices into `elements` of all hunk headers
+    hunks: Vec<usize>,
+
+    mode: DiffDisplayMode,
+
     /// Column widths for range diff matches
     rdm_column_widths: git_core::RangeDiffMatchColumnWidths,
 
     /// Persistent cursors
-    cursors: std::cell::RefCell<pager::PersistentCursors<(usize, usize)>>,
+    cursors: std::cell::RefCell<pager::PersistentCursors<(usize, usize, bool)>>,
 }
 impl ReviewPagerSource {
     fn new() -> Self {
@@ -155,16 +180,84 @@ impl ReviewPagerSource {
     }
 
     fn push_header(&mut self, text: String) {
+        assert!(self.elements.is_empty());
         self.global_lines.push(self.num_global_lines());
         self.elements.push(Element::ReviewHeader(text));
+    }
+
+    fn toggle_mode(&mut self) {
+        self.mode = self.mode.toggled();
+        todo!()
+    }
+
+    fn truncate_to_header(&mut self) {
+        self.elements.truncate(1);
+        self.global_lines.truncate(1);
+        self.commits.clear();
+        self.files.clear();
+        self.hunks.clear();
+        self.rdm_column_widths = git_core::RangeDiffMatchColumnWidths::default();
+
+        let num_lines = self.num_global_lines();
+        let end =
+            if num_lines > 0 {
+                (num_lines - 1, self.get_raw_line(num_lines - 1, 0, usize::MAX).as_ref().graphemes(true).count())
+            } else {
+                (0, 0)
+            };
+
+        self.cursors.borrow_mut().update(|cursor| {
+            if cursor.0 >= num_lines {
+                *cursor = (end.0, end.1, true);
+            }
+        });
+    }
+
+    /// Find the nearest folding header at or below the given depth.
+    ///
+    /// If forward is true, find the smallest index strictly greater than the given index.
+    /// 
+    /// If forward is false, find the largest index less than or equal to the given index.
+    /// Returns (header_idx, depth).
+    fn find_folding_header(&self, idx: usize, forward: bool, max_depth: usize) -> Option<(usize, usize)> {
+        [
+            &self.commits,
+            &self.files,
+            &self.hunks,
+        ]
+        .into_iter()
+        .take(max_depth.saturating_add(1))
+        .enumerate()
+        .filter_map(|(depth, indices)| {
+            let i = indices.partition_point(|&i| i <= idx);
+            if forward {
+                if i < indices.len() {
+                    Some((indices[i], depth))
+                } else {
+                    Some((self.elements.len(), 0))
+                }
+            } else {
+                if i == 0 {
+                    None
+                } else {
+                    Some((indices[i - 1], depth))
+                }
+            }
+        })
+        .max_by(|a, b| {
+            let o = a.0.cmp(&b.0);
+            if forward { o.reverse() } else { o }
+        })
     }
 }
 impl diff::ChunkWriter for ReviewPagerSource {
     fn push_chunk(&mut self, chunk: diff::Chunk) {
         self.global_lines.push(self.num_global_lines());
 
-        if matches!(chunk.contents, diff::DiffChunkContents::FileHeader { .. }) {
+        if matches!(chunk.contents, diff::ChunkContents::FileHeader { .. }) {
             self.files.push(self.elements.len());
+        } else if matches!(chunk.contents, diff::ChunkContents::HunkHeader { .. }) {
+            self.hunks.push(self.elements.len());
         }
 
         self.elements.push(Element::Chunk(chunk));
@@ -179,7 +272,7 @@ impl git_core::RangeDiffWriter for ReviewPagerSource {
         self.elements.push(Element::Commit(rdm));
     }
 }
-impl pager::PagerSource for ReviewPagerSource {
+impl PagerSource for ReviewPagerSource {
     fn num_lines(&self) -> usize {
         self.num_global_lines()
     }
@@ -192,9 +285,9 @@ impl pager::PagerSource for ReviewPagerSource {
             Element::ReviewHeader(text) => (text.clone(), theme.highlight),
             Element::Chunk(chunk) => {
                 let style = match &chunk.contents {
-                    diff::DiffChunkContents::FileHeader { .. } => theme.header1,
-                    diff::DiffChunkContents::HunkHeader { .. } => theme.header2,
-                    diff::DiffChunkContents::Line { line } => match line.status {
+                    diff::ChunkContents::FileHeader { .. } => theme.header1,
+                    diff::ChunkContents::HunkHeader { .. } => theme.header2,
+                    diff::ChunkContents::Line { line } => match line.status {
                         diff::HunkLineStatus::Unchanged => theme.normal,
                         diff::HunkLineStatus::Old(_) => theme.removed,
                         diff::HunkLineStatus::New(_) => theme.added,
@@ -229,17 +322,41 @@ impl pager::PagerSource for ReviewPagerSource {
         Line::from(Span::styled(text.to_owned(), style))
     }
 
+    fn get_folding_range(&self, line: usize, parent: bool) -> Option<(Range<usize>, usize)> {
+        let idx = self.global_lines.partition_point(|&l| l <= line) - 1;
+        let line = line - self.global_lines[idx];
+
+        let (mut header_idx, mut depth) = self.find_folding_header(idx, false, usize::MAX)?;
+        if parent && header_idx == idx && line == 0 {
+            if idx == 0 || depth == 0{
+                return None;
+            }
+            (header_idx, depth) = self.find_folding_header(idx, false, depth - 1)?;
+        }
+
+        let end_idx = self.find_folding_header(header_idx, true, depth).unwrap().0;
+        let end_line =
+            if end_idx < self.global_lines.len() {
+                self.global_lines[end_idx]
+            } else {
+                self.num_global_lines()
+            };
+
+        Some((self.global_lines[header_idx]..end_line, depth))
+    }
+
     fn persist_cursor(
         &self,
         line: usize,
         col: usize,
         _gravity: pager::Gravity,
     ) -> pager::PersistentCursor {
-        self.cursors.borrow_mut().add((line, col))
+        self.cursors.borrow_mut().add((line, col, false))
     }
 
     fn retrieve_cursor(&self, cursor: pager::PersistentCursor) -> ((usize, usize), bool) {
-        (self.cursors.borrow_mut().take(cursor), false)
+        let (line, col, removed) = self.cursors.borrow_mut().take(cursor);
+        ((line, col), removed)
     }
 }
 
@@ -330,9 +447,6 @@ fn do_main() -> Result<()> {
 
     print!("{review_header}");
 
-    let mut pager_source = ReviewPagerSource::new();
-    pager_source.push_header(review_header);
-
     let refs: Vec<_> = [&pull.head.sha, &pull.base.sha]
         .into_iter()
         .chain(most_recent_review.iter().map(|review| &review.commit_id))
@@ -348,32 +462,181 @@ fn do_main() -> Result<()> {
             .name
     };
 
-    let dmb_args = tool::GitDiffModuloBaseArgs {
+    let mut dmb_args = tool::GitDiffModuloBaseArgs {
         base: Some(pull.base.sha),
         old: Some(old),
         new: Some(pull.head.sha),
         options: args.dmb_options,
     };
 
-    tool::git_diff_modulo_base(dmb_args, git_repo, &mut pager_source)?;
+    let mut pager_source = ReviewPagerSource::new();
+    pager_source.push_header(review_header);
+
+    tool::git_diff_modulo_base(&dmb_args, &git_repo, &mut pager_source)?;
 
     let mut terminal = vctuik::init()?;
 
+    tui_logger::init_logger(LevelFilter::Debug)?;
+    tui_logger::set_default_level(LevelFilter::Debug);
+    debug!("Starting up");
+    trace!("test trace");
+    info!("test info");
+    warn!("test warn");
+    error!("test error");
+
     let mut running = true;
+    let mut show_debug_log = false;
+    let mut pager_state = pager::PagerState::default();
+    let mut search: Option<regex::Regex> = None;
+    let mut error: Option<String> = None;
     let mut command: Option<String> = None;
 
     while running {
+        let mut result = Ok(());
         terminal.run_frame(|builder| {
-            pager::Pager::new(&pager_source).build(builder, "pager");
+            result = || -> Result<()> {
+                if command.is_none() {
+                    if match builder.peek_event() {
+                        Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press => true,
+                        Some(Event::Mouse(ev)) if ev.kind != MouseEventKind::Moved => true,
+                        _ => false,
+                    } {
+                        error = None;
+                    }
+                }
 
-            command::CommandLine::new("command", &mut command)
-                .help("q to quit")
-                .build(builder);
+                let mut pager_result =
+                    with_section(builder, "Review", |builder| {
+                        let mut pager = pager::Pager::new(&pager_source);
+                        if let Some(regex) = &search {
+                            pager = pager.search(Cow::Borrowed(regex));
+                        }
+                        pager.build_with_state(builder, "pager", &mut pager_state)
+                    });
 
-            if builder.on_key_press(KeyCode::Char('q')) {
-                running = false;
-                return;
-            }
+                if show_debug_log {
+                    with_section(builder, "Debug Log", |builder| {
+                        add_log_view(builder);
+                    });
+                }
+
+                let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
+
+                let action = command::CommandLine::new("command", &mut command)
+                    .help("/ to search, q to quit")
+                    .build(builder, |builder, _| {
+                        if let Some(error) = &error {
+                            let area = builder.take_lines_fixed(1);
+                            let span = Span::from(error).style(builder.theme().text(builder.theme_context()).error);
+                            builder.frame().render_widget(span, area);
+                        }
+                    });
+                match action {
+                command::CommandAction::None => {},
+                command::CommandAction::Command(cmd) => {
+                    error = None;
+                    if was_search {
+                        if let Some((pattern, pager_result)) = search.as_ref().zip(pager_result.as_mut()) {
+                            pager_result.search(pattern, true);
+                        }
+                    } else if let Some(cmd) = cmd.strip_prefix(':') {
+                        if cmd == "log" {
+                            show_debug_log = !show_debug_log;
+                        } else if cmd == "q" || cmd == "quit" {
+                            running = false;
+                        } else {
+                            error = Some(format!("Unknown command: {cmd}"));
+                        }
+                    }
+                    builder.need_refresh();
+                },
+                command::CommandAction::Changed(cmd) => {
+                    assert!(!cmd.is_empty());
+
+                    error = None;
+                    if cmd.starts_with('/') {
+                        search = None;
+                        if cmd.len() > 1 {
+                            match regex::Regex::new(&cmd[1..]) {
+                                Ok(regex) => {
+                                    search = Some(regex);
+                                },
+                                Err(e) => {
+                                    error = Some(format!("{}", e));
+                                }
+                            }
+                        }
+                    } else if cmd.starts_with(':') {
+                        // nothing to do
+                    } else {
+                        error = Some(format!("Unknown command prefix: {}", cmd.chars().next().unwrap()));
+                    }
+                    builder.need_refresh();
+                },
+                command::CommandAction::Cancelled => {
+                    if was_search {
+                        search = None;
+                    }
+                    error = None;
+                },
+                }
+
+                // Global key bindings that apply when the review pager is visible
+                //
+                // Unfortunately, the borrow checker doesn't understand `match pager_result`
+                // as a complete move/drop that would also end the borrow of pager_source.
+                // So, we need to help it along with the explicit std::mem::drop before any
+                // manipulation of pager_source.
+                enum SourceUpdate {
+                    None,
+                    Reload,
+                    ToggleMode,
+                }
+                let update =
+                    match pager_result.as_mut() {
+                        Some(pager_result) => {
+                            if builder.on_key_press(KeyCode::Char('C')) {
+                                dmb_args.options.combined = !dmb_args.options.combined;
+                                pager_result.move_to(0);
+                                SourceUpdate::Reload
+                            } else if builder.on_key_press(KeyCode::Char('d')) {
+                                SourceUpdate::ToggleMode
+                            } else {
+                                SourceUpdate::None
+                            }
+                        },
+                        None => SourceUpdate::None,
+                    };
+                std::mem::drop(pager_result);
+
+                match update {
+                    SourceUpdate::None => {},
+                    SourceUpdate::Reload => {
+                        pager_source.truncate_to_header();
+                        tool::git_diff_modulo_base(&dmb_args, &git_repo, &mut pager_source)?;
+                        builder.need_refresh();
+                    },
+                    SourceUpdate::ToggleMode => {
+                        pager_source.toggle_mode();
+                        builder.need_refresh();
+                    },
+                }
+
+                // Global key bindings
+                if builder.on_key_press(KeyCode::Char('/')) {
+                    command = Some("/".into());
+                    search = None;
+                    builder.need_refresh();
+                } else if builder.on_key_press(KeyCode::Char(':')) {
+                    command = Some(":".into());
+                    builder.need_refresh();
+                } else if builder.on_key_press(KeyCode::Char('q')) {
+                    running = false;
+                }
+
+                Ok(())
+            }();
+
         })?;
     }
 
