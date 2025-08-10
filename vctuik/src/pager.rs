@@ -3,17 +3,18 @@
 use itertools::Itertools;
 use ratatui::{prelude::*, text::Line, widgets::Block};
 use regex::Regex;
-use vctuik::event::{KeyModifiers, MouseButton, WithModifiers};
-use vctuik::state::StateId;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::ops::Range;
-use std::sync::Arc;
 use std::{
     cell::RefCell,
 };
-use vctuik::{
-    event::KeyCode, layout::{Constraint1D, LayoutItem1D}, prelude::*, state::Builder, theme
+use crate::{
+    event::{KeyModifiers, MouseButton, WithModifiers, KeyCode},
+    layout::{Constraint1D, LayoutItem1D},
+    prelude::*,
+    state::{Builder, StateId},
+    theme
 };
 
 use crate::stringtools::StrScan;
@@ -1179,7 +1180,7 @@ impl<'text> PagerSource for StringPagerSource<'text> {
 }
 
 pub fn run(text: String) -> Result<()> {
-    let mut terminal = vctuik::init()?;
+    let mut terminal = crate::init()?;
     let source = StringPagerSource::new(&text);
 
     let mut running = true;

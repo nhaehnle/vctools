@@ -11,7 +11,10 @@ input-widget = ["dep:tui-input"]
 tree-widget = ["dep:tui-tree-widget"]
 
 [dependencies]
+clap = { version = "3.2", features = ["derive"] }
+itertools = "0.14"
 ratatui = { version = "0.28.1", features = [] }
+regex = { version = "1.7", default-features = false, features = ["std", "perf"] }
 tui-tree-widget = { version = "0.22.0", optional = true }
 tui-input = { version = "0.10.1", optional = true }
 unicode-segmentation = { version = "1.12" }
@@ -22,5 +25,5 @@ vctuik-unsafe-internals = { path = "../vctuik-unsafe-internals" }
 rand = { version = "0.8" }
 
 [[example]]
-name = "demo"
+name = "vctuik-demo"
 required-features = ["tree-widget"]

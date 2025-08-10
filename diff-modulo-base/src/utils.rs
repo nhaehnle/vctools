@@ -1,31 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-use std::fs::File;
-use std::io::prelude::*;
 use std::path::Path;
 
 use crate::diff;
 
 pub use vctools_utils::prelude::*;
-
-fn read_bytes_impl(path: &Path) -> Result<Vec<u8>> {
-    try_forward(
-        || -> Result<Vec<u8>> {
-            let mut file = File::open(path)?;
-            let mut buffer: Vec<u8> = Vec::new();
-            file.read_to_end(&mut buffer)?;
-            Ok(buffer)
-        },
-        || path.display().to_string(),
-    )
-}
-
-pub fn read_bytes<P: AsRef<Path>>(path: P) -> Result<Vec<u8>> {
-    read_bytes_impl(path.as_ref())
-}
+pub use vctools_utils::files::read_bytes;
 
 fn read_diff_impl(buffer: &mut diff::Buffer, path: &Path) -> Result<diff::Diff> {
-    let buf = read_bytes_impl(path)?;
+    let buf = read_bytes(path)?;
     try_forward(
         || -> Result<diff::Diff> {
             let range = buffer.insert(&buf)?;

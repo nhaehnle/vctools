@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use ratatui::{prelude::*, widgets::{Block, Clear}};
-use vctuik::{event::KeyCode, input, state::Builder, theme};
+use crate::{event::KeyCode, input, state::Builder, theme};
 
 
 pub enum CommandAction<'action> {
