@@ -31,22 +31,14 @@ use crate::{
 };
 
 #[derive(Deserialize, Debug)]
-struct Host {
-    host: String,
-    api: String,
-    user: String,
-    token: String,
-}
-
-#[derive(Deserialize, Debug)]
 struct Config {
-    hosts: Vec<Host>,
+    hosts: Vec<github::Host>,
 }
 
 #[derive(Parser, Debug)]
 struct Cli {
     remote: String,
-    pull: i32,
+    pull: u64,
 
     #[clap(flatten)]
     dmb_options: tool::GitDiffModuloBaseOptions,
@@ -54,38 +46,6 @@ struct Cli {
     /// Behave as if run from the given path.
     #[clap(short = 'C', default_value = ".")]
     path: std::path::PathBuf,
-}
-
-trait JsonRequest {
-    fn send_json<'a, J>(self) -> Result<J>
-    where
-        J: serde::de::DeserializeOwned;
-}
-impl JsonRequest for reqwest::blocking::RequestBuilder {
-    fn send_json<'a, J>(self) -> Result<J>
-    where
-        J: serde::de::DeserializeOwned,
-    {
-        let (client, request) = self.build_split();
-        let request = request?;
-        let request_clone = request.try_clone();
-
-        try_forward(
-            move || -> Result<J> {
-                let response = client.execute(request)?;
-                if !response.status().is_success() {
-                    Err(format!("HTTP error: {}", response.status()))?
-                }
-
-                let body = response.text()?;
-                match serde_json::from_str(&body) {
-                    Ok(json) => Ok(json),
-                    Err(err) => Err(format!("Error parsing JSON: {err}\n{body}\n"))?,
-                }
-            },
-            || format!("Error processing request: {request_clone:?}"),
-        )
-    }
 }
 
 fn do_main() -> Result<()> {
@@ -122,27 +82,19 @@ fn do_main() -> Result<()> {
         Err("host not configured")?
     };
 
-    let mut default_headers = header::HeaderMap::new();
-    default_headers.insert(
-        header::AUTHORIZATION,
-        format!("Bearer {}", host.token).parse()?,
-    );
-    default_headers.insert(header::ACCEPT, "application/vnd.github+json".parse()?);
-    default_headers.insert("X-GitHub-Api-Version", "2022-11-28".parse()?);
+    tui_logger::init_logger(LevelFilter::Debug)?;
+    tui_logger::set_default_level(LevelFilter::Debug);
+    debug!("Starting up");
+    trace!("test trace");
+    info!("test info");
+    warn!("test warn");
+    error!("test error");
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("git-review")
-        .default_headers(default_headers)
-        .build()?;
+    let mut client = github::Client::build(host.clone()).build()?;
 
-    let url_api = reqwest::Url::parse(&host.api)?;
-    let url_api_repo = url_api.join(format!("repos/{organization}/{gh_repo}/").as_str())?;
-
-    let url_api_pull = url_api_repo.join(format!("pulls/{}", args.pull).as_str())?;
-    let url_api_reviews = url_api_repo.join(format!("pulls/{}/reviews", args.pull).as_str())?;
-
-    let pull: github::Pull = client.get(url_api_pull).send_json()?;
-    let reviews: Vec<github::Review> = client.get(url_api_reviews).send_json()?;
+    let client_frame = client.frame(None);
+    let pull = client_frame.pull(organization, gh_repo, args.pull).ok()?;
+    let reviews = client_frame.reviews(organization, gh_repo, args.pull).ok()?;
 
     let most_recent_review = reviews
         .into_iter()
@@ -200,14 +152,6 @@ fn do_main() -> Result<()> {
     let mut review = ReviewState::new(review_header, dmb_args, git_repo)?;
 
     let mut terminal = vctuik::init()?;
-
-    tui_logger::init_logger(LevelFilter::Debug)?;
-    tui_logger::set_default_level(LevelFilter::Debug);
-    debug!("Starting up");
-    trace!("test trace");
-    info!("test info");
-    warn!("test warn");
-    error!("test error");
 
     let mut running = true;
     let mut show_debug_log = false;
