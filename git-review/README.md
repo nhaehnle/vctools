@@ -50,7 +50,8 @@ or multiple GitHub usernames.
 The `host` field must match the host that is used in the remotes set up for your
 Git working directories.
 
-TODO: What's the API endpoint for GHE?
+For GitHub Enterprise installations, the API URL is typically of the form
+https://ghe.example/api/v3.
 
 ### GitHub Token Setup
 

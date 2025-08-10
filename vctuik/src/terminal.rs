@@ -4,7 +4,7 @@ use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
         execute,
-    }, widgets::Clear, DefaultTerminal
+    }, layout::Position, widgets::Clear, DefaultTerminal
 };
 
 use crate::{
@@ -157,6 +157,12 @@ impl Terminal {
                             }
                         }
 
+                        // TODO: reset the cursor position properly instead of this
+                        // out-of-bounds hack -- requires Ratatui change
+                        frame.set_cursor_position(Position {
+                            x: area.width,
+                            y: area.height,
+                        });
                         frame.render_widget(Clear, area);
                     }
                 }();

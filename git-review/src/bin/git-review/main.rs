@@ -4,7 +4,7 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
-use git_review::{logview::add_log_view};
+use git_review::{github, logview::add_log_view};
 use log::{trace, debug, info, warn, error, LevelFilter};
 use ratatui::prelude::*;
 use reqwest::header;
@@ -29,34 +29,6 @@ mod review;
 use crate::{
     review::{Review, ReviewState},
 };
-
-mod github {
-    use serde::Deserialize;
-
-    #[derive(Deserialize, Debug)]
-    pub struct Branch {
-        #[serde(rename = "ref")]
-        pub ref_: String,
-        pub sha: String,
-    }
-
-    #[derive(Deserialize, Debug)]
-    pub struct Pull {
-        pub head: Branch,
-        pub base: Branch,
-    }
-
-    #[derive(Deserialize, Debug)]
-    pub struct User {
-        pub login: String,
-    }
-
-    #[derive(Deserialize, Debug)]
-    pub struct Review {
-        pub user: User,
-        pub commit_id: String,
-    }
-}
 
 #[derive(Deserialize, Debug)]
 struct Host {
