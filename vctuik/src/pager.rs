@@ -1189,78 +1189,75 @@ pub fn run(text: String) -> Result<()> {
     let mut error: Option<String> = None;
     let mut command: Option<String> = None;
 
-    while running {
-        while terminal.run_frame(|builder| {
-            let mut pager = Pager::new(&source);
-            if let Some(regex) = &search {
-                pager = pager.search(Cow::Borrowed(regex));
-            }
-            let mut pager_result = pager.build_with_state(builder, "pager", &mut pager_state);
+    terminal.run(|builder| {
+        let mut pager = Pager::new(&source);
+        if let Some(regex) = &search {
+            pager = pager.search(Cow::Borrowed(regex));
+        }
+        let mut pager_result = pager.build_with_state(builder, "pager", &mut pager_state);
 
-            let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
+        let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
 
-            let action = command::CommandLine::new("command", &mut command)
-                .help("/ to search, q to quit")
-                .build(builder, |builder, _| {
-                    if let Some(error) = &error {
-                        let area = builder.take_lines_fixed(1);
-                        let span = Span::from(error).style(builder.theme().text(builder.theme_context()).error);
-                        builder.frame().render_widget(span, area);
-                    }
-                });
-            match action {
-            command::CommandAction::None => {},
-            command::CommandAction::Command(_) => {
-                if was_search {
-                    if let Some(pattern) = &search {
-                        pager_result.search(pattern, true);
-                    }
+        let action = command::CommandLine::new("command", &mut command)
+            .help("/ to search, q to quit")
+            .build(builder, |builder, _| {
+                if let Some(error) = &error {
+                    let area = builder.take_lines_fixed(1);
+                    let span = Span::from(error).style(builder.theme().text(builder.theme_context()).error);
+                    builder.frame().render_widget(span, area);
                 }
-                error = None;
-            },
-            command::CommandAction::Changed(cmd) => {
-                assert!(!cmd.is_empty());
+            });
+        match action {
+        command::CommandAction::None => {},
+        command::CommandAction::Command(_) => {
+            if was_search {
+                if let Some(pattern) = &search {
+                    pager_result.search(pattern, true);
+                }
+            }
+            error = None;
+        },
+        command::CommandAction::Changed(cmd) => {
+            assert!(!cmd.is_empty());
 
-                error = None;
-                if cmd.starts_with('/') {
-                    search = None;
-                    if cmd.len() > 1 {
-                        match Regex::new(&cmd[1..]) {
-                            Ok(regex) => {
-                                search = Some(regex);
-                            },
-                            Err(e) => {
-                                error = Some(format!("{}", e));
-                            }
+            error = None;
+            if cmd.starts_with('/') {
+                search = None;
+                if cmd.len() > 1 {
+                    match Regex::new(&cmd[1..]) {
+                        Ok(regex) => {
+                            search = Some(regex);
+                        },
+                        Err(e) => {
+                            error = Some(format!("{}", e));
                         }
                     }
-                } else {
-                    error = Some(format!("Unknown command prefix: {}", cmd.chars().next().unwrap()));
                 }
-                builder.need_refresh();
-            },
-            command::CommandAction::Cancelled => {
-                if was_search {
-                    search = None;
-                }
-                error = None;
-            },
+            } else {
+                error = Some(format!("Unknown command prefix: {}", cmd.chars().next().unwrap()));
             }
-
-            // Global key bindings
-            if builder.on_key_press(KeyCode::Char('/')) {
-                command = Some("/".into());
+            builder.need_refresh();
+        },
+        command::CommandAction::Cancelled => {
+            if was_search {
                 search = None;
-                builder.need_refresh();
             }
-            if builder.on_key_press(KeyCode::Char('q')) {
-                running = false;
-                return;
-            }
-        })? {
-            // until state has settled
+            error = None;
+        },
         }
-    }
+
+        // Global key bindings
+        if builder.on_key_press(KeyCode::Char('/')) {
+            command = Some("/".into());
+            search = None;
+            builder.need_refresh();
+        }
+        if builder.on_key_press(KeyCode::Char('q')) {
+            running = false;
+        }
+
+        Ok(running)
+    })?;
 
     Ok(())
 }

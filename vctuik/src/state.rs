@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, ops::Range};
+use std::{any::Any, borrow::Cow, collections::HashMap, ops::Range};
 
 use ratatui::{
     layout::{Position, Rect}, style::Style, widgets::{Block, Clear}, Frame
@@ -7,7 +7,7 @@ use ratatui::{
 use vctuik_unsafe_internals::state;
 
 use crate::{
-    event::{Event, KeyCode, KeyEventKind, KeySequence, MouseButton, MouseEventKind},
+    event::{Event, EventExt, KeyCode, KeyEventKind, KeySequence, MouseButton, MouseEventKind},
     layout::{Constraint1D, LayoutCache, LayoutEngine, LayoutItem1D},
     theme::{Context, Theme}
 };
@@ -156,15 +156,16 @@ pub(crate) struct BuildStore<'store, 'frame> {
     state_builder: state::Builder<'store, StateId>,
     pub(crate) frame: &'store mut Frame<'frame>,
     theme: &'store Theme,
-    event: Option<Event>,
+    event: Option<EventExt>,
     event_handled: bool,
+    pub(crate) injected: Vec<Box<dyn Any + Send + Sync>>,
     pub(crate) need_refresh: bool,
     focus_action: FocusAction,
 }
 impl<'store, 'frame> BuildStore<'store, 'frame> {
     pub(crate) fn new(state: &'store mut Store, theme: &'store Theme,
                       frame: &'store mut Frame<'frame>,
-                      event: Option<Event>) -> Self {
+                      event: Option<EventExt>) -> Self {
         let ids = &mut state.ids;
         let layout = &mut state.layout;
         let state_builder = state::Builder::new(&mut state.state);
@@ -177,6 +178,7 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
             theme,
             event,
             event_handled: false,
+            injected: Vec::new(),
             need_refresh: false,
             focus_action: FocusAction::None,
         }
@@ -379,7 +381,7 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
         // so that text fields can capture tabs.
         if !self.event_handled {
             let next = match self.event {
-                Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press => {
+                Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press => {
                     if ev.code == KeyCode::Tab ||
                        (ev.code == KeyCode::Down && ev.modifiers.is_empty()) {
                         Some(true)
@@ -591,8 +593,15 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         self.store.need_refresh = true;
     }
 
+    pub fn inject_custom<T: Sync + Send + 'static>(&mut self, event: T) {
+        self.store.injected.push(Box::new(event));
+    }
+
     pub fn peek_event(&self) -> Option<&Event> {
-        self.store.event.as_ref()
+        self.store.event.as_ref().and_then(|ext| match ext {
+            EventExt::Event(event) => Some(event),
+            _ => None,
+        })
     }
 
     pub fn with_event<F, R>(&mut self, f: F) -> Option<R>
@@ -600,8 +609,20 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         F: FnOnce(&Event) -> Option<R>,
     {
         if !self.store.event_handled {
-            if let Some(event) = &self.store.event {
+            if let Some(EventExt::Event(event)) = &self.store.event {
                 if let Some(result) = f(event) {
+                    self.store.event_handled = true;
+                    return Some(result);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn on_custom<T: 'static>(&mut self) -> Option<&T> {
+        if !self.store.event_handled {
+            if let Some(EventExt::Custom(data)) = &self.store.event {
+                if let Some(result) = data.downcast_ref::<T>() {
                     self.store.event_handled = true;
                     return Some(result);
                 }
@@ -614,13 +635,13 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         let key_seq = key_seq.into();
         matches!(
             self.store.event,
-            Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press && key_seq.matches(&ev)) &&
+            Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press && key_seq.matches(&ev)) &&
             self.store.event_handled()
     }
 
     pub fn on_key_press_any(&mut self, key_seqs: &[KeySequence]) -> bool {
         match self.store.event {
-        Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press => {
+        Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press => {
             key_seqs.iter().any(|seq| seq.matches(&ev)) && self.store.event_handled()
         },
         _ => false,
@@ -629,7 +650,7 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
 
     pub fn on_mouse_press(&mut self, area: Rect, button: MouseButton) -> Option<Position> {
         match self.store.event {
-            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::Down(button) => {
+            Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::Down(button) => {
                 let pos = Position::new(ev.column, ev.row);
                 area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
             },
@@ -639,7 +660,7 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
 
     pub fn on_mouse_scroll_down(&mut self, area: Rect) -> Option<Position> {
         match self.store.event {
-            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollDown => {
+            Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollDown => {
                 let pos = Position::new(ev.column, ev.row);
                 area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
             },
@@ -649,7 +670,7 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
 
     pub fn on_mouse_scroll_up(&mut self, area: Rect) -> Option<Position> {
         match self.store.event {
-            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollUp => {
+            Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollUp => {
                 let pos = Position::new(ev.column, ev.row);
                 area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
             },
@@ -659,7 +680,7 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
 
     pub fn on_mouse_scroll_left(&mut self, area: Rect) -> Option<Position> {
         match self.store.event {
-            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollLeft => {
+            Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollLeft => {
                 let pos = Position::new(ev.column, ev.row);
                 area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
             },
@@ -669,7 +690,7 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
 
     pub fn on_mouse_scroll_right(&mut self, area: Rect) -> Option<Position> {
         match self.store.event {
-            Some(Event::Mouse(ev)) if ev.kind == MouseEventKind::ScrollRight => {
+            Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollRight => {
                 let pos = Position::new(ev.column, ev.row);
                 area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
             },

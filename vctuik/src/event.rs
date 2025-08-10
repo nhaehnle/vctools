@@ -1,3 +1,5 @@
+use std::any::Any;
+
 pub use ratatui::crossterm::event::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,5 +49,18 @@ impl WithModifiers for KeyCode {
 
     fn with_modifiers(self, modifiers: KeyModifiers) -> Self::Output {
         KeySequence::new(self, modifiers)
+    }
+}
+
+pub(crate) enum EventExt {
+    Event(Event),
+    Custom(Box<dyn Any + Send + Sync>),
+}
+impl std::fmt::Debug for EventExt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EventExt::Event(ev) => write!(f, "EventExt::Event({:?})", ev),
+            EventExt::Custom(_) => write!(f, "EventExt::Custom(..)"),
+        }
     }
 }

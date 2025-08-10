@@ -70,18 +70,16 @@ fn main() -> Result<()> {
     let mut running = true;
     let mut game_state = GameState::new(10, 20);
 
-    while running {
-        while terminal.run_frame(|builder| {
-            if builder.on_key_press(KeyCode::Char('q')) {
-                running = false;
-                return;
-            }
-
-            add_game_view(builder, &mut game_state);
-        })? {
-            // repeat until state settles
+    terminal.run(|builder| {
+        if builder.on_key_press(KeyCode::Char('q')) {
+            running = false;
+            return Ok(false);
         }
-    }
+
+        add_game_view(builder, &mut game_state);
+
+        Ok(true)
+    })?;
 
     Ok(())
 }

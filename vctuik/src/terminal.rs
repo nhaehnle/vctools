@@ -1,12 +1,14 @@
+use std::any::Any;
+
 use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
         execute,
-    }, DefaultTerminal
+    }, widgets::Clear, DefaultTerminal
 };
 
 use crate::{
-    event::{self, Event},
+    event::{self, Event, EventExt},
     layout::{self, Constraint1D},
     prelude::*,
     signals::{self, Dispatch, Receiver},
@@ -14,10 +16,63 @@ use crate::{
     theme::Theme,
 };
 
+struct Events {
+    recv: Receiver<Result<Event>>,
+    injected: Vec<Box<dyn Any + Send + Sync>>,
+}
+impl Events {
+    fn new() -> Self {
+        let (signal, recv) = signals::make_channel();
+
+        std::thread::spawn(
+            move || {
+                if let Err(err) = try_forward(|| -> Result<()> {
+                    loop {
+                        signal.signal(Ok(event::read()?));
+                    }
+                }, || "") {
+                    signal.signal(Err(err));
+                }
+            });
+        
+        Self {
+            recv,
+            injected: Vec::new(),
+        }
+    }
+
+    fn get(&mut self, wait: bool) -> Result<Option<EventExt>> {
+        if !self.injected.is_empty() {
+            return Ok(Some(EventExt::Custom(self.injected.drain(0..1).next().unwrap())));
+        }
+
+        let mut the_event = None;
+        let mut the_err = None;
+        let mut dispatch = Dispatch::new();
+        dispatch.add(self.recv.dispatch_one(|event| {
+            match event {
+                Ok(event) => {
+                    the_event = Some(EventExt::Event(event));
+                }
+                Err(err) => {
+                    the_err = Some(err);
+                }
+            }
+        }));
+        dispatch.poll(wait);
+
+        if let Some(err) = the_err.take() {
+            Err(err)?
+        }
+
+        Ok(the_event)
+    }
+}
+
 pub struct Terminal {
     terminal: DefaultTerminal,
     store: Store,
-    event_recv: Receiver<Result<Event>>,
+    events: Events,
     theme: Theme,
     need_refresh: bool,
 }
@@ -35,23 +90,10 @@ impl Terminal {
             old_hook(info);
         }));
 
-        let (event_signal, event_recv) = signals::make_channel();
-
-        std::thread::spawn(
-            move || {
-                if let Err(err) = try_forward(|| -> Result<()> {
-                    loop {
-                        event_signal.signal(Ok(event::read()?));
-                    }
-                }, || "") {
-                    event_signal.signal(Err(err));
-                }
-            });
-
         Ok(Terminal {
             terminal,
             store: Store::default(),
-            event_recv,
+            events: Events::new(),
             theme: Theme::default(),
             need_refresh: true,
         })
@@ -64,55 +106,70 @@ impl Terminal {
         }
     }
 
-    /// Run one frame.
-    ///
-    /// Returns true if the frame should be run again immediately as some refresh is needed.
-    pub fn run_frame<F>(&mut self, f: F) -> Result<bool>
+    /// Run a default event loop until f returns false.
+    pub fn run<F>(&mut self, mut f: F) -> Result<()>
     where
-        F: FnOnce(&mut Builder),
+        F: FnMut(&mut Builder) -> Result<bool>,
     {
-        let mut the_event = None;
+        let mut the_result = Ok(());
+        let mut the_event: Option<EventExt> = None;
+        let mut running = true;
 
-        if !self.need_refresh {
-            let mut the_err = None;
-            let mut dispatch = Dispatch::new();
-            dispatch.add(self.event_recv.dispatch_one(|event| {
-                match event {
-                    Ok(event) => {
-                        the_event = Some(event);
-                    }
-                    Err(err) => {
-                        the_err = Some(err);
-                    }
-                }
-            }));
-            dispatch.poll(true);
+        loop {
+            self.terminal.draw(|frame| {
+                the_result = || -> Result<()> {
+                    loop {
+                        // Process the UI once.
+                        let area = frame.area();
+                        let mut build_store = BuildStore::new(&mut self.store, &self.theme, frame, the_event.take());
 
-            if let Some(err) = the_err.take() {
-                Err(err)?
+                        {
+                            let mut layout = layout::LayoutEngine::new();
+                            let mut builder = Builder::new(&mut build_store, &mut layout, area);
+                            if !f(&mut builder)? {
+                                running = false;
+                                return Ok(());
+                            }
+
+                            if layout.finish(Constraint1D::new_fixed(area.height), &mut build_store.current_layout_mut()).0 {
+                                build_store.need_refresh = true;
+                            }
+                        }
+
+                        build_store.end_frame();
+                        self.events.injected.append(&mut build_store.injected);
+                        self.need_refresh = build_store.need_refresh;
+
+                        // If the UI hasn't settled, just re-process it immediately
+                        // without an event (since the settling could affect how
+                        // events are routed).
+                        //
+                        // If the UI has settled and there is another event, process
+                        // it immediately.
+                        //
+                        // Finally, if the UI has settled and there are no more events
+                        // to process, break out of the loop and actually send out
+                        // the rendered frame.
+                        if !self.need_refresh {
+                            the_event = self.events.get(false)?;
+                            if the_event.is_none() {
+                                return Ok(());
+                            }
+                        }
+
+                        frame.render_widget(Clear, area);
+                    }
+                }();
+            })?;
+
+            if !running || the_result.is_err() {
+                break;
             }
 
-            assert!(the_event.is_some());
+            the_event = self.events.get(true)?;
         }
 
-        self.terminal.draw(|frame| {
-            let area = frame.area();
-            let mut build_store = BuildStore::new(&mut self.store, &self.theme, frame, the_event);
-
-            {
-                let mut layout = layout::LayoutEngine::new();
-                let mut builder = Builder::new(&mut build_store, &mut layout, area);
-                f(&mut builder);
-                if layout.finish(Constraint1D::new_fixed(area.height), &mut build_store.current_layout_mut()).0 {
-                    self.need_refresh = true;
-                }
-            }
-
-            build_store.end_frame();
-            self.need_refresh = build_store.need_refresh;
-        })?;
-
-        Ok(self.need_refresh)
+        the_result
     }
 }
 impl Drop for Terminal {

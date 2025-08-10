@@ -95,7 +95,7 @@ impl Display for Url {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Repository {
     pub path: std::path::PathBuf,
 

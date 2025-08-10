@@ -29,66 +29,63 @@ fn main() -> Result<()> {
         ]).unwrap()
     ];
 
-    while running {
-        while terminal.run_frame(|builder| {
-            // Clear the window
-            let frame_area = builder.frame().area();
-            let block = Block::new()
-                .style(builder.theme().pane_background);
-            builder.frame().render_widget(block, frame_area);
+    terminal.run(|builder| {
+        // Clear the window
+        let frame_area = builder.frame().area();
+        let block = Block::new()
+            .style(builder.theme().pane_background);
+        builder.frame().render_widget(block, frame_area);
 
-            // Draw UI
-            with_section(builder, "Settings", |builder| {
-                add_check_box(builder, "Foo", &mut foo);
-                add_check_box(builder, "Bar", &mut bar);
-                Input::new("name")
-                    .label("Name:")
-                    .build(builder, &mut name);
-                builder.add_slack();
-            });
+        // Draw UI
+        with_section(builder, "Settings", |builder| {
+            add_check_box(builder, "Foo", &mut foo);
+            add_check_box(builder, "Bar", &mut bar);
+            Input::new("name")
+                .label("Name:")
+                .build(builder, &mut name);
+            builder.add_slack();
+        });
 
-            with_section(builder, "Commentary", |builder| {
-                add_label(builder, "Cheddar");
-                add_label(builder, "Provolone");
-                add_label(builder, "Swiss");
-                add_label(builder, format!("Hello, {name}!"));
-                builder.add_slack();
-            });
+        with_section(builder, "Commentary", |builder| {
+            add_label(builder, "Cheddar");
+            add_label(builder, "Provolone");
+            add_label(builder, "Swiss");
+            add_label(builder, format!("Hello, {name}!"));
+            builder.add_slack();
+        });
 
-            with_section(builder, "Running", |builder| {
-                add_check_box(builder, "Running", &mut running);
-                if Input::new("name").build(builder, &mut name).is_some() {
-                    builder.need_refresh();
-                }
-
-                if let Some(ev) = builder.peek_event() {
-                    last_event = Some(ev.clone());
-                }
-                if let Some(ev) = last_event.as_ref() {
-                    add_label(builder, format!("Last event: {ev:?}"));
-                } else {
-                    add_label(builder, "No events yet");
-                }
-
-                builder.add_slack();
-            });
-
-            with_section(builder, "Tree", |builder| {
-               Tree::new(&items).unwrap()
-                   .build(builder, "tree");
-            });
-
-            add_label(builder, "Press 'q' to quit");
-
-            // Handle global events
-            if builder.on_key_press(KeyCode::Char('q')) {
-                running = false;
-                return;
+        with_section(builder, "Running", |builder| {
+            add_check_box(builder, "Running", &mut running);
+            if Input::new("name").build(builder, &mut name).is_some() {
+                builder.need_refresh();
             }
-        })? {
-            // repeat until settled
+
+            if let Some(ev) = builder.peek_event() {
+                last_event = Some(ev.clone());
+            }
+            if let Some(ev) = last_event.as_ref() {
+                add_label(builder, format!("Last event: {ev:?}"));
+            } else {
+                add_label(builder, "No events yet");
+            }
+
+            builder.add_slack();
+        });
+
+        with_section(builder, "Tree", |builder| {
+            Tree::new(&items).unwrap()
+                .build(builder, "tree");
+        });
+
+        add_label(builder, "Press 'q' to quit");
+
+        // Handle global events
+        if builder.on_key_press(KeyCode::Char('q')) {
+            running = false;
         }
-    }
+
+        Ok(running)
+    })?;
 
     Ok(())
 }
