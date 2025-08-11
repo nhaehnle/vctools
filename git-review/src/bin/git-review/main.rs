@@ -24,6 +24,7 @@ use vctuik::{
 use git_core::{Ref, Repository};
 
 mod actions;
+mod diff_pager;
 mod review;
 
 use crate::{
