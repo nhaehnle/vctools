@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: MIT
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+pub trait ResultExt<T> {
+    fn as_mut_ok(&mut self) -> Result<&mut T>;
+}
+impl<T> ResultExt<T> for Result<T> {
+    fn as_mut_ok(&mut self) -> Result<&mut T> {
+        match self {
+            Ok(value) => Ok(value),
+            Err(err) => Err(err.to_string())?,
+        }
+    }
+}
 
 pub fn err_from_str(msg: &str) -> Box<dyn std::error::Error + Send + Sync> {
     msg.into()
@@ -31,5 +42,39 @@ where
             cause: err,
         })),
         Ok(result) => Ok(result),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum GCow<'a, T> {
+    Borrowed(&'a T),
+    Owned(T),
+}
+impl<'a, T> std::ops::Deref for GCow<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            GCow::Borrowed(value) => value,
+            GCow::Owned(value) => value,
+        }
+    }
+}
+impl<'a, T: Clone> GCow<'a, T> {
+    pub fn into_owned(self) -> T {
+        match self {
+            GCow::Borrowed(value) => value.clone(),
+            GCow::Owned(value) => value,
+        }
+    }
+}
+impl<'a, T> From<&'a T> for GCow<'a, T> {
+    fn from(value: &'a T) -> Self {
+        GCow::Borrowed(value)
+    }
+}
+impl<'a, T> From<T> for GCow<'a, T> {
+    fn from(value: T) -> Self {
+        GCow::Owned(value)
     }
 }

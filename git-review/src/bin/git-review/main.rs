@@ -4,7 +4,7 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
-use git_review::{github, logview::add_log_view};
+use git_review::{connections, github, logview::add_log_view};
 use log::{trace, debug, info, warn, error, LevelFilter};
 use ratatui::prelude::*;
 use reqwest::header;
@@ -28,13 +28,8 @@ mod diff_pager;
 mod review;
 
 use crate::{
-    review::{Review, ReviewState},
+    review::{PullRequest, Review},
 };
-
-#[derive(Deserialize, Debug)]
-struct Config {
-    hosts: Vec<github::Host>,
-}
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -54,10 +49,10 @@ struct Cli {
 }
 
 fn do_main() -> Result<()> {
-    let args = Cli::parse();
+    let mut args = Cli::parse();
 
     let dirs = ProjectDirs::from("experimental", "nhaehnle", "vctools").unwrap();
-    let config: Config = {
+    let config: connections::Config = {
         let mut config = dirs.config_dir().to_path_buf();
         config.push("github.toml");
         try_forward(
@@ -70,21 +65,19 @@ fn do_main() -> Result<()> {
         )?
     };
 
+    let mut connections = connections::Connections::new(
+        config,
+        args.github_offline,
+        Some(dirs.cache_dir().into()),
+    );
+
     //    println!("{:?}", &config);
     //    println!("{}", dirs.config_dir().display());
 
-    let git_repo = Repository::new(&args.path);
-    let url = git_repo.get_url(&args.remote)?;
-    let Some(hostname) = url.hostname() else {
-        Err("remote is local")?
-    };
-    let Some((organization, gh_repo)) = url.github_path() else {
-        Err(format!("cannot parse {url} as a GitHub repository"))?
-    };
-
-    let Some(host) = config.hosts.iter().find(|host| host.host == hostname) else {
-        print!("Host {hostname} not found in config");
-        Err("host not configured")?
+    let pr = PullRequest {
+        repository: Repository::new(&args.path),
+        remote: args.remote.clone(),
+        id: args.pull,
     };
 
     tui_logger::init_logger(LevelFilter::Debug)?;
@@ -95,71 +88,6 @@ fn do_main() -> Result<()> {
     warn!("test warn");
     error!("test error");
 
-    let mut client =
-        github::Client::build(host.clone())
-            .offline(args.github_offline)
-            .cache_dir(dirs.cache_dir().join(&host.host))
-            .new()?;
-
-    let client_frame = client.frame(None);
-    let pull = client_frame.pull(organization, gh_repo, args.pull).ok()?;
-    let reviews = client_frame.reviews(organization, gh_repo, args.pull).ok()?;
-
-    let most_recent_review = reviews
-        .into_iter()
-        .rev()
-        .find(|review| review.user.login == host.user);
-
-    let mut review_header = String::new();
-    writeln!(
-        &mut review_header,
-        "Review {}/{}#{}",
-        organization, gh_repo, args.pull
-    )?;
-    if let Some(review) = &most_recent_review {
-        writeln!(
-            &mut review_header,
-            "  Most recent review: {}",
-            review.commit_id
-        )?;
-    }
-    writeln!(
-        &mut review_header,
-        "  Current head:       {}",
-        pull.head.sha
-    )?;
-    writeln!(
-        &mut review_header,
-        "  Target branch:      {}",
-        pull.base.ref_
-    )?;
-
-    print!("{review_header}");
-
-    let refs: Vec<_> = [&pull.head.sha, &pull.base.sha]
-        .into_iter()
-        .chain(most_recent_review.iter().map(|review| &review.commit_id))
-        .map(|sha| Ref::new(sha))
-        .collect();
-    git_repo.fetch_missing(&args.remote, &refs)?;
-
-    let old = if let Some(review) = most_recent_review {
-        review.commit_id
-    } else {
-        git_repo
-            .merge_base(&Ref::new(&pull.base.sha), &Ref::new(&pull.head.sha))?
-            .name
-    };
-
-    let dmb_args = tool::GitDiffModuloBaseArgs {
-        base: Some(pull.base.sha),
-        old: Some(old),
-        new: Some(pull.head.sha),
-        options: args.dmb_options,
-    };
-
-    let mut review = ReviewState::new(review_header, dmb_args, git_repo)?;
-
     let mut terminal = vctuik::init()?;
 
     let mut running = true;
@@ -169,6 +97,8 @@ fn do_main() -> Result<()> {
     let mut command: Option<String> = None;
 
     terminal.run(|builder| {
+        connections.start_frame(None);
+
         if command.is_none() {
             if match builder.peek_event() {
                 Some(Event::Key(ev)) if ev.kind == KeyEventKind::Press => true,
@@ -180,11 +110,10 @@ fn do_main() -> Result<()> {
         }
 
         with_section(builder, "Review", |builder| {
-            let widget = Review::new().maybe_search(search.as_ref());
-            if let Err(err) = widget.build(builder, &mut review) {
-                error!("Review: {err}");
-                error = Some(format!("{err}"));
-            }
+            Review::new(&pr)
+                .maybe_search(search.as_ref())
+                .options(&mut args.dmb_options)
+                .build(builder, &mut connections);
         });
 
         if show_debug_log {
@@ -192,6 +121,8 @@ fn do_main() -> Result<()> {
                 add_log_view(builder);
             });
         }
+
+        connections.end_frame();
 
         let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
 

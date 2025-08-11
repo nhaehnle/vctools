@@ -9,14 +9,14 @@ use git_core::{RangeDiffWriter, Ref};
 use utils::Result;
 use diff::ChunkWriter;
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct GitDiffModuloBaseOptions {
     /// Combine the diff of all commits in a range, instead of showing per-commit diffs.
     #[clap(long)]
     pub combined: bool,
 }
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
 pub struct GitDiffModuloBaseArgs {
     pub base: Option<String>,
     pub old: Option<String>,

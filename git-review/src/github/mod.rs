@@ -39,6 +39,13 @@ impl ClientConfig {
         }
     }
 
+    pub fn maybe_cache_dir(self, cache_dir: Option<PathBuf>) -> Self {
+        Self {
+            cache_dir,
+            ..self
+        }
+    }
+
     pub fn new(self) -> Result<Client> {
         let url_api = Url::parse(&self.host.api)?;
 
@@ -51,6 +58,7 @@ impl ClientConfig {
             url_api,
             cache: Arc::new(Cache::default()),
             helper: None,
+            frame: None,
         };
 
         if !client.config.offline {
@@ -67,12 +75,20 @@ impl ClientConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum WaitPolicy {
+    Wait,
+    Deadline(Instant),
+    Prefetch,
+}
+
 #[derive(Debug)]
 pub struct Client {
     config: ClientConfig,
     url_api: Url,
     cache: Arc<Cache>,
     helper: Option<Arc<HelperCtrl>>,
+    frame: Option<WaitPolicy>,
 }
 impl Client {
     pub fn build(host: Host) -> ClientConfig {
@@ -81,6 +97,10 @@ impl Client {
             offline: false,
             cache_dir: None,
         }
+    }
+
+    pub fn host(&self) -> &Host {
+        &self.config.host
     }
 
     fn start_thread(&mut self) -> Result<()> {
@@ -111,26 +131,45 @@ impl Client {
         Ok(())
     }
 
-    pub fn frame(&mut self, max_duration: Option<Duration>) -> ClientFrame {
-        let wait_policy =
-            if max_duration.is_some() {
-                WaitPolicy::Deadline(Instant::now() + max_duration.unwrap())
+    pub fn start_frame(&mut self, deadline: Option<Instant>) {
+        assert!(self.frame.is_none());
+
+        self.frame = Some(
+            if let Some(deadline) = deadline {
+                WaitPolicy::Deadline(deadline)
             } else {
                 WaitPolicy::Wait
-            };
+            }
+        );
+    }
 
-        ClientFrame {
+    pub fn access(&mut self) -> ClientRef {
+        let wait_policy = self.frame.unwrap();
+        ClientRef {
             client: self,
             wait_policy,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-enum WaitPolicy {
-    Wait,
-    Deadline(Instant),
-    Prefetch,
+    pub fn prefetch(&mut self) -> ClientRef {
+        assert!(self.frame.is_some());
+        ClientRef {
+            client: self,
+            wait_policy: WaitPolicy::Prefetch,
+        }
+    }
+
+    pub fn end_frame(&mut self) {
+        assert!(self.frame.is_some());
+
+        if let Some(helper) = &self.helper {
+            let mut state = helper.state.lock().unwrap();
+            let state = state.deref_mut();
+            state.backlog_requests.append(&mut state.frame_requests);
+        }
+
+        self.frame = None;
+    }
 }
 
 trait DynParser: std::fmt::Debug + Send + Sync {
@@ -155,18 +194,11 @@ fn load_from_cache(cache_file: &Path, parser: &dyn DynParser) -> Response<Box<dy
 }
 
 #[derive(Debug)]
-pub struct ClientFrame<'frame> {
+pub struct ClientRef<'frame> {
     client: &'frame mut Client,
     wait_policy: WaitPolicy,
 }
-impl<'frame> ClientFrame<'frame> {
-    pub fn prefetch(&mut self) -> ClientFrame {
-        ClientFrame {
-            client: self.client,
-            wait_policy: WaitPolicy::Prefetch,
-        }
-    }
-
+impl<'frame> ClientRef<'frame> {
     fn get_impl(&self, url: &str, parser: Box<dyn DynParser>) -> Response<()> {
         let (request, response) = {
             let mut cache = self.client.cache.cache.lock().unwrap();
@@ -286,26 +318,6 @@ impl<'frame> ClientFrame<'frame> {
 
     pub fn reviews<'a>(&self, organization: impl Into<Cow<'a, str>>, gh_repo: impl Into<Cow<'a, str>>, pull: u64) -> Response<Vec<api::Review>> {
         self.get(format!("repos/{}/{}/pulls/{}/reviews", organization.into(), gh_repo.into(), pull))
-    }
-
-    /// End the frame.
-    ///
-    /// The given function may be called from another thread (up to the start of the next frame)
-    /// if one of the responses from this frame became stale.
-    pub fn notify<F>(self, _f: F)
-    where
-        F: FnOnce() + Send + Sync,
-    {
-        todo!()
-    }
-}
-impl Drop for ClientFrame<'_> {
-    fn drop(&mut self) {
-        if let Some(helper) = &self.client.helper {
-            let mut state = helper.state.lock().unwrap();
-            let state = state.deref_mut();
-            state.backlog_requests.append(&mut state.frame_requests);
-        }
     }
 }
 

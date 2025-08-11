@@ -101,29 +101,6 @@ impl DiffPagerSource {
         todo!()
     }
 
-    pub fn truncate_to_header(&mut self) {
-        self.elements.truncate(1);
-        self.global_lines.truncate(1);
-        self.commits.clear();
-        self.files.clear();
-        self.hunks.clear();
-        self.rdm_column_widths = git_core::RangeDiffMatchColumnWidths::default();
-
-        let num_lines = self.num_global_lines();
-        let end =
-            if num_lines > 0 {
-                (num_lines - 1, self.get_raw_line(num_lines - 1, 0, usize::MAX).as_ref().graphemes(true).count())
-            } else {
-                (0, 0)
-            };
-
-        self.cursors.borrow_mut().update(|cursor| {
-            if cursor.0 >= num_lines {
-                *cursor = (end.0, end.1, true);
-            }
-        });
-    }
-
     /// Find the nearest folding header at or below the given depth.
     ///
     /// If forward is true, find the smallest index strictly greater than the given index.
