@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-use std::fs::File;
-use std::io::prelude::*;
 use std::path::Path;
 
 use crate::prelude::*;
@@ -9,10 +7,7 @@ use crate::prelude::*;
 fn read_bytes_impl(path: &Path) -> Result<Vec<u8>> {
     try_forward(
         || -> Result<Vec<u8>> {
-            let mut file = File::open(path)?;
-            let mut buffer: Vec<u8> = Vec::new();
-            file.read_to_end(&mut buffer)?;
-            Ok(buffer)
+            Ok(std::fs::read(path)?)
         },
         || path.display().to_string(),
     )

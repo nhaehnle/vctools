@@ -46,6 +46,10 @@ struct Cli {
     /// Behave as if run from the given path.
     #[clap(short = 'C', default_value = ".")]
     path: std::path::PathBuf,
+
+    /// Do not access the GitHub API.
+    #[clap(long)]
+    github_offline: bool,
 }
 
 fn do_main() -> Result<()> {
@@ -90,7 +94,11 @@ fn do_main() -> Result<()> {
     warn!("test warn");
     error!("test error");
 
-    let mut client = github::Client::build(host.clone()).build()?;
+    let mut client =
+        github::Client::build(host.clone())
+            .offline(args.github_offline)
+            .cache_dir(dirs.cache_dir().join(&host.host))
+            .new()?;
 
     let client_frame = client.frame(None);
     let pull = client_frame.pull(organization, gh_repo, args.pull).ok()?;

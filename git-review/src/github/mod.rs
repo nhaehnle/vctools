@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{any::Any, borrow::Cow, collections::HashMap, ops::DerefMut, sync::{Arc, Condvar, Mutex, MutexGuard}, thread::JoinHandle, time::{Duration, Instant}};
+use std::{any::Any, borrow::Cow, collections::HashMap, ops::DerefMut, path::{Path, PathBuf}, sync::{Arc, Condvar, Mutex}, time::{Duration, Instant}};
 
 use itertools::Itertools;
-use log::{trace, debug, info, warn, error, LevelFilter};
+use log::{trace, debug, info, warn, error};
 use reqwest::{header, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize};
-use vctools_utils::prelude::*;
+use vctools_utils::{files, prelude::*};
 
 pub mod api;
 
@@ -18,21 +18,34 @@ pub struct Host {
     pub token: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClientConfig {
     host: Host,
     offline: bool,
+    cache_dir: Option<PathBuf>,
 }
 impl ClientConfig {
-    pub fn offline(self) -> Self {
+    pub fn offline(self, offline: bool) -> Self {
         Self {
-            offline: true,
+            offline,
             ..self
         }
     }
 
-    pub fn build(self) -> Result<Client> {
+    pub fn cache_dir(self, cache_dir: PathBuf) -> Self {
+        Self {
+            cache_dir: Some(cache_dir),
+            ..self
+        }
+    }
+
+    pub fn new(self) -> Result<Client> {
         let url_api = Url::parse(&self.host.api)?;
+
+        if let Some(cache_dir) = &self.cache_dir {
+            std::fs::create_dir_all(cache_dir)?;
+        }
+
         let mut client = Client {
             config: self,
             url_api,
@@ -45,6 +58,12 @@ impl ClientConfig {
         }
 
         Ok(client)
+    }
+
+    fn cache_for_url(&self, url: &str) -> Option<PathBuf> {
+        self.cache_dir.as_ref().map(|dir| {
+            dir.join(url.replace('/', "%"))
+        })
     }
 }
 
@@ -60,6 +79,7 @@ impl Client {
         ClientConfig {
             host,
             offline: false,
+            cache_dir: None,
         }
     }
 
@@ -76,14 +96,14 @@ impl Client {
         self.helper = Some(helper.clone());
 
         let cache = self.cache.clone();
-        let host = self.config.host.clone();
+        let config = self.config.clone();
         let url_api = self.url_api.clone();
 
         std::thread::spawn(move || {
             run_helper(
                 cache,
                 helper,
-                host,
+                config,
                 url_api,
             );
         });
@@ -117,6 +137,23 @@ trait DynParser: std::fmt::Debug + Send + Sync {
     fn parse(&self, s: &str) -> Result<Box<dyn Any + Send + Sync>>;
 }
 
+fn load_from_cache(cache_file: &Path, parser: &dyn DynParser) -> Response<Box<dyn Any + Send + Sync>> {
+    if !cache_file.exists() {
+        return Response::Pending;
+    }
+
+    let result = || -> Result<_> {
+        let bytes = files::read_bytes(cache_file)?;
+        let string = str::from_utf8(&bytes)?;
+        Ok(Response::Ok(parser.parse(string)?))
+    }();
+
+    match result {
+    Ok(response) => response,
+    Err(err) => Response::Err(format!("Error reading cache file {}: {}", cache_file.display(), err)),
+    }
+}
+
 #[derive(Debug)]
 pub struct ClientFrame<'frame> {
     client: &'frame mut Client,
@@ -132,18 +169,34 @@ impl<'frame> ClientFrame<'frame> {
 
     fn get_impl(&self, url: &str, parser: Box<dyn DynParser>) -> Response<()> {
         let (request, response) = {
-            let cache = self.client.cache.cache.lock().unwrap();
-            if let Some(entry) = cache.get(url) {
-                if entry.parsed.is_some() {
-                    (false, Some(Response::Ok(())))
-                } else if let Some((_, response)) = &entry.last_refresh {
-                    (false, Some(response.clone()))
+            let mut cache = self.client.cache.cache.lock().unwrap();
+            let entry =
+                if let Some(entry) = cache.get(url) {
+                    entry
                 } else {
-                    panic!("Unexpected cache state");
-                }
-            } else {
-                (true, None)
-            }
+                    let response =
+                        if let Some(cache_file) = self.client.config.cache_for_url(url) {
+                            load_from_cache(cache_file.as_ref(), parser.as_ref())
+                        } else {
+                            Response::Pending
+                        };
+
+                        let (parsed, response) = response.split();
+                    cache.entry(url.to_string())
+                        .or_insert(CacheEntry {
+                            fetched: None,
+                            response: response.clone(),
+                            parsed,
+                        })
+                };
+
+            let response =
+                if matches!(entry.response, Response::Pending) {
+                    None
+                } else {
+                    Some(entry.response.clone())
+                };
+            (entry.fetched.is_none(), response)
         };
 
         if !request {
@@ -184,12 +237,12 @@ impl<'frame> ClientFrame<'frame> {
             }
 
             if let Some(entry) = self.client.cache.cache.lock().unwrap().get(url) {
-                if entry.parsed.is_some() {
-                    return Response::Ok(());
-                } else if let Some((_, response)) = &entry.last_refresh {
-                    return response.clone();
-                } else {
-                    panic!("Unexpected cache state");
+                if entry.fetched.is_some() {
+                    if entry.parsed.is_some() {
+                        return Response::Ok(());
+                    } else {
+                        return entry.response.clone();
+                    }
                 }
             }
         }
@@ -239,7 +292,7 @@ impl<'frame> ClientFrame<'frame> {
     ///
     /// The given function may be called from another thread (up to the start of the next frame)
     /// if one of the responses from this frame became stale.
-    pub fn notify<F>(self, f: F)
+    pub fn notify<F>(self, _f: F)
     where
         F: FnOnce() + Send + Sync,
     {
@@ -287,12 +340,31 @@ impl<T> Response<T> {
             Response::Err(err) => Response::Err(err),
         }
     }
+
+    pub fn split(self) -> (Option<T>, Response<()>) {
+        let mut data = None;
+        let response = self.map(|v| {
+            data = Some(v);
+            ()
+        });
+        (data, response)
+    }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct CacheEntry {
+    response: Response<()>,
+    fetched: Option<Instant>,
     parsed: Option<Box<dyn Any + Send + Sync>>,
-    last_refresh: Option<(Instant, Response<()>)>,
+}
+impl Default for CacheEntry {
+    fn default() -> Self {
+        Self {
+            response: Response::Pending,
+            fetched: None,
+            parsed: None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -331,7 +403,14 @@ impl HelperState {
     }
 }
 
-fn do_request(client: &reqwest::blocking::Client, url_api: &Url, url: &str, parser: Box<dyn DynParser>) -> Result<Response<Box<dyn Any + Send + Sync>>> {
+fn do_request(
+    client: &reqwest::blocking::Client,
+    url_api: &Url,
+    url: &str,
+    cache_file: Option<PathBuf>,
+    parser: Box<dyn DynParser>)
+-> Result<Response<Box<dyn Any + Send + Sync>>>
+{
     let url = url_api.join(url).unwrap();
     info!("Requesting {}", url);
 
@@ -340,7 +419,15 @@ fn do_request(client: &reqwest::blocking::Client, url_api: &Url, url: &str, pars
 
     let converted =
         if response.status().is_success() {
-            match parser.parse(&response.text()?) {
+            let text = response.text()?;
+
+            if let Some(cache_file) = cache_file {
+                if let Err(err) = std::fs::write(&cache_file, text.as_bytes()) {
+                    warn!("Error writing cache file {}: {}", cache_file.display(), err);
+                }
+            }
+
+            match parser.parse(&text) {
                 Ok(parsed) => Response::Ok(parsed),
                 Err(err) => Response::Err(format!("Error parsing response: {}", err)),
             }
@@ -353,12 +440,12 @@ fn do_request(client: &reqwest::blocking::Client, url_api: &Url, url: &str, pars
     Ok(converted)
 }
 
-fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, host: Host, url_api: Url) {
+fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, url_api: Url) {
     let result = || -> Result<()> {
         let mut default_headers = header::HeaderMap::new();
         default_headers.insert(
             header::AUTHORIZATION,
-            format!("Bearer {}", host.token).parse()?,
+            format!("Bearer {}", config.host.token).parse()?,
         );
         default_headers.insert(header::ACCEPT, "application/vnd.github+json".parse()?);
         default_headers.insert("X-GitHub-Api-Version", "2022-11-28".parse()?);
@@ -383,7 +470,7 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, host: Host, url_api: Url
             std::mem::drop(state);
 
             let response =
-                match do_request(&client, &url_api, &request.url, request.parser) {
+                match do_request(&client, &url_api, &request.url, config.cache_for_url(&request.url), request.parser) {
                     Ok(response) => response,
                     Err(err) => {
                         error!("Error processing request: {}", err);
@@ -399,16 +486,14 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, host: Host, url_api: Url
                 let mut cache = cache.cache.lock().unwrap();
                 let entry = cache.entry(request.url).or_default();
 
-                let mut parsed = None;
-                let response = response.map(|v| {
-                    parsed = Some(v);
-                    ()
-                });
+                let (parsed, response) = response.split();
 
                 if parsed.is_some() || matches!(response, Response::NotFound) {
                     entry.parsed = parsed;
                 }
-                entry.last_refresh = Some((Instant::now(), response));
+
+                entry.fetched = Some(Instant::now());
+                entry.response = response;
             }
 
             ctrl.response_notify.notify_all();
