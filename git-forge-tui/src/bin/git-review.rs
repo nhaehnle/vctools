@@ -4,31 +4,21 @@ use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
-use git_review::{connections, github, logview::add_log_view};
 use log::{trace, debug, info, warn, error, LevelFilter};
 use ratatui::prelude::*;
-use reqwest::header;
-use serde::Deserialize;
-use std::{borrow::Cow, fmt::Write, ops::{Range}};
 use utils::{try_forward, Result};
 use vctuik::{
     command,
     event::{Event, KeyCode, KeyEventKind, MouseEventKind},
-    pager::{self, PagerSource},
     prelude::*,
     section::with_section,
-    stringtools::StrScan,
-    theme
 };
 
-use git_core::{Ref, Repository};
-
-mod actions;
-mod diff_pager;
-mod review;
-
-use crate::{
-    review::{PullRequest, Review},
+use git_core::Repository;
+use git_forge_tui::{
+    github,
+    logview::add_log_view,
+    tui::{actions, PullRequest, Review},
 };
 
 #[derive(Parser, Debug)]
@@ -52,7 +42,7 @@ fn do_main() -> Result<()> {
     let mut args = Cli::parse();
 
     let dirs = ProjectDirs::from("experimental", "nhaehnle", "vctools").unwrap();
-    let config: connections::Config = {
+    let config: github::connections::Config = {
         let mut config = dirs.config_dir().to_path_buf();
         config.push("github.toml");
         try_forward(
@@ -65,7 +55,7 @@ fn do_main() -> Result<()> {
         )?
     };
 
-    let mut connections = connections::Connections::new(
+    let mut connections = github::connections::Connections::new(
         config,
         args.github_offline,
         Some(dirs.cache_dir().into()),

@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{borrow::Cow, ops::Range};
+use std::borrow::Cow;
 use std::fmt::Write;
 use std::result::Result as StdResult;
 
 use diff_modulo_base::git_core::Ref;
-use diff_modulo_base::{diff, git_core::{self, Repository}, tool::{self, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions}};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use diff_modulo_base::{git_core::Repository, tool::{self, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions}};
+use ratatui::text::Text;
 use regex::Regex;
 use vctuik::label::{add_multiline_label, add_text_label};
 use vctuik::{
     event::KeyCode, pager::{Pager, PagerState}, prelude::*, state::Builder
 };
 
-use git_review::connections::Connections;
+use crate::github::connections::Connections;
 
-use crate::{actions, diff_pager::DiffPagerSource};
+use super::{actions, diff_pager::DiffPagerSource};
 
 #[derive(Debug)]
 struct Inner {

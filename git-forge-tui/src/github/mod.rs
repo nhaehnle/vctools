@@ -9,6 +9,7 @@ use serde::{de::DeserializeOwned, Deserialize};
 use vctools_utils::{files, prelude::*};
 
 pub mod api;
+pub mod connections;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Host {

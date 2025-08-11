@@ -1,6 +1,6 @@
-# git-review
+# git-forge-tui
 
-A command-line tool for reviewing GitHub pull requests with intelligent diff
+Command-line tools for reviewing GitHub pull requests with intelligent diff
 visualization using "diff modulo base" technology.
 
 ## Overview
