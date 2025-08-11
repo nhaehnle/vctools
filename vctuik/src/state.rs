@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::{any::Any, borrow::Cow, collections::HashMap, ops::Range};
 
 use ratatui::{

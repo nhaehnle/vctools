@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::borrow::Cow;
 
 use ratatui::{text::{Span, Text}};

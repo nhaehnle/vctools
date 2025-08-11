@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::{borrow::Cow, hash::Hash};
 
 pub use tui_tree_widget::{Tree, TreeItem};

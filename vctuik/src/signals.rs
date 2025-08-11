@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::sync::{Arc, Condvar, Mutex};
 
 /// A `Dispatchable` is an object that handles an asynchronous trigger.

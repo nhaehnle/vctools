@@ -25,3 +25,30 @@ pub struct Review {
     pub user: User,
     pub commit_id: String,
 }
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct MinimalRepository {
+    pub id: u64,
+    pub node_id: String,
+    pub name: String,
+    pub owner: User,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct NotificationSubject {
+    pub title: String,
+    pub url: String,
+    #[serde(rename = "type")]
+    pub subject_type: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct NotificationThread {
+    pub id: String,
+    pub last_read_at: Option<String>,
+    pub reason: String,
+    pub repository: MinimalRepository,
+    pub subject: NotificationSubject,
+    pub unread: bool,
+    pub updated_at: String,
+}

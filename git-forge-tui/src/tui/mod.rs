@@ -2,6 +2,8 @@
 
 pub mod actions;
 mod diff_pager;
+mod inbox;
 mod review;
 
+pub use inbox::Inbox;
 pub use review::{PullRequest, Review};

@@ -3,8 +3,10 @@
 use clap::Parser;
 
 use diff_modulo_base::*;
+use directories::ProjectDirs;
 use log::{trace, debug, info, warn, error, LevelFilter};
 use ratatui::prelude::*;
+use utils::{try_forward, Result};
 use vctuik::{
     command,
     event::{Event, KeyCode, KeyEventKind, MouseEventKind},
@@ -18,21 +20,11 @@ use git_forge_tui::{
     github,
     load_config,
     logview::add_log_view,
-    tui::{actions, PullRequest, Review},
+    tui::{actions, Inbox, PullRequest, Review},
 };
 
 #[derive(Parser, Debug)]
 struct Cli {
-    remote: String,
-    pull: u64,
-
-    #[clap(flatten)]
-    dmb_options: tool::GitDiffModuloBaseOptions,
-
-    /// Behave as if run from the given path.
-    #[clap(short = 'C', default_value = ".")]
-    path: std::path::PathBuf,
-
     /// Do not access the GitHub API.
     #[clap(long)]
     github_offline: bool,
@@ -46,15 +38,6 @@ fn do_main() -> Result<()> {
         args.github_offline,
         Some(get_project_dirs().cache_dir().into()),
     );
-
-    //    println!("{:?}", &config);
-    //    println!("{}", dirs.config_dir().display());
-
-    let pr = PullRequest {
-        repository: Repository::new(&args.path),
-        remote: args.remote.clone(),
-        id: args.pull,
-    };
 
     tui_logger::init_logger(LevelFilter::Debug)?;
     tui_logger::set_default_level(LevelFilter::Debug);
@@ -85,10 +68,8 @@ fn do_main() -> Result<()> {
             }
         }
 
-        with_section(builder, "Review", |builder| {
-            Review::new(&pr)
-                .maybe_search(search.as_ref())
-                .options(&mut args.dmb_options)
+        with_section(builder, "Inbox", |builder| {
+            Inbox::new()
                 .build(builder, &mut connections);
         });
 

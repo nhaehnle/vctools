@@ -2,9 +2,17 @@
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub trait ResultExt<T> {
+    fn as_ref_ok(&self) -> Result<&T>;
     fn as_mut_ok(&mut self) -> Result<&mut T>;
 }
 impl<T> ResultExt<T> for Result<T> {
+    fn as_ref_ok(&self) -> Result<&T> {
+        match self {
+            Ok(value) => Ok(value),
+            Err(err) => Err(err.to_string())?,
+        }
+    }
+
     fn as_mut_ok(&mut self) -> Result<&mut T> {
         match self {
             Ok(value) => Ok(value),

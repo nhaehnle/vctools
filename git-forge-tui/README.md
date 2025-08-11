@@ -53,6 +53,16 @@ Git working directories.
 For GitHub Enterprise installations, the API URL is typically of the form
 https://ghe.example/api/v3.
 
+Register repositories (only required for `git-inbox`) at `~/.config/vctools/repositories.toml`:
+
+```toml
+[[repositories]]
+path=/path/to/first/repository
+
+[[repositories]]
+path=/path/to/second/repository
+```
+
 ### GitHub Token Setup
 
 1. Go to GitHub Settings → Developer settings → Personal access tokens

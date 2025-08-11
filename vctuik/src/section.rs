@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use ratatui::{crossterm::event::KeyCode, layout::{Alignment, Rect}, widgets::{block::Title, Block, BorderType, Borders}};
 
 use crate::{

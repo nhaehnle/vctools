@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 ///! This crate contains internals of vctuik that make use of `unsafe`.
 ///!
 ///! The APIs exported by this crate are safe to use.

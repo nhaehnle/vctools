@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{any::Any, borrow::Cow, collections::HashMap, ops::DerefMut, path::{Path, PathBuf}, sync::{Arc, Condvar, Mutex}, time::{Duration, Instant}};
+use std::{any::Any, borrow::Cow, collections::HashMap, ops::DerefMut, path::{Path, PathBuf}, sync::{Arc, Condvar, Mutex}, time::Instant};
 
 use itertools::Itertools;
-use log::{trace, debug, info, warn, error};
+use log::{debug, info, warn, error};
 use reqwest::{header, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize};
 use vctools_utils::{files, prelude::*};
@@ -319,6 +319,10 @@ impl<'frame> ClientRef<'frame> {
 
     pub fn reviews<'a>(&self, organization: impl Into<Cow<'a, str>>, gh_repo: impl Into<Cow<'a, str>>, pull: u64) -> Response<Vec<api::Review>> {
         self.get(format!("repos/{}/{}/pulls/{}/reviews", organization.into(), gh_repo.into(), pull))
+    }
+
+    pub fn notifications<'a>(&self) -> Response<Vec<api::NotificationThread>> {
+        self.get("notifications")
     }
 }
 

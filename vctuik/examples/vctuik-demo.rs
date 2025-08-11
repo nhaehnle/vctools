@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use ratatui::widgets::Block;
 use tui_tree_widget::{Tree, TreeItem};
 

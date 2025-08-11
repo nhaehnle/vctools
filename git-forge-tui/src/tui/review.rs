@@ -42,7 +42,7 @@ impl ReviewState {
                 Err(format!("cannot parse {url} as a GitHub repository"))?
             };
 
-            let client = connections.client(hostname.to_owned())?;
+            let mut client = connections.client(hostname.to_owned())?.borrow_mut();
             let client_ref = client.access();
             let pull = client_ref.pull(organization, gh_repo, pr.id).ok()?;
             let reviews = client_ref.reviews(organization, gh_repo, pr.id).ok()?;

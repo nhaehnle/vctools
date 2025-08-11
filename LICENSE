@@ -1,4 +1,37 @@
-Copyright 2022 Nicolai Hähnle
+This software is covered by a mix of MIT and GPLv3 or later licenses.
+
+The following components are covered by MIT:
+
+* diff-modulo-base
+* vctools-utils
+
+Everything else is covered by GPLv3 or later
+
+Please refer to the headers of each source file if in doubt.
+
+----------------
+
+Portions of this software are:
+
+Copyright 2025 Nicolai Hähnle
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+----------------
+
+Portions of this software are:
+
+Copyright 2022, 2025 Nicolai Hähnle
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in

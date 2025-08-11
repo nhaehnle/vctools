@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::{any::Any, collections::{hash_map, HashMap}, hash::Hash};
 
 pub struct Store<K> {
