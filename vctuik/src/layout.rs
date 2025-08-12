@@ -89,6 +89,10 @@ impl<Id: Eq + Hash> LayoutCache<Id> {
         self.items.clear();
     }
 
+    pub fn get(&self, id: &Id) -> Option<u16> {
+        self.items.get(id).map(|item| item.size)
+    }
+
     pub fn save_persistent<F>(&mut self, prev: LayoutCache<Id>, mut lookup_new_id: F)
     where
         F: FnMut(Id) -> Id,
@@ -176,6 +180,7 @@ impl<Id: Eq + Hash> LayoutEngine<Id> {
         self.drags.push((idx, delta))
     }
 
+    /// Returns (layout_changed, total_size).
     pub fn finish(mut self, constraint: Constraint1D, cache: &mut LayoutCache<Id>) -> (bool, u16) {
         // Apply drags
         self.drags.sort();

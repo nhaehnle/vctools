@@ -10,7 +10,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 diff-modulo-base = { path = "../diff-modulo-base" }
 vctools-utils = { path = "../vctools-utils" }
-vctuik = { path = "../vctuik", features = ["tree-widget"] }
+vctuik = { path = "../vctuik" }
 
 clap = { version = "3.2", features = ["derive"] }
 directories = "6.0.0"

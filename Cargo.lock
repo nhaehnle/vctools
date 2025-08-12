@@ -2314,7 +2314,6 @@ dependencies = [
  "ratatui",
  "regex",
  "tui-input",
- "tui-tree-widget",
  "unicode-segmentation",
  "vctools-utils",
  "vctuik-unsafe-internals",

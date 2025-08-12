@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use ratatui::widgets::Block;
-use tui_tree_widget::{Tree, TreeItem};
 
 use vctuik::{
-    check_box::add_check_box, section::with_section, event::KeyCode, label::add_label,
-    input::Input,
-    prelude::*,
-    tree::TreeBuild,
+    check_box::add_check_box, event::KeyCode, input::Input, label::add_label, layout::Constraint1D, prelude::*, section::with_section, table::{self, simple_table}
 };
 
 fn main() -> Result<()> {
@@ -20,16 +16,7 @@ fn main() -> Result<()> {
     let mut name: String = "world".into();
     let mut last_event = None;
 
-    let items = vec![
-        TreeItem::new(0, "Root", vec![
-            TreeItem::new_leaf(0, "Child 1"),
-            TreeItem::new_leaf(1, "Child 2"),
-            TreeItem::new(2, "Child 3", vec![
-                TreeItem::new_leaf(0, "Grandchild 1"),
-                TreeItem::new_leaf(1, "Grandchild 2"),
-            ]).unwrap(),
-        ]).unwrap()
-    ];
+    let mut table_source_state = simple_table::SourceState::new();
 
     terminal.run(|builder| {
         // Clear the window
@@ -75,8 +62,40 @@ fn main() -> Result<()> {
         });
 
         with_section(builder, "Tree", |builder| {
-            Tree::new(&items).unwrap()
-                .build(builder, "tree");
+            let mut source_builder = table_source_state.build();
+
+            let id_style = source_builder.add_style(builder.theme().text(builder.theme_context()).header2);
+
+            // The way in which items are added is intentionally interleaved in
+            // a slightly weird way, to demonstrate the flexibility of the
+            // `simple_table` API.
+            let tl1 = source_builder.add(0, 0).raw(0, "Top-level 1").id();
+            let tl2 = source_builder.add(0, 1).raw(0, "Top-level 2").id();
+            let child1 = source_builder.add(tl1, 0).raw(0, "Child 1").id();
+            source_builder.add(child1, 0).raw(0, "Grandchild 1");
+            let child2 = source_builder.add(tl1, 1).raw(0, "Child 2").id();
+            source_builder.add(child1, 1).raw(0, "Grandchild 2");
+            source_builder.add(tl1, 2).raw(0, "Child 3");
+
+            for idx in 0..25 {
+                source_builder.add(tl2, idx)
+                    .raw(0, format!("Child {idx}"))
+                    .styled(1, format!("{idx}"), id_style);
+                source_builder.add(child2, idx)
+                    .raw(0, format!("Child {idx}"))
+                    .styled(1, format!("{idx}"), id_style);
+            }
+
+            let columns = vec![
+                table::Column::new(0, "Name", Constraint1D::new_min(10)),
+                table::Column::new(1, "ID", Constraint1D::new(5, 10)),
+            ];
+
+            table::Table::new(&source_builder.finish())
+                .id("tree")
+                .columns(columns)
+                .show_headers(true)
+                .build(builder);
         });
 
         add_label(builder, "Press 'q' to quit");

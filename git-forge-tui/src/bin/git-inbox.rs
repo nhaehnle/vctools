@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::time::{Duration, Instant};
+
 use clap::Parser;
 
 use diff_modulo_base::*;
 use directories::ProjectDirs;
 use log::{trace, debug, info, warn, error, LevelFilter};
-use ratatui::prelude::*;
+use ratatui::{prelude::*, widgets::Block};
 use utils::{try_forward, Result};
 use vctuik::{
     command,
@@ -56,7 +58,7 @@ fn do_main() -> Result<()> {
     let mut command: Option<String> = None;
 
     terminal.run(|builder| {
-        connections.start_frame(None);
+        connections.start_frame(Some(Instant::now() + Duration::from_millis(150)));
 
         if command.is_none() {
             if match builder.peek_event() {
@@ -67,6 +69,11 @@ fn do_main() -> Result<()> {
                 error = None;
             }
         }
+
+        // Clear the window
+        let frame_area = builder.frame().area();
+        let block = Block::new().style(builder.theme().pane_background);
+        builder.frame().render_widget(block, frame_area);
 
         with_section(builder, "Inbox", |builder| {
             Inbox::new()
