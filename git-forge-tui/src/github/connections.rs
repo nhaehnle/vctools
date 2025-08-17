@@ -4,6 +4,7 @@ use std::{cell::RefCell, collections::HashMap, path::PathBuf, time::Instant};
 
 use serde::Deserialize;
 use vctools_utils::prelude::*;
+use vctuik::signals::MergeWakeupSignal;
 
 use crate::github;
 
@@ -24,15 +25,14 @@ struct Clients {
     have_all_clients: bool,
     clients: HashMap<String, Result<RefCell<github::Client>>>,
 }
-impl Default for Clients {
-    fn default() -> Self {
+impl Clients {
+    fn new() -> Self {
         Self {
             have_all_clients: false,
             clients: HashMap::new(),
         }
     }
-}
-impl Clients {
+
     pub fn client(
         &mut self,
         config: &LiveConfig,
@@ -88,7 +88,7 @@ impl Connections {
                 offline,
                 cache_dir,
             },
-            clients: Clients::default(),
+            clients: Clients::new(),
             frame: None,
         }
     }
@@ -108,13 +108,13 @@ impl Connections {
         }
     }
 
-    pub fn end_frame(&mut self) {
+    pub fn end_frame(&mut self, notify: Option<&MergeWakeupSignal>) {
         assert!(self.frame.is_some());
         self.frame = None;
 
         for (_, client) in &mut self.clients.clients {
             if let Some(client) = client.as_mut().ok() {
-                client.borrow_mut().end_frame();
+                client.borrow_mut().end_frame(notify);
             }
         }
     }

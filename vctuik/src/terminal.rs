@@ -6,14 +6,14 @@ use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
         execute,
-    }, layout::Position, widgets::Clear, DefaultTerminal
+    }, layout::Position, widgets::Clear, DefaultTerminal,
 };
 
 use crate::{
     event::{self, Event, EventExt},
     layout::{self, Constraint1D},
     prelude::*,
-    signals::{self, Dispatch, Receiver},
+    signals::{self, Dispatch, MergeWakeupWait, Receiver},
     state::{BuildStore, Builder, Store},
     theme::Theme,
 };
@@ -21,25 +21,26 @@ use crate::{
 struct Events {
     recv: Receiver<Result<Event>>,
     injected: Vec<Box<dyn Any + Send + Sync>>,
+    wakeup_waits: Vec<MergeWakeupWait>,
 }
 impl Events {
     fn new() -> Self {
         let (signal, recv) = signals::make_channel();
 
-        std::thread::spawn(
-            move || {
-                if let Err(err) = try_forward(|| -> Result<()> {
-                    loop {
-                        signal.signal(Ok(event::read()?));
-                    }
-                }, || "") {
-                    signal.signal(Err(err));
+        std::thread::spawn(move || {
+            if let Err(err) = try_forward(|| -> Result<()> {
+                loop {
+                    signal.signal(Ok(event::read()?));
                 }
-            });
+            }, || "") {
+                signal.signal(Err(err));
+            }
+        });
         
         Self {
             recv,
             injected: Vec::new(),
+            wakeup_waits: Vec::new(),
         }
     }
 
@@ -61,6 +62,9 @@ impl Events {
                 }
             }
         }));
+        for wait in &mut self.wakeup_waits {
+            dispatch.add(wait.dispatch());
+        }
         dispatch.poll(wait);
 
         if let Some(err) = the_err.take() {
@@ -106,6 +110,13 @@ impl Terminal {
         if let Err(err) = execute!(stdout, DisableMouseCapture) {
             eprintln!("Failed to disable mouse capture: {err}");
         }
+    }
+
+    /// Add a waiter part of a merge wakeup pair.
+    ///
+    /// The terminal will refresh when the merge wakeup is signaled.
+    pub fn add_merge_wakeup(&mut self, wakeup_wait: MergeWakeupWait) {
+        self.events.wakeup_waits.push(wakeup_wait);
     }
 
     /// Run a default event loop until f returns false.

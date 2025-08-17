@@ -98,6 +98,7 @@ impl<'source> GenericSourceBuilder<'source> {
                 if self.next_id < self.old_ids[self.old_ids_idx] {
                     break;
                 }
+                self.next_id += 1;
                 self.old_ids_idx += 1;
             }
 

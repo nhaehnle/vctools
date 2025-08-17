@@ -2,10 +2,11 @@
 
 mod config;
 pub mod github;
+pub mod gitservice;
 pub mod logview;
 pub mod tui;
 
-pub use config::{get_project_dirs,load_config};
+pub use config::{get_project_dirs, load_config};
 
 use diff_modulo_base::git_core;
 use vctools_utils::prelude::*;

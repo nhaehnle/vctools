@@ -105,14 +105,14 @@ pub struct Repository {
     pub mock_data_path: Option<std::path::PathBuf>,
 }
 impl Repository {
-    pub fn new<'a>(path: std::path::PathBuf) -> Self {
+    pub fn new(path: std::path::PathBuf) -> Self {
         Self {
             path,
             mock_data_path: None,
         }
     }
 
-    fn exec_with_stderr<'a, I, A>(&self, subcommand: &str, args: I) -> Result<(Vec<u8>, Vec<u8>)>
+    fn exec_with_stderr<I, A>(&self, subcommand: &str, args: I) -> Result<(Vec<u8>, Vec<u8>)>
     where
         I: Iterator<Item = A>,
         A: AsRef<std::ffi::OsStr>,
@@ -189,7 +189,7 @@ impl Repository {
         Ok((output.stdout, output.stderr))
     }
 
-    fn exec<'a, I, A>(&self, subcommand: &str, args: I) -> Result<Vec<u8>>
+    fn exec<I, A>(&self, subcommand: &str, args: I) -> Result<Vec<u8>>
     where
         I: Iterator<Item = A>,
         A: AsRef<std::ffi::OsStr>,
@@ -204,6 +204,11 @@ impl Repository {
         }
 
         Ok(stdout)
+    }
+
+    fn exec_noarg(&self, subcommand: &str) -> Result<Vec<u8>> {
+        let empty: Vec<String> = vec![];
+        self.exec(subcommand, empty.into_iter())
     }
 
     pub fn get_url(&self, remote: &str) -> Result<Url> {
@@ -232,6 +237,22 @@ impl Repository {
                 Ok(Url::Url(reqwest::Url::parse(&url)?))
             },
             || format!("failed to query URL for remote {}", remote),
+        )
+    }
+
+    pub fn get_remotes(&self) -> Result<Vec<(String, Url)>> {
+        try_forward(|| -> Result<Vec<(String, Url)>> {
+                let output = String::from_utf8(self.exec_noarg("remote")?)?;
+                let remotes: Result<Vec<_>> =
+                    output.lines()
+                        .map(|remote| -> Result<(String, Url)> {
+                            let url = self.get_url(&remote)?;
+                            Ok((remote.to_string(), url))
+                        })
+                        .collect();
+                remotes
+            },
+            || format!("failed to query remotes for {}", self.path.display()),
         )
     }
 
@@ -298,6 +319,16 @@ impl Repository {
                 Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
             },
             || "failed to obtain parsed revision",
+        )
+    }
+
+    pub fn prefetch(&self, remote: &str) -> Result<()> {
+        try_forward(
+            || -> Result<()> {
+                self.exec_with_stderr("fetch", ["--prefetch", remote].iter())?;
+                Ok(())
+            },
+            || format!("failed to prefetch remote {}", remote),
         )
     }
 

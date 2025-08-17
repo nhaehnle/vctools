@@ -117,17 +117,94 @@ pub fn make_channel<Item>() -> (Sender<Item>, Receiver<Item>) {
     (Sender { channel: channel.clone() }, Receiver { channel })
 }
 
+#[derive(Debug)]
+struct MergeWakeupInner {
+    requested: bool,
+    waker: Option<Waker>,
+}
+
+/// A handle that allows requesting a wakeup from a waiting `Dispatch::poll`
+/// from any thread.
+///
+/// You can obtain such a handle from `make_merge_wakeup()`.
+///
+/// After a `Dispatch::poll` has seen a `signal()`, a `Dispatch::poll` will not
+/// be woken up by the "merge wakeup" until before `signal()` is called again.
+/// That is, multiple `signal()` calls between polls are merged into a single
+/// wakeup.
+#[derive(Debug, Clone)]
+pub struct MergeWakeupSignal {
+    inner: Arc<Mutex<MergeWakeupInner>>,
+}
+impl MergeWakeupSignal {
+    pub fn signal(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.requested = true;
+        if let Some(waker) = inner.waker.take() {
+            waker.wake();
+        }
+    }
+}
+
+/// The waiter corresponding to a `MergeWakeupSignal`.
+///
+/// Add this to a `Dispatch` to allow it to be woken up by the signal.
+#[derive(Debug)]
+pub struct MergeWakeupWait {
+    inner: Arc<Mutex<MergeWakeupInner>>,
+}
+impl MergeWakeupWait {
+    pub fn dispatch(&mut self) -> impl Dispatchable + '_ {
+        struct Helper<'slf> {
+            refresh: &'slf MergeWakeupWait,
+        }
+        impl<'slf> Dispatchable for Helper<'slf> {
+            fn poll(&mut self, waker: &mut Option<Waker>) {
+                let mut inner = self.refresh.inner.lock().unwrap();
+                if inner.requested {
+                    // Refresh was requested. We don't actually do anything here
+                    // expect to clear the request flag. The fact that we don't
+                    // take the waker signals to the dispatcher that it should
+                    // stop waiting.
+                    inner.requested = false;
+                } else {
+                    // No refresh was requested; store the waker so we can wake
+                    // up later when one is requested from a separate thread.
+                    inner.waker = waker.take();
+                }
+            }
+        }
+        Helper { refresh: self }
+    }
+}
+
+/// Make a pair of `MergeWakeupSignal` and `MergeWakeupWait`.
+pub fn make_merge_wakeup() -> (MergeWakeupSignal, MergeWakeupWait) {
+    let signal = MergeWakeupSignal {
+        inner: Arc::new(Mutex::new(MergeWakeupInner {
+            requested: false,
+            waker: None,
+        })),
+    };
+    let wait = MergeWakeupWait {
+        inner: signal.inner.clone(),
+    };
+    (signal, wait)
+}
+
+#[derive(Debug)]
 struct Wakeups {
     condvar: Condvar,
     woken: Mutex<Vec<usize>>,
 }
 
+#[derive(Debug)]
 pub struct Waker {
     wakeups: Arc<Wakeups>,
     key: usize,
 }
 impl Waker {
-    pub fn wake(&self) {
+    pub fn wake(self) {
         let mut woken = self.wakeups.woken.lock().unwrap();
         woken.push(self.key);
         self.wakeups.condvar.notify_all();

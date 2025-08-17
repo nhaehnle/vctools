@@ -11,7 +11,7 @@ use vctuik::{
     command,
     event::{Event, KeyCode, KeyEventKind, MouseEventKind},
     prelude::*,
-    section::with_section,
+    section::with_section, signals,
 };
 
 use git_forge_tui::{
@@ -67,6 +67,9 @@ fn do_main() -> Result<()> {
     let mut error: Option<String> = None;
     let mut command: Option<String> = None;
 
+    let (refresh_signal, refresh_wait) = signals::make_merge_wakeup();
+    terminal.add_merge_wakeup(refresh_wait);
+
     terminal.run(|builder| {
         connections.start_frame(Some(builder.start_frame() + Duration::from_millis(150)));
 
@@ -93,7 +96,7 @@ fn do_main() -> Result<()> {
             });
         }
 
-        connections.end_frame();
+        connections.end_frame(Some(&refresh_signal));
 
         let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
 

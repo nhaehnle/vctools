@@ -7,6 +7,7 @@ use log::{debug, info, warn, error};
 use reqwest::{header, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize};
 use vctools_utils::{files, prelude::*};
+use vctuik::signals::MergeWakeupSignal;
 
 pub mod api;
 pub mod connections;
@@ -112,6 +113,8 @@ impl Client {
                 running: true,
                 frame_requests: Vec::new(),
                 backlog_requests: Vec::new(),
+                response_signal: ResponseSignal::Disabled,
+                response_callback: None,
             }),
         });
         self.helper = Some(helper.clone());
@@ -142,6 +145,14 @@ impl Client {
                 WaitPolicy::Wait
             }
         );
+
+        if let Some(helper) = &self.helper {
+            let mut state = helper.state.lock().unwrap();
+            let state = state.deref_mut();
+            state.backlog_requests.append(&mut state.frame_requests);
+            state.response_signal = ResponseSignal::Disabled;
+            state.response_callback = None;
+        }
     }
 
     pub fn access(&mut self) -> ClientRef {
@@ -160,16 +171,20 @@ impl Client {
         }
     }
 
-    pub fn end_frame(&mut self) {
+    pub fn end_frame(&mut self, notify: Option<&MergeWakeupSignal>) {
         assert!(self.frame.is_some());
 
-        if let Some(helper) = &self.helper {
-            let mut state = helper.state.lock().unwrap();
-            let state = state.deref_mut();
-            state.backlog_requests.append(&mut state.frame_requests);
-        }
-
         self.frame = None;
+
+        if let Some((helper, notify)) = self.helper.as_ref().zip(notify) {
+            let mut state = helper.state.lock().unwrap();
+            if state.response_signal == ResponseSignal::Pending {
+                notify.signal();
+                state.response_signal = ResponseSignal::Signaled;
+            } else if !state.frame_requests.is_empty() {
+                state.response_callback = Some(notify.clone());
+            }
+        }
     }
 }
 
@@ -214,7 +229,7 @@ impl<'frame> ClientRef<'frame> {
                             Response::Pending
                         };
 
-                        let (parsed, response) = response.split();
+                    let (parsed, response) = response.split();
                     cache.entry(url.to_string())
                         .or_insert(CacheEntry {
                             fetched: None,
@@ -245,7 +260,7 @@ impl<'frame> ClientRef<'frame> {
             return response.unwrap_or(Response::Offline);
         }
 
-        state.add_request(url.to_string(), parser);
+        state.add_request(url.to_string(), parser, matches!(self.wait_policy, WaitPolicy::Prefetch));
         helper.helper_wakeup.notify_all();
 
         loop {
@@ -261,6 +276,9 @@ impl<'frame> ClientRef<'frame> {
                     let timed_out;
                     (state, timed_out) = helper.response_notify.wait_timeout(state, deadline - Instant::now()).unwrap();
                     if timed_out.timed_out() {
+                        if state.response_signal == ResponseSignal::Disabled {
+                            state.response_signal = ResponseSignal::Requested;
+                        }
                         return response.unwrap_or(Response::Pending);
                     }
                 }
@@ -402,21 +420,57 @@ struct Request {
     parser: Box<dyn DynParser>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseSignal {
+    /// No signal required when a response is received.
+    Disabled,
+
+    /// Should signal when a response is received.
+    Requested,
+
+    /// Response has been received and should be signaled, but no callback has
+    /// been registered yet.
+    Pending,
+
+    /// Response has been received and signaled.
+    Signaled,
+}
+
 struct HelperState {
     running: bool,
     frame_requests: Vec<Request>,
     backlog_requests: Vec<Request>,
+    response_signal: ResponseSignal,
+    response_callback: Option<MergeWakeupSignal>,
+}
+impl std::fmt::Debug for HelperState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HelperState")
+            .field("running", &self.running)
+            .field("frame_requests", &self.frame_requests.len())
+            .field("backlog_requests", &self.backlog_requests.len())
+            .field("response_signal", &self.response_signal)
+            .field("response_callback", if self.response_callback.is_some() { &"Some(...)" } else { &"None" })
+            .finish()
+    }
 }
 impl HelperState {
-    fn add_request(&mut self, url: String, parser: Box<dyn DynParser>) {
+    fn add_request(&mut self, url: String, parser: Box<dyn DynParser>, prefetch: bool) {
         if let Some((idx, _)) = self.backlog_requests.iter().find_position(|r| r.url == url) {
+            if prefetch {
+                return;
+            }
+
             self.backlog_requests.remove(idx);
         } else if self.frame_requests.iter().any(|r| r.url == url) {
             return;
         }
 
-        self.frame_requests.push(Request { url, parser });
+        if prefetch {
+            self.backlog_requests.push(Request { url, parser });
+        } else {
+            self.frame_requests.push(Request { url, parser });
+        }
     }
 }
 
@@ -474,11 +528,11 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
 
         let mut state = ctrl.state.lock().unwrap();
         while state.running {
-            let request =
+            let (request, is_backlog) =
                 if !state.frame_requests.is_empty() {
-                    state.frame_requests.drain(0..1).next()
+                    (state.frame_requests.drain(0..1).next(), false)
                 } else {
-                    state.backlog_requests.pop()
+                    (state.backlog_requests.pop(), true)
                 };
             let Some(request) = request else {
                 state = ctrl.helper_wakeup.wait(state).unwrap();
@@ -511,6 +565,15 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
 
                 entry.fetched = Some(Instant::now());
                 entry.response = response;
+            }
+
+            if !is_backlog && state.response_signal == ResponseSignal::Requested {
+                if let Some(callback) = &state.response_callback {
+                    callback.signal();
+                    state.response_signal = ResponseSignal::Signaled;
+                } else {
+                    state.response_signal = ResponseSignal::Pending;
+                }
             }
 
             ctrl.response_notify.notify_all();
