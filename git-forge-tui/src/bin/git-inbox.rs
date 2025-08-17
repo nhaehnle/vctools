@@ -22,7 +22,7 @@ use git_forge_tui::{
     github,
     load_config,
     logview::add_log_view,
-    tui::{actions, Inbox, PullRequest, Review},
+    tui::{actions, Inbox, Review},
 };
 
 #[derive(Parser, Debug)]
@@ -58,7 +58,7 @@ fn do_main() -> Result<()> {
     let mut command: Option<String> = None;
 
     terminal.run(|builder| {
-        connections.start_frame(Some(Instant::now() + Duration::from_millis(150)));
+        connections.start_frame(Some(builder.start_frame() + Duration::from_millis(150)));
 
         if command.is_none() {
             if match builder.peek_event() {

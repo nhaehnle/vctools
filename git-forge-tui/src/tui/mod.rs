@@ -6,4 +6,4 @@ mod inbox;
 mod review;
 
 pub use inbox::Inbox;
-pub use review::{PullRequest, Review};
+pub use review::Review;

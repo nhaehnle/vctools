@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{any::Any, borrow::Cow, collections::HashMap, ops::Range};
+use std::{any::Any, borrow::Cow, collections::HashMap, ops::Range, time::Instant};
 
 use ratatui::{
     layout::{Position, Rect}, style::Style, widgets::{Block, Clear}, Frame
@@ -163,11 +163,13 @@ pub(crate) struct BuildStore<'store, 'frame> {
     pub(crate) injected: Vec<Box<dyn Any + Send + Sync>>,
     pub(crate) need_refresh: bool,
     focus_action: FocusAction,
+    start_frame: Instant,
 }
 impl<'store, 'frame> BuildStore<'store, 'frame> {
     pub(crate) fn new(state: &'store mut Store, theme: &'store Theme,
                       frame: &'store mut Frame<'frame>,
-                      event: Option<EventExt>) -> Self {
+                      event: Option<EventExt>,
+                      start_frame: Instant) -> Self {
         let ids = &mut state.ids;
         let layout = &mut state.layout;
         let state_builder = state::Builder::new(&mut state.state);
@@ -183,6 +185,7 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
             injected: Vec::new(),
             need_refresh: false,
             focus_action: FocusAction::None,
+            start_frame,
         }
     }
 
@@ -472,6 +475,10 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
 
     pub fn frame<'slf>(&'slf mut self) -> &'slf mut Frame<'frame> {
         &mut self.store.frame
+    }
+
+    pub fn start_frame(&self) -> Instant {
+        self.store.start_frame
     }
 
     pub fn theme_context(&self) -> Context {

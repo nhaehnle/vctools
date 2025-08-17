@@ -2,11 +2,10 @@
 
 ## Table widget
 
-* Drag to resize columns
+* Drag to resize columns / be smarter about column sizes
 
 ## Inbox
 
-* Integrate the new Table widget, remove the old tui_tree integration
 * Display notifications with extra columns (repository, author)
 * Load more pages of notifications
 * Show PRs based on selection

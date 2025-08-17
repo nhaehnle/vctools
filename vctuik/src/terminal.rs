@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::any::Any;
+use std::{any::Any, time::Instant};
 
 use ratatui::{
     crossterm::{
@@ -115,6 +115,7 @@ impl Terminal {
     {
         let mut the_result = Ok(());
         let mut the_event: Option<EventExt> = None;
+        let mut start_frame = Instant::now();
         let mut running = true;
 
         loop {
@@ -123,7 +124,13 @@ impl Terminal {
                     loop {
                         // Process the UI once.
                         let area = frame.area();
-                        let mut build_store = BuildStore::new(&mut self.store, &self.theme, frame, the_event.take());
+                        let mut build_store = BuildStore::new(
+                            &mut self.store,
+                            &self.theme,
+                            frame,
+                            the_event.take(),
+                            start_frame,
+                        );
 
                         {
                             let mut layout = layout::LayoutEngine::new();
@@ -175,6 +182,7 @@ impl Terminal {
             }
 
             the_event = self.events.get(true)?;
+            start_frame = Instant::now();
         }
 
         the_result

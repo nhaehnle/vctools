@@ -23,7 +23,7 @@ fn do_main() -> Result<()> {
     let mut cli = cli::Cli::new(args.cli);
     let out = cli.stream();
 
-    let repo = git_core::Repository::new(&args.path);
+    let repo = git_core::Repository::new(args.path);
 
     let mut writer = diff_color::Writer::new();
     tool::git_diff_modulo_base(&args.gdmb, &repo, &mut writer)?;

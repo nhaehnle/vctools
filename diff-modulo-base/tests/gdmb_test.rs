@@ -41,7 +41,7 @@ fn dmb_test() -> Result<()> {
         println!("{:?}", &args);
         let args = tool::GitDiffModuloBaseArgs::try_parse_from(args)?;
 
-        let mut repo = git_core::Repository::new(&std::path::PathBuf::from("."));
+        let mut repo = git_core::Repository::new(std::path::PathBuf::from("."));
         repo.mock_data_path = Some(path);
 
         let mut out_buffer: Vec<u8> = Vec::new();

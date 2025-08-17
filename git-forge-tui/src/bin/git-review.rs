@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::time::Duration;
+
 use clap::Parser;
 
 use diff_modulo_base::*;
@@ -12,13 +14,8 @@ use vctuik::{
     section::with_section,
 };
 
-use git_core::Repository;
 use git_forge_tui::{
-    get_project_dirs,
-    github,
-    load_config,
-    logview::add_log_view,
-    tui::{actions, PullRequest, Review},
+    get_project_dirs, github, load_config, logview::add_log_view, tui::{actions, Review}, GitRepository, PullRequest
 };
 
 #[derive(Parser, Debug)]
@@ -50,11 +47,9 @@ fn do_main() -> Result<()> {
     //    println!("{:?}", &config);
     //    println!("{}", dirs.config_dir().display());
 
-    let pr = PullRequest {
-        repository: Repository::new(&args.path),
-        remote: args.remote.clone(),
-        id: args.pull,
-    };
+    let git_repository = GitRepository::new(args.path, args.remote);
+    let pr = PullRequest::from_git(git_repository, args.pull);
+    let pr = pr.complete(connections.hosts())?;
 
     tui_logger::init_logger(LevelFilter::Debug)?;
     tui_logger::set_default_level(LevelFilter::Debug);
@@ -73,7 +68,7 @@ fn do_main() -> Result<()> {
     let mut command: Option<String> = None;
 
     terminal.run(|builder| {
-        connections.start_frame(None);
+        connections.start_frame(Some(builder.start_frame() + Duration::from_millis(150)));
 
         if command.is_none() {
             if match builder.peek_event() {

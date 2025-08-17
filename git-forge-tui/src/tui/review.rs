@@ -5,7 +5,7 @@ use std::fmt::Write;
 use std::result::Result as StdResult;
 
 use diff_modulo_base::git_core::Ref;
-use diff_modulo_base::{git_core::Repository, tool::{self, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions}};
+use diff_modulo_base::tool::{self, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions};
 use ratatui::text::Text;
 use regex::Regex;
 use vctuik::label::{add_multiline_label, add_text_label};
@@ -13,13 +13,13 @@ use vctuik::{
     event::KeyCode, pager::{Pager, PagerState}, prelude::*, state::Builder
 };
 
-use crate::github::connections::Connections;
+use crate::{github::connections::Connections, PullRequest, CompletePullRequest};
 
 use super::{actions, diff_pager::DiffPagerSource};
 
 #[derive(Debug)]
 struct Inner {
-    pr: PullRequest,
+    pr: CompletePullRequest,
     header: String,
     dmb_args: Option<GitDiffModuloBaseArgs>,
     pager: StdResult<(DiffPagerSource, PagerState), String>,
@@ -31,25 +31,16 @@ struct ReviewState {
     inner: Option<Inner>,
 }
 impl ReviewState {
-    fn update(&mut self, connections: &mut Connections, pr: GCow<'_, PullRequest>, options: GitDiffModuloBaseOptions) {
+    fn update(&mut self, connections: &mut Connections, pr: GCow<'_, CompletePullRequest>, options: GitDiffModuloBaseOptions) {
         let result = || -> Result<_> {
-            let url = pr.repository.get_url(&pr.remote)?;
-
-            let Some(hostname) = url.hostname() else {
-                Err(format!("cannot find hostname for {url}"))?
-            };
-            let Some((organization, gh_repo)) = url.github_path() else {
-                Err(format!("cannot parse {url} as a GitHub repository"))?
-            };
-
-            let mut client = connections.client(hostname.to_owned())?.borrow_mut();
+            let mut client = connections.client(&pr.api.host)?.borrow_mut();
             let client_ref = client.access();
-            let pull = client_ref.pull(organization, gh_repo, pr.id).ok()?;
-            let reviews = client_ref.reviews(organization, gh_repo, pr.id).ok()?;
+            let pull = client_ref.pull(&pr.api.owner, &pr.api.name, pr.id).ok()?;
+            let reviews = client_ref.reviews(&pr.api.owner, &pr.api.name, pr.id).ok()?;
 
-            Ok((client.host().user.to_string(), organization.to_string(), gh_repo.to_string(), pull, reviews))
+            Ok((client.host().user.to_string(), pull, reviews))
         }();
-        let Ok((user, organization, gh_repo, pull, reviews)) = result else {
+        let Ok((user, pull, reviews)) = result else {
             let err = result.err().unwrap();
             self.inner = Some(Inner {
                 pr: pr.into_owned(),
@@ -70,7 +61,7 @@ impl ReviewState {
             writeln!(
                 &mut header,
                 "Review {}/{}#{}",
-                organization, gh_repo, pr.id
+                pr.api.owner, pr.api.name, pr.id
             )?;
             if let Some(review) = &most_recent_review {
                 writeln!(
@@ -98,12 +89,12 @@ impl ReviewState {
                 .chain(most_recent_review.iter().map(|review| &review.commit_id))
                 .map(|sha| Ref::new(sha))
                 .collect();
-            pr.repository.fetch_missing(&pr.remote, &refs)?;
+            pr.git.repository.fetch_missing(&pr.git.remote, &refs)?;
 
             let old = if let Some(review) = most_recent_review {
                 review.commit_id
             } else {
-                pr.repository
+                pr.git.repository
                     .merge_base(&Ref::new(&pull.base.sha), &Ref::new(&pull.head.sha))?
                     .name
             };
@@ -138,7 +129,7 @@ impl ReviewState {
         let pager = || -> Result<_> {
             let mut pager_source = DiffPagerSource::new();
             pager_source.push_header(header_copy);
-            tool::git_diff_modulo_base(&dmb_args, &pr.repository, &mut pager_source)?;
+            tool::git_diff_modulo_base(&dmb_args, &pr.git.repository, &mut pager_source)?;
             Ok((pager_source, PagerState::default()))
         }();
         let pager = match pager {
@@ -155,21 +146,14 @@ impl ReviewState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PullRequest {
-    pub repository: Repository,
-    pub remote: String,
-    pub id: u64,
-}
-
 #[derive(Debug)]
 pub struct Review<'build> {
-    pr: GCow<'build, PullRequest>,
+    pr: GCow<'build, CompletePullRequest>,
     options: Option<&'build mut GitDiffModuloBaseOptions>,
     search: Option<&'build Regex>,
 }
 impl<'build> Review<'build> {
-    pub fn new(pr: impl Into<GCow<'build, PullRequest>>) -> Self {
+    pub fn new(pr: impl Into<GCow<'build, CompletePullRequest>>) -> Self {
         Self {
             pr: pr.into(),
             options: Default::default(),

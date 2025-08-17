@@ -105,9 +105,9 @@ pub struct Repository {
     pub mock_data_path: Option<std::path::PathBuf>,
 }
 impl Repository {
-    pub fn new(path: &std::path::Path) -> Self {
+    pub fn new<'a>(path: std::path::PathBuf) -> Self {
         Self {
-            path: path.into(),
+            path,
             mock_data_path: None,
         }
     }

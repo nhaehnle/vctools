@@ -93,6 +93,10 @@ impl Connections {
         }
     }
 
+    pub fn hosts(&self) -> &[github::Host] {
+        &self.config.hosts
+    }
+
     pub fn start_frame(&mut self, deadline: Option<Instant>) {
         assert!(self.frame.is_none());
         self.frame = Some(deadline);
