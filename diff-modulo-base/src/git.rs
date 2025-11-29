@@ -4,11 +4,12 @@ use std::collections::HashSet;
 
 use crate::*;
 use diff::{ChunkWriter, ChunkWriterExt};
-use git_core::{Range, Ref};
+use git_core::{ExecutionProvider, Range, Ref};
 use utils::Result;
 
 fn diff_ranges_full_impl(
     repo: &git_core::Repository,
+    ep: &dyn ExecutionProvider,
     old: Option<Range<&Ref>>,
     new: Option<Range<&Ref>>,
     writer: &mut dyn ChunkWriter,
@@ -16,20 +17,21 @@ fn diff_ranges_full_impl(
     let mut buffer = diff::Buffer::new();
 
     fn get_diff(
+        ep: &dyn ExecutionProvider,
         buffer: &mut diff::Buffer,
         repo: &git_core::Repository,
         range: &Option<Range<&Ref>>,
     ) -> Result<diff::Diff> {
         if let Some(range) = range {
-            let diff_text = buffer.insert(&repo.diff(range.clone(), None)?)?;
+            let diff_text = buffer.insert(&repo.diff(ep, range.clone(), None)?)?;
             Ok(diff::Diff::parse(&buffer, diff_text)?)
         } else {
             Ok(diff::Diff::new(diff::DiffOptions::default()))
         }
     }
 
-    let base_old_diff = get_diff(&mut buffer, repo, &old)?;
-    let base_new_diff = get_diff(&mut buffer, repo, &new)?;
+    let base_old_diff = get_diff(ep, &mut buffer, repo, &old)?;
+    let base_new_diff = get_diff(ep, &mut buffer, repo, &new)?;
 
     let target_diff = match (old, new) {
         (Some(old), Some(new)) => {
@@ -42,7 +44,7 @@ fn diff_ranges_full_impl(
 
             let paths: Vec<&[u8]> = paths.into_iter().collect();
 
-            let target = buffer.insert(&repo.diff(old.end..new.end, Some(&paths))?)?;
+            let target = buffer.insert(&repo.diff(ep, old.end..new.end, Some(&paths))?)?;
             diff::Diff::parse(&buffer, target)?
         }
         (Some(_), _) => diff::reverse(&base_old_diff),
@@ -65,6 +67,7 @@ fn diff_ranges_full_impl(
 /// be empty (i.e., no change).
 pub fn diff_optional_ranges_full<R>(
     repo: &git_core::Repository,
+    ep: &dyn ExecutionProvider,
     old: Option<Range<R>>,
     new: Option<Range<R>>,
     writer: &mut dyn ChunkWriter,
@@ -74,6 +77,7 @@ where
 {
     diff_ranges_full_impl(
         repo,
+        ep,
         old.as_ref()
             .map(|range| range.start.borrow()..range.end.borrow()),
         new.as_ref()
@@ -85,6 +89,7 @@ where
 /// Produce a base-reduced diff between the two given ranges.
 pub fn diff_ranges_full<R>(
     repo: &git_core::Repository,
+    ep: &dyn ExecutionProvider,
     old: Range<R>,
     new: Range<R>,
     writer: &mut dyn ChunkWriter,
@@ -94,6 +99,7 @@ where
 {
     diff_ranges_full_impl(
         repo,
+        ep,
         Some(old.start.borrow()..old.end.borrow()),
         Some(new.start.borrow()..new.end.borrow()),
         writer,
@@ -102,6 +108,7 @@ where
 
 fn diff_optional_commits_impl(
     repo: &git_core::Repository,
+    ep: &dyn ExecutionProvider,
     old: Option<&Ref>,
     new: Option<&Ref>,
     writer: &mut dyn ChunkWriter,
@@ -109,6 +116,7 @@ fn diff_optional_commits_impl(
     fn get_meta(
         buffer: &mut diff::Buffer,
         repo: &git_core::Repository,
+        ep: &dyn ExecutionProvider,
         commit: Option<&Ref>,
         name: &[u8],
     ) -> Result<(diff::DiffRef, diff::DiffRef)> {
@@ -120,7 +128,7 @@ fn diff_optional_commits_impl(
             };
 
             Ok((
-                buffer.insert(&repo.show_commit(commit, &show_options)?)?,
+                buffer.insert(&repo.show_commit(ep, commit, &show_options)?)?,
                 buffer.insert(name)?,
             ))
         } else {
@@ -129,8 +137,8 @@ fn diff_optional_commits_impl(
     }
 
     let mut buffer = diff::Buffer::new();
-    let (old_meta, old_meta_name) = get_meta(&mut buffer, repo, old, b"a/commit-meta")?;
-    let (new_meta, new_meta_name) = get_meta(&mut buffer, repo, new, b"a/commit-meta")?;
+    let (old_meta, old_meta_name) = get_meta(&mut buffer, repo, ep, old, b"a/commit-meta")?;
+    let (new_meta, new_meta_name) = get_meta(&mut buffer, repo, ep, new, b"a/commit-meta")?;
 
     let meta_diff = diff::diff_file(
         &buffer,
@@ -172,6 +180,7 @@ fn diff_optional_commits_impl(
 
     diff_optional_ranges_full(
         repo,
+        ep,
         old.map(|commit| commit.first_parent()..commit.clone()),
         new.map(|commit| commit.first_parent()..commit.clone()),
         &mut delayed_meta_writer,
@@ -197,6 +206,7 @@ fn diff_optional_commits_impl(
 /// produce a diff as if that side had an empty commit without metadata.
 pub fn diff_optional_commits<R>(
     repo: &git_core::Repository,
+    ep: &dyn ExecutionProvider,
     old: Option<R>,
     new: Option<R>,
     writer: &mut dyn ChunkWriter,
@@ -206,6 +216,7 @@ where
 {
     diff_optional_commits_impl(
         repo,
+        ep,
         old.as_ref().map(|old| old.borrow()),
         new.as_ref().map(|new| new.borrow()),
         writer,
@@ -216,6 +227,7 @@ where
 /// diffs between the commit messages.
 pub fn diff_commits(
     repo: &git_core::Repository,
+    ep: &dyn ExecutionProvider,
     old: &Ref,
     new: &Ref,
     writer: &mut dyn ChunkWriter,
@@ -227,8 +239,8 @@ pub fn diff_commits(
     };
 
     let mut buffer = diff::Buffer::new();
-    let old_meta = buffer.insert(&repo.show_commit(old, &show_options)?)?;
-    let new_meta = buffer.insert(&repo.show_commit(new, &show_options)?)?;
+    let old_meta = buffer.insert(&repo.show_commit(ep, old, &show_options)?)?;
+    let new_meta = buffer.insert(&repo.show_commit(ep, new, &show_options)?)?;
     let old_meta_name = buffer.insert(b"a/commit-meta")?;
     let new_meta_name = buffer.insert(b"b/commit-meta")?;
 
@@ -252,6 +264,7 @@ pub fn diff_commits(
     );
     diff_ranges_full(
         repo,
+        ep,
         &old.first_parent()..old,
         &new.first_parent()..new,
         writer,

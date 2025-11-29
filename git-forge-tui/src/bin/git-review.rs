@@ -15,7 +15,7 @@ use vctuik::{
 };
 
 use git_forge_tui::{
-    get_project_dirs, github, load_config, logview::add_log_view, tui::{actions, Review}, GitRepository, PullRequest
+    get_project_dirs, github, gitservice, load_config, logview::add_log_view, tui::{actions, Review}, GitRepository, CompletePullRequest
 };
 
 #[derive(Parser, Debug)]
@@ -47,9 +47,14 @@ fn do_main() -> Result<()> {
     //    println!("{:?}", &config);
     //    println!("{}", dirs.config_dir().display());
 
+    let (refresh_signal, refresh_wait) = signals::make_merge_wakeup();
     let git_repository = GitRepository::new(args.path, args.remote);
-    let pr = PullRequest::from_git(git_repository, args.pull);
-    let pr = pr.complete(connections.hosts())?;
+    let mut git_service = gitservice::GitService::new(
+        &gitservice::Config::default(),
+        connections.hosts(),
+        refresh_signal.clone(),
+    );
+    let pr = CompletePullRequest::from_git(git_repository, args.pull, connections.hosts(), &git_core::SimpleExecutionProvider)?;
 
     tui_logger::init_logger(LevelFilter::Debug)?;
     tui_logger::set_default_level(LevelFilter::Debug);
@@ -67,11 +72,11 @@ fn do_main() -> Result<()> {
     let mut error: Option<String> = None;
     let mut command: Option<String> = None;
 
-    let (refresh_signal, refresh_wait) = signals::make_merge_wakeup();
     terminal.add_merge_wakeup(refresh_wait);
 
     terminal.run(|builder| {
         connections.start_frame(Some(builder.start_frame() + Duration::from_millis(150)));
+        git_service.start_frame(Duration::from_millis(150));
 
         if command.is_none() {
             if match builder.peek_event() {
@@ -84,7 +89,7 @@ fn do_main() -> Result<()> {
         }
 
         with_section(builder, "Review", |builder| {
-            Review::new(&pr)
+            Review::new(&git_service, &pr)
                 .maybe_search(search.as_ref())
                 .options(&mut args.dmb_options)
                 .build(builder, &mut connections);
@@ -97,6 +102,7 @@ fn do_main() -> Result<()> {
         }
 
         connections.end_frame(Some(&refresh_signal));
+        git_service.end_frame();
 
         let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
 

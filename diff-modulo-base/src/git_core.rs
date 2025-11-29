@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-use std::{fmt::Display, io::prelude::*};
+use std::{ffi::OsString, fmt::Display, io::prelude::*};
 
 use crate::utils::{trim_ascii, try_forward, Result};
 
@@ -10,7 +10,7 @@ pub use std::ops::Range;
 
 /// Reference to a single commit, using any format the git CLI understands as
 /// a reference.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Ref {
     pub name: String,
 }
@@ -21,6 +21,14 @@ impl Ref {
 
     pub fn first_parent(&self) -> Self {
         Self::new(format!("{}^", self.name))
+    }
+
+    /// Heuristic to determine if this Ref is a raw hash.
+    pub fn is_hash(&self) -> bool {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"^[0-9a-f]{8,40}\^?$").unwrap();
+        }
+        RE.is_match(self.name.as_bytes())
     }
 }
 impl Display for Ref {
@@ -95,58 +103,46 @@ impl Display for Url {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Repository {
-    pub path: std::path::PathBuf,
+#[derive(Debug, Clone)]
+pub enum ExecutionResult {
+    /// Execution is still in progress
+    Pending,
 
-    // Path of a directory that contains mock outputs of git commits as plain text files named with
-    // the command line after the "git" command itself. For example, a file named "show main" would
-    // contain the output of "git show main".
-    pub mock_data_path: Option<std::path::PathBuf>,
+    /// Successful execution; contains (stdout, stderr)
+    Ok(Vec<u8>, Vec<u8>),
+
+    /// Unsuccessful execution; contains (stdout, stderr, exit code)
+    Err(Vec<u8>, Vec<u8>, Option<i32>),
 }
-impl Repository {
-    pub fn new(path: std::path::PathBuf) -> Self {
-        Self {
-            path,
-            mock_data_path: None,
-        }
-    }
 
-    fn exec_with_stderr<I, A>(&self, subcommand: &str, args: I) -> Result<(Vec<u8>, Vec<u8>)>
-    where
-        I: Iterator<Item = A>,
-        A: AsRef<std::ffi::OsStr>,
-    {
-        if let Some(test_data_path) = &self.mock_data_path {
-            let mut path = test_data_path.clone();
-            let components: Vec<_> = [std::ffi::OsString::from(subcommand)]
-                .into_iter()
-                .chain(args.map(|x| x.as_ref().to_os_string()))
-                .collect();
-            let cmdline = components.join(&std::ffi::OsString::from(" "));
-            let mut name = cmdline.to_string_lossy().to_string();
-            name.retain(|c| c != '/');
-            path.push(&name);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cacheability {
+    /// Cannot be cached (mutates state).
+    None,
 
-            let mut file = try_forward(
-                || Ok(std::fs::File::open(&path)?),
-                || {
-                    format!(
-                        "failed to open mock data file {} for `git {}`",
-                        &name,
-                        cmdline.to_string_lossy()
-                    )
-                },
-            )?;
-            let mut contents = Vec::new();
-            file.read_to_end(&mut contents)?;
+    /// Depends on repository state, but can be cached if successful.
+    Cacheable,
 
-            return Ok((contents, Vec::new()));
-        }
+    /// Pure function of hashes. Can be cached indefinitely if successful.
+    Pure,
+}
 
+/// Trait for providing execution of Git commands.
+pub trait ExecutionProvider {
+    fn exec(&self, path: &std::path::PathBuf, command: &str, args: Vec<OsString>, cacheable: Cacheability) -> ExecutionResult;
+
+    /// Return true if the current execution frame has timed out.
+    fn timed_out(&self) -> bool { false }
+}
+
+/// Simple execution provider that just runs a git process directly.
+#[derive(Debug, Clone)]
+pub struct SimpleExecutionProvider;
+impl ExecutionProvider for SimpleExecutionProvider {
+    fn exec(&self, path: &std::path::PathBuf, command: &str, args: Vec<OsString>, _cacheable: Cacheability) -> ExecutionResult {
         let mut cmd = std::process::Command::new("git");
-        cmd.args(["-C", self.path.to_str().unwrap()]);
-        cmd.arg(subcommand);
+        cmd.args(["-C", path.to_str().unwrap()]);
+        cmd.arg(command);
         cmd.args(args);
 
         // We use a somewhat complex dance for reading stdout and stderr in
@@ -164,37 +160,115 @@ impl Repository {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let mut child = cmd.spawn()?;
+        || -> Result<_> {
+            let mut child = cmd.spawn()?;
 
-        let mut stderr = child.stderr.take().unwrap();
-        let stderr_thread = std::thread::spawn(move || -> std::result::Result<Vec<u8>, String> {
-            let mut stderr_buf = Vec::new();
-            match stderr.read_to_end(&mut stderr_buf) {
-                Ok(_) => Ok(stderr_buf),
-                Err(e) => Err(format!("reading stderr: {e}")),
+            let mut stderr = child.stderr.take().unwrap();
+            let stderr_thread = std::thread::spawn(move || -> std::result::Result<Vec<u8>, String> {
+                let mut stderr_buf = Vec::new();
+                match stderr.read_to_end(&mut stderr_buf) {
+                    Ok(_) => Ok(stderr_buf),
+                    Err(e) => Err(format!("reading stderr: {e}")),
+                }
+            });
+            let output = child.wait_with_output()?;
+            let stderr = stderr_thread.join().unwrap()?;
+
+            if !output.status.success() {
+                Ok(ExecutionResult::Err(output.stdout, stderr, output.status.code()))
+            } else {
+                Ok(ExecutionResult::Ok(output.stdout, stderr))
             }
-        });
-        let output = child.wait_with_output()?;
-        let stderr = stderr_thread.join().unwrap()?;
+        }()
+        .unwrap_or_else(|e| ExecutionResult::Err(Vec::new(), e.to_string().into_bytes(), None))
+    }
+}
 
-        if !output.status.success() {
-            return Err(format!(
-                "git subcommand failed: {}\n{}",
-                output.status,
-                String::from_utf8_lossy(&stderr)
-            )
-            .into());
+#[derive(Debug, Clone)]
+pub struct MockExecutionProvider {
+    // Path of a directory that contains mock outputs of git commits as plain text files named with
+    // the command line after the "git" command itself. For example, a file named "show main" would
+    // contain the output of "git show main".
+    pub mock_data_path: std::path::PathBuf,
+}
+impl ExecutionProvider for MockExecutionProvider {
+    fn exec(&self, _path: &std::path::PathBuf, command: &str, mut args: Vec<OsString>, _cacheable: Cacheability) -> ExecutionResult {
+        args.insert(0, OsString::from(command));
+        let cmdline = args.join(&std::ffi::OsString::from(" "));
+        let mut name = cmdline.to_string_lossy().to_string();
+        name.retain(|c| c != '/');
+
+        let mut path = self.mock_data_path.clone();
+        path.push(&name);
+
+        let contents = try_forward(
+            || {
+                let mut file = std::fs::File::open(&path)?;
+                let mut contents = Vec::new();
+                file.read_to_end(&mut contents)?;
+                Ok(contents)
+            },
+            || {
+                format!(
+                    "failed to read mock data file {} for `git {}`",
+                    &name,
+                    cmdline.to_string_lossy()
+                )
+            },
+        );
+        match contents {
+            Ok(contents) => ExecutionResult::Ok(contents, Vec::new()),
+            Err(e) => ExecutionResult::Err(Vec::new(), e.to_string().into_bytes(), None),
         }
+    }
+}
 
-        Ok((output.stdout, output.stderr))
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repository {
+    pub path: std::path::PathBuf,
+}
+impl Repository {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+        }
     }
 
-    fn exec<I, A>(&self, subcommand: &str, args: I) -> Result<Vec<u8>>
+    fn exec_with_stderr<I, A>(
+        &self,
+        ep: &dyn ExecutionProvider,
+        subcommand: &str,
+        args: I,
+        cacheable: Cacheability,
+    ) -> Result<(Vec<u8>, Vec<u8>)>
     where
         I: Iterator<Item = A>,
-        A: AsRef<std::ffi::OsStr>,
+        A: Into<OsString>,
     {
-        let (stdout, stderr) = self.exec_with_stderr(subcommand, args)?;
+        let args_vec = args.map(Into::into).collect();
+        let result = ep.exec(&self.path, subcommand, args_vec, cacheable);
+        match result {
+            ExecutionResult::Ok(stdout, stderr) => Ok((stdout, stderr)),
+            ExecutionResult::Err(stdout, stderr, _) => {
+                Err(format!(
+                    "git {} failed\nstdout:\n{}\nstderr:\n{}",
+                    subcommand,
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr),
+                ))?
+            }
+            ExecutionResult::Pending => {
+                Err(format!("git {} execution is still pending", subcommand))?
+            }
+        }
+    }
+
+    fn exec<I, A>(&self, ep: &dyn ExecutionProvider, subcommand: &str, args: I, cacheable: Cacheability) -> Result<Vec<u8>>
+    where
+        I: Iterator<Item = A>,
+        A: Into<OsString>,
+    {
+        let (stdout, stderr) = self.exec_with_stderr(ep, subcommand, args, cacheable)?;
 
         if !stderr.is_empty() {
             Err(format!(
@@ -206,15 +280,15 @@ impl Repository {
         Ok(stdout)
     }
 
-    fn exec_noarg(&self, subcommand: &str) -> Result<Vec<u8>> {
+    fn exec_noarg(&self, ep: &dyn ExecutionProvider, subcommand: &str, cacheable: Cacheability) -> Result<Vec<u8>> {
         let empty: Vec<String> = vec![];
-        self.exec(subcommand, empty.into_iter())
+        self.exec(ep, subcommand, empty.into_iter(), cacheable)
     }
 
-    pub fn get_url(&self, remote: &str) -> Result<Url> {
+    pub fn get_url(&self, ep: &dyn ExecutionProvider, remote: &str) -> Result<Url> {
         try_forward(
             || -> Result<Url> {
-                let raw = self.exec("remote", [&"get-url", remote].iter())?;
+                let raw = self.exec(ep, "remote", [&"get-url", remote].iter(), Cacheability::Cacheable)?;
                 let url = String::from_utf8(raw)?;
                 let url = url.trim();
 
@@ -240,13 +314,13 @@ impl Repository {
         )
     }
 
-    pub fn get_remotes(&self) -> Result<Vec<(String, Url)>> {
+    pub fn get_remotes(&self, ep: &dyn ExecutionProvider) -> Result<Vec<(String, Url)>> {
         try_forward(|| -> Result<Vec<(String, Url)>> {
-                let output = String::from_utf8(self.exec_noarg("remote")?)?;
+                let output = String::from_utf8(self.exec_noarg(ep, "remote", Cacheability::Cacheable)?)?;
                 let remotes: Result<Vec<_>> =
                     output.lines()
                         .map(|remote| -> Result<(String, Url)> {
-                            let url = self.get_url(&remote)?;
+                            let url = self.get_url(ep, &remote)?;
                             Ok((remote.to_string(), url))
                         })
                         .collect();
@@ -256,9 +330,16 @@ impl Repository {
         )
     }
 
-    pub fn diff(&self, range: Range<&Ref>, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
+    pub fn diff(&self, ep: &dyn ExecutionProvider, range: Range<&Ref>, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
         try_forward(
             || -> Result<Vec<u8>> {
+                let cacheability =
+                    if range.start.is_hash() && range.end.is_hash() {
+                        Cacheability::Pure
+                    } else {
+                        Cacheability::Cacheable
+                    };
+
                 let mut args: Vec<String> = Vec::new();
                 args.push(format!("{}..{}", range.start, range.end));
                 if let Some(paths) = paths {
@@ -266,26 +347,33 @@ impl Repository {
                     args.extend(paths.iter().map(|&s| String::from_utf8_lossy(s).into()));
                 }
 
-                self.exec("diff", args.iter())
+                self.exec(ep, "diff", args.iter(), cacheability)
             },
             || format!("failed to get diff {}..{}", range.start, range.end),
         )
     }
 
-    pub fn diff_commit(&self, commit: &Ref, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
-        self.diff(&commit.first_parent()..commit, paths)
+    pub fn diff_commit(&self, ep: &dyn ExecutionProvider, commit: &Ref, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
+        self.diff(ep, &commit.first_parent()..commit, paths)
     }
 
-    pub fn show_commit(&self, commit: &Ref, options: &ShowOptions) -> Result<Vec<u8>> {
+    pub fn show_commit(&self, ep: &dyn ExecutionProvider, commit: &Ref, options: &ShowOptions) -> Result<Vec<u8>> {
         try_forward(
             || -> Result<Vec<u8>> {
+                let cacheability =
+                    if commit.is_hash() {
+                        Cacheability::Pure
+                    } else {
+                        Cacheability::Cacheable
+                    };
+
                 let mut args: Vec<String> = Vec::new();
                 if !options.show_patch {
                     args.push("--no-patch".into());
                 }
                 args.push(format!("{}", commit));
 
-                let mut show = self.exec("show", args.iter())?;
+                let mut show = self.exec(ep, "show", args.iter(), cacheability)?;
 
                 // Erase the first line if it is of the form "commit <...>"
                 if options.skip_commit_id && show.starts_with(b"commit ") {
@@ -300,10 +388,17 @@ impl Repository {
         )
     }
 
-    pub fn merge_base(&self, a: &Ref, b: &Ref) -> Result<Ref> {
+    pub fn merge_base(&self, ep: &dyn ExecutionProvider, a: &Ref, b: &Ref) -> Result<Ref> {
         try_forward(
             || -> Result<Ref> {
-                let result = self.exec("merge-base", [format!("{a}"), format!("{b}")].iter())?;
+                let cacheability =
+                    if a.is_hash() && b.is_hash() {
+                        Cacheability::Pure
+                    } else {
+                        Cacheability::Cacheable
+                    };
+
+                let result = self.exec(ep, "merge-base", [format!("{a}"), format!("{b}")].iter(), cacheability)?;
 
                 Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
             },
@@ -311,10 +406,16 @@ impl Repository {
         )
     }
 
-    pub fn rev_parse(&self, a: &Ref) -> Result<Ref> {
+    pub fn rev_parse(&self, ep: &dyn ExecutionProvider, a: &Ref) -> Result<Ref> {
         try_forward(
             || -> Result<Ref> {
-                let result = self.exec("rev-parse", [format!("{a}")].iter())?;
+                let cacheability =
+                    if a.is_hash() {
+                        Cacheability::Pure
+                    } else {
+                        Cacheability::Cacheable
+                    };
+                let result = self.exec(ep, "rev-parse", [format!("{a}")].iter(), cacheability)?;
 
                 Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
             },
@@ -322,26 +423,30 @@ impl Repository {
         )
     }
 
-    pub fn prefetch(&self, remote: &str) -> Result<()> {
+    pub fn prefetch(&self, ep: &dyn ExecutionProvider, remote: &str) -> Result<()> {
         try_forward(
             || -> Result<()> {
-                self.exec_with_stderr("fetch", ["--prefetch", remote].iter())?;
+                self.exec_with_stderr(ep, "fetch", ["--prefetch", remote].iter(), Cacheability::None)?;
                 Ok(())
             },
             || format!("failed to prefetch remote {}", remote),
         )
     }
 
-    pub fn fetch_missing(&self, remote: &str, refs: &[Ref]) -> Result<()> {
+    pub fn fetch_missing(&self, ep: &dyn ExecutionProvider, remote: &str, refs: &[Ref]) -> Result<()> {
         try_forward(
             || -> Result<()> {
                 // Test if the refs are present
+                let cacheability = refs.iter().all(Ref::is_hash).then(|| Cacheability::Pure).unwrap_or(Cacheability::Cacheable);
+
                 if self
                     .exec(
+                        ep,
                         "show",
-                        ["--oneline"]
+                        ["--oneline", "--no-patch"]
                             .into_iter()
                             .chain(refs.iter().map(|r| r.name.as_str())),
+                        cacheability,
                     )
                     .is_ok()
                 {
@@ -350,10 +455,12 @@ impl Repository {
 
                 // At least one failed, try to fetch them
                 self.exec_with_stderr(
+                    ep,
                     "fetch",
                     [remote]
                         .into_iter()
                         .chain(refs.iter().map(|r| r.name.as_str())),
+                    cacheability,
                 )?;
 
                 Ok(())
@@ -361,20 +468,28 @@ impl Repository {
             || "failed to fetch missing refs",
         )
     }
-
-    pub fn log<R>(&self, range: Range<R>) -> Result<Vec<LogEntry>>
+    
+    pub fn log<R>(&self, ep: &dyn ExecutionProvider, range: Range<R>) -> Result<Vec<LogEntry>>
     where
         R: std::borrow::Borrow<Ref>,
     {
         try_forward(
             || -> Result<Vec<LogEntry>> {
+                let cacheability =
+                    if range.start.borrow().is_hash() && range.end.borrow().is_hash() {
+                        Cacheability::Pure
+                    } else {
+                        Cacheability::Cacheable
+                    };
                 let result = self.exec(
+                    ep,
                     "log",
                     [
                         "--oneline".into(),
                         format!("{}..{}", range.start.borrow(), range.end.borrow()),
                     ]
                     .iter(),
+                    cacheability,
                 )?;
 
                 lazy_static! {
@@ -408,13 +523,13 @@ impl Repository {
         )
     }
 
-    pub fn range_diff<R>(&self, old: Range<R>, new: Range<R>) -> Result<RangeDiff>
+    pub fn range_diff<R>(&self, ep: &dyn ExecutionProvider, old: Range<R>, new: Range<R>) -> Result<RangeDiff>
     where
         R: std::borrow::Borrow<Ref>,
     {
         // Workaround: git range-diff fails if start and end of a range are the same
         if old.start.borrow() == old.end.borrow() {
-            let new_commits = self.log(new)?;
+            let new_commits = self.log(ep, new)?;
             return Ok(RangeDiff {
                 matches: new_commits
                     .into_iter()
@@ -430,7 +545,7 @@ impl Repository {
         }
 
         if new.start.borrow() == new.end.borrow() {
-            let old_commits = self.log(old)?;
+            let old_commits = self.log(ep, old)?;
             return Ok(RangeDiff {
                 matches: old_commits
                     .into_iter()
@@ -448,6 +563,7 @@ impl Repository {
         try_forward(
             || -> Result<RangeDiff> {
                 let result = self.exec(
+                    ep,
                     "range-diff",
                     [
                         "-s".into(),
@@ -455,6 +571,7 @@ impl Repository {
                         format!("{}..{}", new.start.borrow(), new.end.borrow()),
                     ]
                     .iter(),
+                    Cacheability::Cacheable,
                 )?;
 
                 RangeDiff::parse(&result)

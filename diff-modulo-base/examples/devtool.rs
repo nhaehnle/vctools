@@ -104,11 +104,13 @@ fn do_main() -> Result<()> {
         Command::GitDiffModuloBase { gdmb, mock_data } => {
             let mut out = termcolor::StandardStream::stdout(termcolor::ColorChoice::Never);
 
-            let mut repo = git_core::Repository::new(std::path::PathBuf::from("."));
-            repo.mock_data_path = Some(mock_data);
+            let repo = git_core::Repository::new(std::path::PathBuf::from("."));
+            let mut ep = git_core::MockExecutionProvider {
+                mock_data_path: mock_data,
+            };
 
             let mut writer = diff_color::Writer::new();
-            tool::git_diff_modulo_base(&gdmb, &repo, &mut writer)?;
+            tool::git_diff_modulo_base(&gdmb, &repo, &mut ep, &mut writer)?;
             writer.write(&mut out)?;
         }
     }

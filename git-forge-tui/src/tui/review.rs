@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::fmt::Write;
 use std::result::Result as StdResult;
 
-use diff_modulo_base::git_core::Ref;
+use diff_modulo_base::git_core::{self, Ref};
 use diff_modulo_base::tool::{self, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions};
 use ratatui::text::Text;
 use regex::Regex;
@@ -13,7 +13,7 @@ use vctuik::{
     event::KeyCode, pager::{Pager, PagerState}, prelude::*, state::Builder
 };
 
-use crate::{github::connections::Connections, PullRequest, CompletePullRequest};
+use crate::{github::connections::Connections, CompletePullRequest};
 
 use super::{actions, diff_pager::DiffPagerSource};
 
@@ -23,6 +23,7 @@ struct Inner {
     header: String,
     dmb_args: Option<GitDiffModuloBaseArgs>,
     pager: StdResult<(DiffPagerSource, PagerState), String>,
+    timed_out: bool,
 }
 
 #[derive(Debug, Default)]
@@ -31,7 +32,11 @@ struct ReviewState {
     inner: Option<Inner>,
 }
 impl ReviewState {
-    fn update(&mut self, connections: &mut Connections, pr: GCow<'_, CompletePullRequest>, options: GitDiffModuloBaseOptions) {
+    fn update(
+        &mut self,
+        connections: &mut Connections,
+        ep: &dyn git_core::ExecutionProvider,
+        pr: GCow<'_, CompletePullRequest>) {
         let result = || -> Result<_> {
             let mut client = connections.client(&pr.api.host)?.borrow_mut();
             let client_ref = client.access();
@@ -47,6 +52,7 @@ impl ReviewState {
                 header: String::new(),
                 dmb_args: None,
                 pager: Err(err.to_string()),
+                timed_out: ep.timed_out(),
             });
             return;
         };
@@ -89,13 +95,13 @@ impl ReviewState {
                 .chain(most_recent_review.iter().map(|review| &review.commit_id))
                 .map(|sha| Ref::new(sha))
                 .collect();
-            pr.git.repository.fetch_missing(&pr.git.remote, &refs)?;
+            pr.git.repository.fetch_missing(ep, &pr.git.remote, &refs)?;
 
             let old = if let Some(review) = most_recent_review {
                 review.commit_id
             } else {
                 pr.git.repository
-                    .merge_base(&Ref::new(&pull.base.sha), &Ref::new(&pull.head.sha))?
+                    .merge_base(ep, &Ref::new(&pull.base.sha), &Ref::new(&pull.head.sha))?
                     .name
             };
 
@@ -103,7 +109,7 @@ impl ReviewState {
                 base: Some(pull.base.sha),
                 old: Some(old),
                 new: Some(pull.head.sha),
-                options,
+                options: self.options,
             })
         }();
         let Ok(dmb_args) = result else {
@@ -113,23 +119,22 @@ impl ReviewState {
                 header,
                 dmb_args: None,
                 pager: Err(err.to_string()),
+                timed_out: ep.timed_out(),
             });
             return;
         };
 
         if self.inner.as_ref().is_some_and(|inner| {
-            inner.pr == *pr && inner.dmb_args.as_ref().is_some_and(|args| dmb_args == *args)
+            !inner.timed_out && inner.pr == *pr && inner.dmb_args.as_ref().is_some_and(|args| dmb_args == *args)
         }) {
             return;
         }
-
-        self.options = options;
 
         let header_copy = header.clone();
         let pager = || -> Result<_> {
             let mut pager_source = DiffPagerSource::new();
             pager_source.push_header(header_copy);
-            tool::git_diff_modulo_base(&dmb_args, &pr.git.repository, &mut pager_source)?;
+            tool::git_diff_modulo_base(&dmb_args, &pr.git.repository, ep, &mut pager_source)?;
             Ok((pager_source, PagerState::default()))
         }();
         let pager = match pager {
@@ -142,20 +147,22 @@ impl ReviewState {
             header,
             dmb_args: Some(dmb_args),
             pager,
+            timed_out: ep.timed_out(),
         });
     }
 }
 
-#[derive(Debug)]
 pub struct Review<'build> {
     pr: GCow<'build, CompletePullRequest>,
+    ep: &'build dyn git_core::ExecutionProvider,
     options: Option<&'build mut GitDiffModuloBaseOptions>,
     search: Option<&'build Regex>,
 }
 impl<'build> Review<'build> {
-    pub fn new(pr: impl Into<GCow<'build, CompletePullRequest>>) -> Self {
+    pub fn new(ep: &'build dyn git_core::ExecutionProvider, pr: impl Into<GCow<'build, CompletePullRequest>>) -> Self {
         Self {
             pr: pr.into(),
+            ep,
             options: Default::default(),
             search: None,
         }
@@ -186,10 +193,14 @@ impl<'build> Review<'build> {
         let state_id = builder.add_state_id("review");
         let state_outer: &mut ReviewState = builder.get_state(state_id);
 
+        if let Some(options) = &self.options {
+            state_outer.options = **options;
+        }
+
         state_outer.update(
             connections,
-            self.pr,
-            self.options.as_ref().map(|o| **o).unwrap_or_default());
+            self.ep,
+            self.pr);
 
         let state = state_outer.inner.as_mut().unwrap();
 
@@ -206,8 +217,9 @@ impl<'build> Review<'build> {
 
                 if has_focus {
                     if builder.on_key_press(KeyCode::Char('C')) {
+                        state_outer.options.combined = !state_outer.options.combined;
                         if let Some(options) = self.options {
-                            options.combined = !options.combined;
+                            options.combined = state_outer.options.combined;
                         }
                         builder.need_refresh();
                     } else if builder.on_key_press(KeyCode::Char('d')) {

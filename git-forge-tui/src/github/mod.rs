@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{any::Any, borrow::Cow, collections::HashMap, ops::DerefMut, path::{Path, PathBuf}, sync::{Arc, Condvar, Mutex}, time::Instant};
+use std::{any::Any, borrow::Cow, collections::{hash_map, HashMap}, ops::DerefMut, path::{Path, PathBuf}, sync::{Arc, Condvar, Mutex}, time::Instant};
 
 use itertools::Itertools;
 use log::{debug, info, warn, error};
@@ -181,7 +181,7 @@ impl Client {
             if state.response_signal == ResponseSignal::Pending {
                 notify.signal();
                 state.response_signal = ResponseSignal::Signaled;
-            } else if !state.frame_requests.is_empty() {
+            } else if state.response_signal == ResponseSignal::Requested {
                 state.response_callback = Some(notify.clone());
             }
         }
@@ -216,56 +216,53 @@ pub struct ClientRef<'frame> {
 }
 impl<'frame> ClientRef<'frame> {
     fn get_impl(&self, url: &str, parser: Box<dyn DynParser>) -> Response<()> {
-        let (request, response) = {
+        let (request_now, request_pending, response) = {
             let mut cache = self.client.cache.cache.lock().unwrap();
-            let entry =
-                if let Some(entry) = cache.get(url) {
-                    entry
-                } else {
-                    let response =
-                        if let Some(cache_file) = self.client.config.cache_for_url(url) {
-                            load_from_cache(cache_file.as_ref(), parser.as_ref())
-                        } else {
-                            Response::Pending
-                        };
+            match cache.entry(url.into()) {
+                hash_map::Entry::Occupied(entry) => {
+                    let entry = entry.get();
+                    (false, entry.fetched.is_none(), entry.response.clone())
+                },
+                hash_map::Entry::Vacant(entry) => {
+                    let mut response = Response::Pending;
+                    if let Some(cache_file) = self.client.config.cache_for_url(url) {
+                        response = load_from_cache(cache_file.as_ref(), parser.as_ref())
+                    }
 
                     let (parsed, response) = response.split();
-                    cache.entry(url.to_string())
-                        .or_insert(CacheEntry {
-                            fetched: None,
-                            response: response.clone(),
-                            parsed,
-                        })
-                };
 
-            let response =
-                if matches!(entry.response, Response::Pending) {
-                    None
-                } else {
-                    Some(entry.response.clone())
-                };
-            (entry.fetched.is_none(), response)
+                    entry.insert(CacheEntry {
+                        fetched: None,
+                        response: response.clone(),
+                        parsed,
+                    });
+
+                    (true, false, response)
+                },
+            }
         };
-
-        if !request {
-            return response.unwrap();
-        }
 
         let Some(helper) = &self.client.helper else {
-            return response.unwrap_or(Response::Offline);
+            return response.pending_to_offline();
         };
-
         let mut state = helper.state.lock().unwrap();
         if !state.running {
-            return response.unwrap_or(Response::Offline);
+            return response.pending_to_offline();
         }
 
-        state.add_request(url.to_string(), parser, matches!(self.wait_policy, WaitPolicy::Prefetch));
-        helper.helper_wakeup.notify_all();
+        let is_prefetch = matches!(self.wait_policy, WaitPolicy::Prefetch);
+        if request_now {
+            state.add_request(url.to_string(), parser, is_prefetch);
+            helper.helper_wakeup.notify_all();
+        }
+
+        if is_prefetch || (!request_now && !request_pending) {
+            return response;
+        }
 
         loop {
             if !state.running {
-                return response.unwrap_or(Response::Offline);
+                return response.pending_to_offline();
             }
 
             match self.wait_policy {
@@ -279,21 +276,15 @@ impl<'frame> ClientRef<'frame> {
                         if state.response_signal == ResponseSignal::Disabled {
                             state.response_signal = ResponseSignal::Requested;
                         }
-                        return response.unwrap_or(Response::Pending);
+                        return response;
                     }
                 }
-                WaitPolicy::Prefetch => {
-                    return response.unwrap_or(Response::Pending);
-                }
+                WaitPolicy::Prefetch => unreachable!()
             }
 
             if let Some(entry) = self.client.cache.cache.lock().unwrap().get(url) {
                 if entry.fetched.is_some() {
-                    if entry.parsed.is_some() {
-                        return Response::Ok(());
-                    } else {
-                        return entry.response.clone();
-                    }
+                    return entry.response.clone();
                 }
             }
         }
@@ -383,6 +374,13 @@ impl<T> Response<T> {
             ()
         });
         (data, response)
+    }
+
+    pub fn pending_to_offline(self) -> Response<T> {
+        match self {
+            Response::Pending => Response::Offline,
+            other => other,
+        }
     }
 }
 

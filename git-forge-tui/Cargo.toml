@@ -12,8 +12,10 @@ diff-modulo-base = { path = "../diff-modulo-base" }
 vctools-utils = { path = "../vctools-utils" }
 vctuik = { path = "../vctuik" }
 
+blake2 = "0.10.6"
 clap = { version = "3.2", features = ["derive"] }
 directories = "6.0.0"
+env_logger = "0.11.8"
 itertools = "0.14"
 lazy_static = { version = "1.4" }
 log = "0.4.22"

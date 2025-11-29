@@ -5,11 +5,15 @@ visualization using "diff modulo base" technology.
 
 ## Overview
 
+`git-inbox` is a work-in-progress TUI client for GitHub notifications. It aims
+to be a fast way to browse notifications and the corresponding reviews and
+issues.
+
 `git-review` is designed to make pull request reviews more efficient by showing
 only the meaningful changes between your last review and the current state of a
 pull request. It integrates with GitHub's API to fetch pull request information
-and uses the powerful "diff modulo base" algorithm to filter out noise from
-rebases and merges.
+and uses the "diff modulo base" algorithm to filter out noise from rebases and
+merges.
 
 ## Key Features
 
@@ -107,7 +111,7 @@ git-review <remote> <pull-request-number> [OPTIONS]
 3. **Interactive Display**: Shows the diff in a terminal UI with:
    - Navigation controls
    - Commit-by-commit breakdown
-   - File and hunk navigation (not implemented yet)
+   - File and hunk navigation
 
 ## License
 

@@ -41,14 +41,16 @@ fn dmb_test() -> Result<()> {
         println!("{:?}", &args);
         let args = tool::GitDiffModuloBaseArgs::try_parse_from(args)?;
 
-        let mut repo = git_core::Repository::new(std::path::PathBuf::from("."));
-        repo.mock_data_path = Some(path);
+        let repo = git_core::Repository::new(std::path::PathBuf::from("."));
+        let mut ep = git_core::MockExecutionProvider {
+            mock_data_path: path,
+        };
 
         let mut out_buffer: Vec<u8> = Vec::new();
         let mut out = termcolor::NoColor::new(&mut out_buffer);
 
         let mut writer = diff_color::Writer::new();
-        tool::git_diff_modulo_base(&args, &repo, &mut writer)?;
+        tool::git_diff_modulo_base(&args, &repo, &mut ep, &mut writer)?;
         writer.write(&mut out)?;
 
         assert_eq!(

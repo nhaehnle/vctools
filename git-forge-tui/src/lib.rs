@@ -73,46 +73,6 @@ impl PullRequest {
             id,
         }
     }
-
-    pub fn complete(self, hosts: &[github::Host]) -> Result<CompletePullRequest> {
-        let (git, api) = match (self.git, self.api) {
-            (Some(git), Some(api)) => (git, api),
-            (Some(git), None) => {
-                let url = git.repository.get_url(&git.remote)?;
-
-                let Some(hostname) = url.hostname() else {
-                    Err(format!("cannot find hostname for {url}"))?
-                };
-                let Some((owner, name)) = url.github_path() else {
-                    Err(format!("cannot parse {url} as a GitHub repository"))?
-                };
-
-                if !hosts.iter().any(|host| host.host == hostname) {
-                    Err(format!("Host not configured; add it to your github.toml: {hostname}"))?
-                }
-
-                let api =
-                    ApiRepository::new(
-                        hostname.to_string(),
-                        owner.to_string(),
-                        name.to_string(),
-                    );
-                (git, api)
-            },
-            (None, Some(api)) => {
-                Err("Cannot yet handle pull requests without a local clone")?
-            },
-            (None, None) => {
-                panic!("Should always have at least one of git or api set");
-            }
-        };
-
-        Ok(CompletePullRequest {
-            git,
-            api,
-            id: self.id,
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,4 +80,39 @@ pub struct CompletePullRequest {
     git: GitRepository,
     api: ApiRepository,
     id: u64,
+}
+impl CompletePullRequest {
+    pub fn from_git(git: GitRepository, id: u64, hosts: &[github::Host], ep: &dyn git_core::ExecutionProvider) -> Result<Self> {
+        let url = git.repository.get_url(ep, &git.remote)?;
+
+        let Some(hostname) = url.hostname() else {
+            Err(format!("cannot find hostname for {url}"))?
+        };
+        let Some((owner, name)) = url.github_path() else {
+            Err(format!("cannot parse {url} as a GitHub repository"))?
+        };
+
+        if !hosts.iter().any(|host| host.host == hostname) {
+            Err(format!("Host not configured; add it to your github.toml: {hostname}"))?
+        }
+
+        let api =
+            ApiRepository::new(
+                hostname.to_string(),
+                owner.to_string(),
+                name.to_string(),
+            );
+        Ok(CompletePullRequest { git, api, id })
+    }
+
+    pub fn from_api(api: ApiRepository, id: u64, git_service: &gitservice::GitService) -> Result<Self> {
+        let Some(git) = git_service.find_git(&api) else {
+            Err(format!("Local clone not found; add it to your repositories.toml: {}/{}", api.owner, api.name))?
+        };
+        Ok(CompletePullRequest {
+            git: git.clone(),
+            api,
+            id,
+        })
+    }
 }

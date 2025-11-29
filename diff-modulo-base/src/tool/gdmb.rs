@@ -58,6 +58,7 @@ impl<T: ChunkWriter + RangeDiffWriter> DiffModuloBaseWriter for T {}
 pub fn git_diff_modulo_base(
     args: &GitDiffModuloBaseArgs,
     repo: &git_core::Repository,
+    ep: &dyn git_core::ExecutionProvider,
     writer: &mut dyn DiffModuloBaseWriter,
 ) -> Result<()> {
     if args.old.is_none() {
@@ -86,19 +87,19 @@ pub fn git_diff_modulo_base(
             return Err("when BASE is used, both OLD and NEW must refer to a single commit".into());
         };
 
-        let old_base = repo.merge_base(&base, &old_ref)?;
-        let new_base = repo.merge_base(&base, &new_ref)?;
+        let old_base = repo.merge_base(ep, &base, &old_ref)?;
+        let new_base = repo.merge_base(ep, &base, &new_ref)?;
 
-        old = RevSpec::Range(old_base, repo.rev_parse(&old_ref)?);
-        new = RevSpec::Range(new_base, repo.rev_parse(&new_ref)?);
+        old = RevSpec::Range(old_base, repo.rev_parse(ep, &old_ref)?);
+        new = RevSpec::Range(new_base, repo.rev_parse(ep, &new_ref)?);
     }
 
     match (old, new) {
         (old @ RevSpec::Range(_, _), new @ RevSpec::Range(_, _)) => {
             if args.options.combined {
-                git::diff_ranges_full(&repo, old.to_range(), new.to_range(), writer)?;
+                git::diff_ranges_full(&repo, ep, old.to_range(), new.to_range(), writer)?;
             } else {
-                let range_diff = repo.range_diff(old.to_range(), new.to_range())?;
+                let range_diff = repo.range_diff(ep, old.to_range(), new.to_range())?;
 
                 for rd_match in range_diff.matches {
                     let changed = rd_match.changed;
@@ -108,13 +109,13 @@ pub fn git_diff_modulo_base(
                     writer.push_range_diff_match(rd_match);
 
                     if changed {
-                        git::diff_optional_commits(&repo, old, new, writer)?;
+                        git::diff_optional_commits(&repo, ep, old, new, writer)?;
                     }
                 }
             }
         }
         (RevSpec::Commit(old), RevSpec::Commit(new)) => {
-            git::diff_commits(&repo, &old, &new, writer)?;
+            git::diff_commits(&repo, ep, &old, &new, writer)?;
         }
         _ => return Err("old and new must either both refer to commits or both to ranges".into()),
     };

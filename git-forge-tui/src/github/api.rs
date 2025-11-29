@@ -34,12 +34,20 @@ pub struct MinimalRepository {
     pub owner: User,
 }
 
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum SubjectType {
+    Issue,
+    PullRequest,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct NotificationSubject {
     pub title: String,
     pub url: String,
     #[serde(rename = "type")]
-    pub subject_type: String,
+    pub subject_type: SubjectType,
 }
 
 #[derive(Deserialize, Debug, Clone)]

@@ -1,29 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::Parser;
 
 use diff_modulo_base::*;
-use directories::ProjectDirs;
 use log::{trace, debug, info, warn, error, LevelFilter};
 use ratatui::{prelude::*, widgets::Block};
 use utils::{try_forward, Result};
 use vctuik::{
-    command,
-    event::{Event, KeyCode, KeyEventKind, MouseEventKind},
-    prelude::*,
-    section::with_section, signals,
+    command, event::{Event, KeyCode, KeyEventKind, MouseEventKind}, label::add_label, prelude::*, section::with_section, signals
 };
 
-use git_core::Repository;
 use git_forge_tui::{
-    get_project_dirs,
-    github,
-    gitservice::GitService,
-    load_config,
-    logview::add_log_view,
-    tui::{actions, Inbox, Review},
+    get_project_dirs, github, gitservice::GitService, load_config, logview::add_log_view, tui::{actions, Inbox, Review}, ApiRepository, CompletePullRequest
 };
 
 #[derive(Parser, Debug)]
@@ -39,10 +29,16 @@ struct Cli {
 fn do_main() -> Result<()> {
     let mut args = Cli::parse();
 
-    tui_logger::init_logger(LevelFilter::Debug)?;
-    tui_logger::set_default_level(LevelFilter::Debug);
-    if let Some(log_file) = args.log_file {
-        tui_logger::set_log_file(&log_file)?;
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::builder()
+            .format_timestamp(Some(env_logger::TimestampPrecision::Millis))
+            .init();
+    } else {
+        tui_logger::init_logger(LevelFilter::Debug)?;
+        tui_logger::set_default_level(LevelFilter::Debug);
+        if let Some(log_file) = args.log_file {
+            tui_logger::set_log_file(&log_file)?;
+        }
     }
     debug!("Starting up");
     trace!("test trace");
@@ -50,18 +46,22 @@ fn do_main() -> Result<()> {
     warn!("test warn");
     error!("test error");
 
+    let (refresh_signal, refresh_wait) = signals::make_merge_wakeup();
+
     let mut connections = github::connections::Connections::new(
         load_config("github.toml")?,
         args.github_offline,
         Some(get_project_dirs().cache_dir().into()),
     );
 
-    let git_service = GitService::new(
+    let mut git_service = GitService::new(
         &load_config("repositories.toml")?,
         connections.hosts(),
+        refresh_signal.clone(),
     );
 
     let mut terminal = vctuik::init()?;
+    terminal.add_merge_wakeup(refresh_wait);
 
     let mut running = true;
     let mut show_debug_log = false;
@@ -69,11 +69,10 @@ fn do_main() -> Result<()> {
     let mut error: Option<String> = None;
     let mut command: Option<String> = None;
 
-    let (refresh_signal, refresh_wait) = signals::make_merge_wakeup();
-    terminal.add_merge_wakeup(refresh_wait);
-
     terminal.run(|builder| {
-        connections.start_frame(Some(builder.start_frame() + Duration::from_millis(150)));
+        debug!("Start Frame");
+        connections.start_frame(Some(builder.start_frame() + Duration::from_millis(50)));
+        git_service.start_frame(Duration::from_millis(100));
 
         if command.is_none() {
             if match builder.peek_event() {
@@ -90,8 +89,42 @@ fn do_main() -> Result<()> {
         let block = Block::new().style(builder.theme().pane_background);
         builder.frame().render_widget(block, frame_area);
 
-        with_section(builder, "Inbox", |builder| {
-            Inbox::new()
+        let notification_thread =
+            with_section(builder, "Inbox", |builder| {
+                Inbox::new()
+                    .build(builder, &mut connections)
+            }).and_then(|result| {
+                result.selection
+            });
+
+        with_section(builder, "Notification", |builder| {
+            let Some((host, thread)) = notification_thread else {
+                add_label(builder, "(no notification selected)");
+                builder.add_slack();
+                return;
+            };
+
+            let id = thread.subject.url.split('/').last().and_then(|id_str| id_str.parse::<u64>().ok());
+            if id.is_none() || thread.subject.subject_type != github::api::SubjectType::PullRequest {
+                add_label(builder, format!("Notification: {}", &thread.subject.url));
+                add_label(builder, "(unsupported)");
+                builder.add_slack();
+                return;
+            }
+
+            let api_repo = ApiRepository::new(host, thread.repository.owner.login, thread.repository.name);
+            let pr = match CompletePullRequest::from_api(api_repo, id.unwrap(), &git_service) {
+                Err(err) => {
+                    add_label(builder, format!("Notification: {}", &thread.subject.url));
+                    add_label(builder, format!("{}", err));
+                    builder.add_slack();
+                    return;
+                },
+                Ok(pr) => pr,
+            };
+            Review::new(&git_service, &pr)
+                .maybe_search(search.as_ref())
+                //.options(&mut args.dmb_options)
                 .build(builder, &mut connections);
         });
 
@@ -102,6 +135,7 @@ fn do_main() -> Result<()> {
         }
 
         connections.end_frame(Some(&refresh_signal));
+        git_service.end_frame();
 
         let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
 
