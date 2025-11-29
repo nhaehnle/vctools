@@ -572,6 +572,12 @@ impl<'table> Column<'table> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TableResult {
+    /// Item ID of the selected item, if any.
+    pub selection: Option<u64>,
+}
+
 pub struct Table<'table> {
     source: &'table dyn TableSource,
     state: Option<&'table mut TableState>,
@@ -636,7 +642,7 @@ impl<'table> Table<'table> {
         }
     }
 
-    pub fn build(mut self, builder: &mut Builder) {
+    pub fn build(mut self, builder: &mut Builder) -> TableResult {
         let state_id = builder.add_state_id(self.id.unwrap_or("table".into()));
         let state = self.state.unwrap_or_else(|| builder.get_state(state_id));
 
@@ -829,6 +835,10 @@ impl<'table> Table<'table> {
                 let line = Line::from(spans).style(base_style);
                 builder.frame().render_widget(line, item_area);
             }
+        }
+
+        TableResult {
+            selection: live.state.selection,
         }
     }
 }
