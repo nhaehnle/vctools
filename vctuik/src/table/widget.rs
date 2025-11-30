@@ -624,6 +624,8 @@ impl<'table> Column<'table> {
 
 #[derive(Debug, Clone)]
 pub struct TableResult {
+    pub has_focus: bool,
+
     /// Item ID of the selected item, if any.
     pub selection: Option<u64>,
 }
@@ -900,6 +902,7 @@ impl<'table> Table<'table> {
         }
 
         TableResult {
+            has_focus,
             selection: live.state.selection,
         }
     }

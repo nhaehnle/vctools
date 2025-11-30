@@ -101,7 +101,6 @@ pub struct NotificationThread {
     pub reason: String,
     pub repository: MinimalRepository,
     pub subject: NotificationSubject,
-    pub unread: bool,
     pub updated_at: String,
 }
 impl NotificationThread {

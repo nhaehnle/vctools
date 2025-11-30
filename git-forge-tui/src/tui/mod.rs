@@ -5,5 +5,5 @@ mod diff_pager;
 mod inbox;
 mod review;
 
-pub use inbox::Inbox;
+pub use inbox::{Inbox, InboxResult};
 pub use review::Review;

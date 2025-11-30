@@ -15,6 +15,9 @@ struct State {
 
 #[derive(Debug, Clone)]
 pub struct InboxResult {
+    /// Whether focus is on this widget
+    pub has_focus: bool,
+
     /// Host and notification thread of the current selection
     pub selection: Option<(String, github::api::NotificationThread)>,
 }
@@ -38,8 +41,8 @@ impl Inbox {
 
         let host_style =
             table_builder.add_style(builder.theme().text(builder.theme_context()).header1);
-        let read_style =
-            table_builder.add_style(builder.theme().text(builder.theme_context()).inactive);
+        let repo_style =
+            table_builder.add_style(builder.theme().text(builder.theme_context()).header2);
         let mut threads: HashMap<u64, (&_, github::api::NotificationThread)> = HashMap::new();
 
         for (host, client) in connections.all_clients() {
@@ -61,26 +64,22 @@ impl Inbox {
                             .or_insert_with(|| {
                                 table_builder
                                     .add(top_level, notification.repository.node_id.clone())
-                                    .raw(
+                                    .styled(
                                         0,
                                         format!(
                                             "{} / {}",
                                             &notification.repository.owner.login,
                                             &notification.repository.name
                                         ),
+                                        repo_style,
                                     )
                                     .id()
                             });
-                        let style = if notification.unread {
-                            StyleId::default()
-                        } else {
-                            read_style
-                        };
                         let item =
                             table_builder
                             .add(*repo_id, notification.id.clone())
-                            .styled(0, notification.subject.title.clone(), style)
-                            .styled(1, notification.updated_at.clone(), style);
+                            .raw(0, notification.subject.title.clone())
+                            .raw(1, notification.updated_at.clone());
                         threads.insert(item.id(), (host, notification));
                     }
                 }
@@ -96,7 +95,7 @@ impl Inbox {
             table::Column::new(0, "", Constraint1D::unconstrained()),
             table::Column::new(1, "Last Update", Constraint1D::new(5, 20)),
         ];
-        let selection = builder
+        let table_result = builder
             .nest()
             .id(state_id)
             .build(|builder| {
@@ -104,11 +103,12 @@ impl Inbox {
                     .id("tree")
                     .columns(columns)
                     .build(builder)
-            })
-            .selection;
+            });
 
         InboxResult {
-            selection: selection
+            has_focus: table_result.has_focus,
+            selection: table_result
+                .selection
                 .and_then(|id| threads.remove(&id))
                 .map(|(host, thread)| (host.host.clone(), thread)),
         }

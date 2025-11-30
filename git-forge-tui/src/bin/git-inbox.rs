@@ -18,11 +18,11 @@ use vctuik::{
 };
 
 use git_forge_tui::{
-    get_project_dirs, github,
+    get_project_dirs, github::{self, api::NotificationSubject},
     gitservice::GitService,
     load_config,
     logview::add_log_view,
-    tui::{actions, Inbox, Review},
+    tui::{actions, Inbox, InboxResult, Review},
     ApiRepository, CompletePullRequest,
 };
 
@@ -99,13 +99,32 @@ fn do_main() -> Result<()> {
         let block = Block::new().style(builder.theme().pane_background);
         builder.frame().render_widget(block, frame_area);
 
-        let notification_thread = with_section(builder, "Inbox", |builder| {
+        let mut inbox = with_section(builder, "Inbox", |builder| {
             Inbox::new().build(builder, &mut connections)
-        })
-        .and_then(|result| result.selection);
+        }).unwrap_or({
+            InboxResult {
+                has_focus: false,
+                selection: None,
+            }
+        });
+
+        if inbox.has_focus && builder.on_key_press(KeyCode::Char('e')) {
+            if let Some((host, notification)) = inbox.selection.take() {
+                let edit = github::edit::Edit::MarkNotificationDone(notification.id);
+                if let Err(err) =
+                    connections.client(host)
+                        .unwrap()
+                        .borrow_mut()
+                        .edit(edit) {
+                    error = Some(format!("Failed to mark notification done: {}", err));
+                }
+            } else {
+                error = Some("No notification selected".into());
+            }
+        }
 
         with_section(builder, "Notification", |builder| {
-            let Some((host, thread)) = notification_thread else {
+            let Some((host, thread)) = inbox.selection else {
                 add_label(builder, "(no notification selected)");
                 builder.add_slack();
                 return;

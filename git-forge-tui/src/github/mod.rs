@@ -19,6 +19,9 @@ use vctuik::signals::MergeWakeupSignal;
 
 pub mod api;
 pub mod connections;
+pub mod edit;
+
+use edit::Edit;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Host {
@@ -115,6 +118,7 @@ impl Client {
                 running: true,
                 frame_requests: Vec::new(),
                 backlog_requests: Vec::new(),
+                edit_requests: Vec::new(),
                 response_signal: ResponseSignal::Disabled,
                 response_callback: None,
             }),
@@ -164,6 +168,35 @@ impl Client {
             client: self,
             wait_policy: WaitPolicy::Prefetch,
         }
+    }
+
+    pub fn edit(&mut self, edit: Edit) -> Result<()> {
+        assert!(self.frame.is_some());
+
+        let Some(helper) = &self.helper else {
+            return Err("Cannot perform edits while offline")?;
+        };
+        let mut state = helper.state.lock().unwrap();
+
+        {
+            struct ItemGetter<'a> {
+                cache: &'a mut HashMap<String, CacheEntry>,
+            }
+            impl<'a> edit::ItemGetter for ItemGetter<'a> {
+                fn get(&mut self, url: &str) -> Option<&mut Box<dyn Any + Send + Sync>> {
+                    self.cache.get_mut(url).and_then(|entry| entry.parsed.as_mut())
+                }
+            }
+
+            let mut cache = self.cache.cache.lock().unwrap();
+            edit.apply(&mut ItemGetter { cache: cache.deref_mut() });
+        }
+
+        state.edit_requests.push(edit);
+
+        helper.helper_wakeup.notify_all();
+
+        Ok(())
     }
 
     pub fn end_frame(&mut self, notify: Option<&MergeWakeupSignal>) {
@@ -321,19 +354,21 @@ impl<'frame> ClientRef<'frame> {
         //       It should be possible to fix that once MutexGuard::map becomes stable.
         self.get_impl(&url, Box::new(Parser::<T>(std::marker::PhantomData)))
             .map(|_| {
-                self.client
-                    .cache
-                    .cache
-                    .lock()
-                    .unwrap()
-                    .get(&url)
-                    .unwrap()
-                    .parsed
-                    .as_ref()
-                    .unwrap()
-                    .downcast_ref::<T>()
-                    .unwrap()
-                    .clone()
+                let mut response =
+                    self.client
+                        .cache
+                        .cache
+                        .lock()
+                        .unwrap()
+                        .get(&url)
+                        .unwrap()
+                        .parsed
+                        .as_ref()
+                        .unwrap()
+                        .downcast_ref::<T>()
+                        .unwrap()
+                        .clone();
+                response
             })
     }
 
@@ -365,8 +400,13 @@ impl<'frame> ClientRef<'frame> {
         ))
     }
 
+    /// Returns unread notifications (like github.com/notifications).
+    ///
+    /// The API seems to be unable to report the "done" state of notification
+    /// threads, so we only ever show unread notifications, and markting them
+    /// "done" marks them both read and done.
     pub fn notifications<'a>(&self) -> Response<Vec<api::NotificationThread>> {
-        self.get("notifications?all=true")
+        self.get("notifications")
     }
 }
 
@@ -473,6 +513,7 @@ struct HelperState {
     running: bool,
     frame_requests: Vec<Request>,
     backlog_requests: Vec<Request>,
+    edit_requests: Vec<Edit>,
     response_signal: ResponseSignal,
     response_callback: Option<MergeWakeupSignal>,
 }
@@ -482,6 +523,7 @@ impl std::fmt::Debug for HelperState {
             .field("running", &self.running)
             .field("frame_requests", &self.frame_requests.len())
             .field("backlog_requests", &self.backlog_requests.len())
+            .field("edit_requests", &self.edit_requests.len())
             .field("response_signal", &self.response_signal)
             .field(
                 "response_callback",
@@ -566,6 +608,22 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
 
         let mut state = ctrl.state.lock().unwrap();
         while state.running {
+            // Commit edits first.
+            if !state.edit_requests.is_empty() {
+                let edit = state.edit_requests.drain(0..1).next().unwrap();
+                std::mem::drop(state);
+
+                info!("Committing edit {:?}", edit);
+
+                if let Err(err) = edit.commit(&client, &url_api) {
+                    error!("Error committing edit {:?}: {}", edit, err);
+                }
+
+                state = ctrl.state.lock().unwrap();
+                continue;
+            }
+
+            // Now handle requests.
             let (request, is_backlog) = if !state.frame_requests.is_empty() {
                 (state.frame_requests.drain(0..1).next(), false)
             } else {
@@ -597,9 +655,30 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
             state = ctrl.state.lock().unwrap();
             {
                 let mut cache = cache.cache.lock().unwrap();
-                let entry = cache.entry(request.url).or_default();
+                let entry = cache.entry(request.url.clone()).or_default();
 
-                let (parsed, response) = response.split();
+                let (mut parsed, response) = response.split();
+
+                struct ItemGetter<'a> {
+                    url: &'a str,
+                    parsed: Option<&'a mut Box<dyn Any + Send + Sync>>,
+                }
+                impl<'a> edit::ItemGetter for ItemGetter<'a> {
+                    fn get(&mut self, url: &str) -> Option<&mut Box<dyn Any + Send + Sync>> {
+                        if self.url == url {
+                            self.parsed.take()
+                        } else {
+                            None
+                        }
+                    }
+                }
+
+                for edit in &state.edit_requests {
+                    edit.apply(&mut ItemGetter {
+                        url: &request.url,
+                        parsed: parsed.as_mut(),
+                    });
+                }
 
                 if parsed.is_some() || matches!(response, Response::NotFound) {
                     entry.parsed = parsed;
