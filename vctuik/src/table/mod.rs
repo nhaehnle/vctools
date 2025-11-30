@@ -13,7 +13,7 @@ use ratatui::text::Span;
 ///  - columns with simple textual titles
 ///  - items with globally unique IDs
 ///   - ID 0 is reserved for the virtual root -- top-level items have parent 0
-///  - each item's data is produced as a ratatui `Line` for each column
+///  - each item's data is produced as ratatui `Span`s for each column
 pub trait TableSource {
     /// Whether an item with the given ID exists.
     fn exists(&self, item_id: u64) -> bool;
