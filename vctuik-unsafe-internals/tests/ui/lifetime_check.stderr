@@ -1,11 +1,11 @@
 error[E0499]: cannot borrow `store` as mutable more than once at a time
-  --> tests/ui/lifetime_check.rs:17:22
+  --> tests/ui/lifetime_check.rs:18:22
    |
-10 |         let mut builder = Builder::new(&mut store);
+11 |         let mut builder = Builder::new(&mut store);
    |                                        ---------- first mutable borrow occurs here
 ...
-17 |         Builder::new(&mut store);
+18 |         Builder::new(&mut store);
    |                      ^^^^^^^^^^ second mutable borrow occurs here
 ...
-20 |     *a;
+21 |     *a;
    |     -- first borrow later used here
