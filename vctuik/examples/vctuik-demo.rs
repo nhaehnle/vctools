@@ -3,7 +3,14 @@
 use ratatui::widgets::Block;
 
 use vctuik::{
-    check_box::add_check_box, event::KeyCode, input::Input, label::add_label, layout::Constraint1D, prelude::*, section::with_section, table::{self, simple_table}
+    check_box::add_check_box,
+    event::KeyCode,
+    input::Input,
+    label::add_label,
+    layout::Constraint1D,
+    prelude::*,
+    section::with_section,
+    table::{self, simple_table},
 };
 
 fn main() -> Result<()> {
@@ -21,17 +28,14 @@ fn main() -> Result<()> {
     terminal.run(|builder| {
         // Clear the window
         let frame_area = builder.frame().area();
-        let block = Block::new()
-            .style(builder.theme().pane_background);
+        let block = Block::new().style(builder.theme().pane_background);
         builder.frame().render_widget(block, frame_area);
 
         // Draw UI
         with_section(builder, "Settings", |builder| {
             add_check_box(builder, "Foo", &mut foo);
             add_check_box(builder, "Bar", &mut bar);
-            Input::new("name")
-                .label("Name:")
-                .build(builder, &mut name);
+            Input::new("name").label("Name:").build(builder, &mut name);
             builder.add_slack();
         });
 
@@ -64,7 +68,8 @@ fn main() -> Result<()> {
         with_section(builder, "Tree", |builder| {
             let mut source_builder = table_source_state.build();
 
-            let id_style = source_builder.add_style(builder.theme().text(builder.theme_context()).header2);
+            let id_style =
+                source_builder.add_style(builder.theme().text(builder.theme_context()).header2);
 
             // The way in which items are added is intentionally interleaved in
             // a slightly weird way, to demonstrate the flexibility of the
@@ -78,10 +83,12 @@ fn main() -> Result<()> {
             source_builder.add(tl1, 2).raw(0, "Child 3");
 
             for idx in 0..25 {
-                source_builder.add(tl2, idx)
+                source_builder
+                    .add(tl2, idx)
                     .raw(0, format!("Child {idx}"))
                     .styled(1, format!("{idx}"), id_style);
-                source_builder.add(child2, idx)
+                source_builder
+                    .add(child2, idx)
                     .raw(0, format!("Child {idx}"))
                     .styled(1, format!("{idx}"), id_style);
             }

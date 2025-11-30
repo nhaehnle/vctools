@@ -52,13 +52,7 @@ fn diff_ranges_full_impl(
         _ => panic!("at least one range needs to be provided"),
     };
 
-    diff::diff_modulo_base(
-        &buffer,
-        target_diff,
-        &base_old_diff,
-        &base_new_diff,
-        writer,
-    )?;
+    diff::diff_modulo_base(&buffer, target_diff, &base_old_diff, &base_new_diff, writer)?;
 
     Ok(())
 }
@@ -163,9 +157,7 @@ fn diff_optional_commits_impl(
             if let Some(meta_diff) = self.meta_diff.take() {
                 meta_diff.render_full_body(
                     &self.meta_diff_buffer,
-                    &mut self
-                        .writer
-                        .with_context(diff::Context::CommitMessage),
+                    &mut self.writer.with_context(diff::Context::CommitMessage),
                 );
             }
             self.writer.push_chunk(chunk);
@@ -259,8 +251,7 @@ pub fn diff_commits(
 
     meta_diff.render_full_body(
         &buffer,
-        &mut writer
-            .with_context(diff::Context::CommitMessage),
+        &mut writer.with_context(diff::Context::CommitMessage),
     );
     diff_ranges_full(
         repo,

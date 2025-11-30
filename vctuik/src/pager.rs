@@ -1,24 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::{
+    event::{KeyCode, KeyModifiers, MouseButton, WithModifiers},
+    layout::{Constraint1D, LayoutItem1D},
+    prelude::*,
+    state::{Builder, StateId},
+    theme,
+};
 use itertools::Itertools;
 use ratatui::{prelude::*, text::Line, widgets::Block};
 use regex::Regex;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::ops::Range;
-use std::{
-    cell::RefCell,
-};
-use crate::{
-    event::{KeyModifiers, MouseButton, WithModifiers, KeyCode},
-    layout::{Constraint1D, LayoutItem1D},
-    prelude::*,
-    state::{Builder, StateId},
-    theme
-};
 
-use crate::stringtools::StrScan;
 use crate::command;
+use crate::stringtools::StrScan;
 
 /// A persistent cursor into a `PagerSource`.
 ///
@@ -181,13 +179,19 @@ pub struct PagerResult<'result> {
 impl<'result> Drop for PagerResult<'result> {
     fn drop(&mut self) {
         // Save the scroll position.
-        self.state.scroll = Some(self.source.persist_cursor(self.scroll.0, self.scroll.1, Gravity::Left));
+        self.state.scroll = Some(self.source.persist_cursor(
+            self.scroll.0,
+            self.scroll.1,
+            Gravity::Left,
+        ));
         self.state.select = Some(self.source.persist_cursor(self.select, 0, Gravity::Left));
 
         // Save the collapse state.
-        self.state.collapse = self.collapse.iter().map(|range| {
-            self.source.persist_cursor(range.start, 0, Gravity::Left)
-        }).collect();
+        self.state.collapse = self
+            .collapse
+            .iter()
+            .map(|range| self.source.persist_cursor(range.start, 0, Gravity::Left))
+            .collect();
     }
 }
 impl<'result> PagerResult<'result> {
@@ -222,9 +226,10 @@ impl<'result> PagerResult<'result> {
             pos
         });
 
-        let select = state.select.take().map_or((0, 0), |cursor| {
-            source.retrieve_cursor(cursor).0
-        });
+        let select = state
+            .select
+            .take()
+            .map_or((0, 0), |cursor| source.retrieve_cursor(cursor).0);
 
         let mut result = PagerResult {
             source,
@@ -238,10 +243,7 @@ impl<'result> PagerResult<'result> {
         result.update_hidden();
         result.normalize_scroll();
 
-        let select =
-            result.screen_forward(result.select)
-                .next()
-                .unwrap_or(0);
+        let select = result.screen_forward(result.select).next().unwrap_or(0);
         result.select = select;
 
         result
@@ -281,7 +283,10 @@ impl<'result> PagerResult<'result> {
 
     fn set_collapsed(&mut self, line: usize, collapse: bool) {
         let idx = self.collapse.partition_point(|range| range.start < line);
-        let old_collapsed = self.collapse.get(idx).is_some_and(|range| range.start == line);
+        let old_collapsed = self
+            .collapse
+            .get(idx)
+            .is_some_and(|range| range.start == line);
         if collapse == old_collapsed {
             return;
         }
@@ -294,7 +299,10 @@ impl<'result> PagerResult<'result> {
             self.update_hidden();
             self.normalize_scroll();
 
-            let select = self.screen_forward(self.select).next().unwrap_or(self.select);
+            let select = self
+                .screen_forward(self.select)
+                .next()
+                .unwrap_or(self.select);
             self.select = select;
         } else {
             self.collapse.remove(idx);
@@ -314,7 +322,7 @@ impl<'result> PagerResult<'result> {
     /// The first line produced is the given line. If the given line is hidden,
     /// the nearest earlier visible line is produced first instead, or if there
     /// is no such line, the nearest later visible line.
-    fn screen_forward<'a>(&'a self, mut line: usize) -> impl Iterator<Item=usize> + 'a {
+    fn screen_forward<'a>(&'a self, mut line: usize) -> impl Iterator<Item = usize> + 'a {
         struct Forward<'fwd> {
             num_lines: usize,
             hidden: &'fwd [Range<usize>],
@@ -339,7 +347,10 @@ impl<'result> PagerResult<'result> {
                         self.line = self.hidden[self.hidden_idx].end;
                         self.hidden_idx += 1;
 
-                        assert!(self.hidden_idx >= self.hidden.len() || self.line < self.hidden[self.hidden_idx].start);
+                        assert!(
+                            self.hidden_idx >= self.hidden.len()
+                                || self.line < self.hidden[self.hidden_idx].start
+                        );
                     }
                 }
 
@@ -358,7 +369,7 @@ impl<'result> PagerResult<'result> {
             num_lines: self.source.num_lines(),
             hidden: &self.hidden,
             hidden_idx,
-            line
+            line,
         }
     }
 
@@ -373,7 +384,7 @@ impl<'result> PagerResult<'result> {
     ///
     /// screen_forward and screen_backward starting from the same document line
     /// together produce all visible lines in the document exactly once.
-    fn screen_backward<'a>(&'a self, mut line: usize) -> impl Iterator<Item=usize> + 'a {
+    fn screen_backward<'a>(&'a self, mut line: usize) -> impl Iterator<Item = usize> + 'a {
         struct Backward<'fwd> {
             hidden: &'fwd [Range<usize>],
             hidden_idx: usize,
@@ -400,7 +411,10 @@ impl<'result> PagerResult<'result> {
                         }
                         self.line -= 1;
 
-                        assert!(self.hidden_idx == 0 || self.hidden[self.hidden_idx - 1].end <= self.line);
+                        assert!(
+                            self.hidden_idx == 0
+                                || self.hidden[self.hidden_idx - 1].end <= self.line
+                        );
                     }
                 }
 
@@ -418,7 +432,7 @@ impl<'result> PagerResult<'result> {
         Backward {
             hidden: &self.hidden,
             hidden_idx,
-            line
+            line,
         }
     }
 
@@ -437,8 +451,11 @@ impl<'result> PagerResult<'result> {
 
             let mut line = range.start;
             loop {
-                let Some((range, depth)) = (line > 0).then(|| self.source.get_folding_range(line, true)).flatten() else {
-                    break
+                let Some((range, depth)) = (line > 0)
+                    .then(|| self.source.get_folding_range(line, true))
+                    .flatten()
+                else {
+                    break;
                 };
 
                 sticky_headers.push((range.start, depth));
@@ -503,18 +520,17 @@ impl<'result> PagerResult<'result> {
             };
         }
 
-        let line =
-            self.screen_forward(self.scroll.0)
-                .skip(y)
-                .next()
-                .unwrap_or_else(|| self.source.num_lines().saturating_sub(1));
+        let line = self
+            .screen_forward(self.scroll.0)
+            .skip(y)
+            .next()
+            .unwrap_or_else(|| self.source.num_lines().saturating_sub(1));
 
-        let col =
-            if x == 0 {
-                PagerColumn::Folding
-            } else {
-                PagerColumn::Text(self.scroll.1 + x - 1)
-            };
+        let col = if x == 0 {
+            PagerColumn::Folding
+        } else {
+            PagerColumn::Text(self.scroll.1 + x - 1)
+        };
         PagerPoint {
             line,
             sticky_header: false,
@@ -531,18 +547,22 @@ impl<'result> PagerResult<'result> {
         }
 
         let mut last_y = 0;
-        for (y, _) in self.screen_forward(self.scroll.0).enumerate().take(self.state.last_height as usize) {
+        for (y, _) in self
+            .screen_forward(self.scroll.0)
+            .enumerate()
+            .take(self.state.last_height as usize)
+        {
             last_y = y + 1;
         }
         assert!(last_y <= self.state.last_height as usize);
 
         let rewind = self.state.last_height as usize - last_y;
         if rewind != 0 {
-            let line =
-                self.screen_backward(self.scroll.0)
-                    .skip(rewind - 1)
-                    .next()
-                    .unwrap_or(0);
+            let line = self
+                .screen_backward(self.scroll.0)
+                .skip(rewind - 1)
+                .next()
+                .unwrap_or(0);
             self.scroll.0 = line;
         }
     }
@@ -552,18 +572,18 @@ impl<'result> PagerResult<'result> {
         self.scroll.1 = self.scroll.1.saturating_add_signed(cols);
 
         if lines < 0 {
-            let line =
-                self.screen_backward(self.scroll.0)
-                    .skip((-lines - 1) as usize)
-                    .next()
-                    .unwrap_or(0);
+            let line = self
+                .screen_backward(self.scroll.0)
+                .skip((-lines - 1) as usize)
+                .next()
+                .unwrap_or(0);
             self.scroll.0 = line;
         } else if lines > 0 {
-            let line =
-                self.screen_forward(self.scroll.0)
-                    .skip(lines as usize)
-                    .next()
-                    .unwrap_or_else(|| self.source.num_lines().saturating_sub(1));
+            let line = self
+                .screen_forward(self.scroll.0)
+                .skip(lines as usize)
+                .next()
+                .unwrap_or_else(|| self.source.num_lines().saturating_sub(1));
             self.scroll.0 = line;
             self.normalize_scroll();
         }
@@ -580,92 +600,89 @@ impl<'result> PagerResult<'result> {
     /// If the given document line is hidden, it is replaced by the nearest earlier visible line.
     fn scroll_line_into_view(&mut self, line: usize) {
         // Normalize to a visible line.
-        let Some(line) = self.screen_forward(line).next() else { return; };
+        let Some(line) = self.screen_forward(line).next() else {
+            return;
+        };
 
         let total_height = self.state.last_height as usize;
 
         // Determine whether we're outside of the desired range.
-        let o =
-            if line < self.scroll.0 {
-                Ordering::Less
+        let o = if line < self.scroll.0 {
+            Ordering::Less
+        } else {
+            let y = self
+                .screen_forward(self.scroll.0)
+                .enumerate()
+                .take(total_height)
+                .skip_while(|&(_, l)| l < line)
+                .next()
+                .map(|(y, _)| y)
+                .unwrap_or(total_height);
+
+            if y >= total_height {
+                Ordering::Greater
             } else {
-                let y = self.screen_forward(self.scroll.0)
-                    .enumerate()
-                    .take(total_height)
-                    .skip_while(|&(_, l)| l < line)
-                    .next()
-                    .map(|(y, _)| y)
-                    .unwrap_or(total_height);
-
-                if y >= total_height {
-                    Ordering::Greater
-                } else {
-                    let sticky_headers = self.compute_sticky_headers();
-                    let body_height = total_height.saturating_sub(sticky_headers.len());
-                    let margin = std::cmp::min(4, body_height / 3);
-
-                    if y < sticky_headers.len() + margin {
-                        Ordering::Less
-                    } else if y >= total_height.saturating_sub(margin) {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Equal
-                    }
-                }
-            };
-
-        // Scroll up or down as required.
-        match o {
-        Ordering::Less => {
-            let margin = std::cmp::min(4, total_height / 3);
-            let Some(new_scroll) =
-                std::iter::once(line).chain(self.screen_backward(line))
-                    .skip(margin)
-                    .next() else {
-                self.scroll.0 = 0;
-                return;
-            };
-            self.scroll.0 = new_scroll;
-
-            let mut y = margin;
-
-            loop {
                 let sticky_headers = self.compute_sticky_headers();
                 let body_height = total_height.saturating_sub(sticky_headers.len());
                 let margin = std::cmp::min(4, body_height / 3);
 
-                if y >= sticky_headers.len() + margin {
-                    break;
+                if y < sticky_headers.len() + margin {
+                    Ordering::Less
+                } else if y >= total_height.saturating_sub(margin) {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
                 }
+            }
+        };
 
-                let Some(new_scroll) =
-                    self.screen_backward(self.scroll.0)
-                        .next() else {
+        // Scroll up or down as required.
+        match o {
+            Ordering::Less => {
+                let margin = std::cmp::min(4, total_height / 3);
+                let Some(new_scroll) = std::iter::once(line)
+                    .chain(self.screen_backward(line))
+                    .skip(margin)
+                    .next()
+                else {
                     self.scroll.0 = 0;
-                    break;
+                    return;
                 };
                 self.scroll.0 = new_scroll;
-                y += 1;
+
+                let mut y = margin;
+
+                loop {
+                    let sticky_headers = self.compute_sticky_headers();
+                    let body_height = total_height.saturating_sub(sticky_headers.len());
+                    let margin = std::cmp::min(4, body_height / 3);
+
+                    if y >= sticky_headers.len() + margin {
+                        break;
+                    }
+
+                    let Some(new_scroll) = self.screen_backward(self.scroll.0).next() else {
+                        self.scroll.0 = 0;
+                        break;
+                    };
+                    self.scroll.0 = new_scroll;
+                    y += 1;
+                }
             }
-        },
-        Ordering::Greater => {
-            let margin = std::cmp::min(4, total_height / 3);
-            let margin =
-                self.screen_forward(line)
-                    .skip(1)
-                    .take(margin)
-                    .count();
-            let target_y = total_height.saturating_sub(margin + 1);
-            let new_scroll =
-                std::iter::once(line).chain(self.screen_backward(line))
+            Ordering::Greater => {
+                let margin = std::cmp::min(4, total_height / 3);
+                let margin = self.screen_forward(line).skip(1).take(margin).count();
+                let target_y = total_height.saturating_sub(margin + 1);
+                let new_scroll = std::iter::once(line)
+                    .chain(self.screen_backward(line))
                     .skip(target_y)
-                    .next() 
+                    .next()
                     .unwrap_or(0);
-            self.scroll.0 = new_scroll;
-        },
-        Ordering::Equal => {
-            // nothing to do
-        },
+                self.scroll.0 = new_scroll;
+            }
+            Ordering::Equal => {
+                // nothing to do
+            }
         }
     }
 
@@ -673,23 +690,22 @@ impl<'result> PagerResult<'result> {
     fn move_by(&mut self, lines: isize) {
         let select = self.screen_forward(self.select).next().unwrap_or(0);
 
-        let select =
-            if lines < 0 {
-                self.screen_backward(select)
-                    .skip((-lines - 1) as usize)
-                    .next()
-                    .unwrap_or_else(|| self.screen_forward(0).next().unwrap_or(0))
-            } else if lines > 0 {
-                self.screen_forward(select)
-                    .skip(lines as usize)
-                    .next()
-                    .unwrap_or_else(|| {
-                        let last_line = self.source.num_lines().saturating_sub(1);
-                        self.screen_forward(last_line).next().unwrap_or(last_line)
-                    })
-            } else {
-                select
-            };
+        let select = if lines < 0 {
+            self.screen_backward(select)
+                .skip((-lines - 1) as usize)
+                .next()
+                .unwrap_or_else(|| self.screen_forward(0).next().unwrap_or(0))
+        } else if lines > 0 {
+            self.screen_forward(select)
+                .skip(lines as usize)
+                .next()
+                .unwrap_or_else(|| {
+                    let last_line = self.source.num_lines().saturating_sub(1);
+                    self.screen_forward(last_line).next().unwrap_or(last_line)
+                })
+        } else {
+            select
+        };
 
         self.select = select;
 
@@ -714,15 +730,13 @@ impl<'result> PagerResult<'result> {
     }
 
     pub fn search(&mut self, pattern: &Regex, forward: bool) {
-        let line =
-            if forward {
-                (self.select + 1..self.source.num_lines())
-                    .find(|&line| self.search_impl(pattern, line))
-            } else {
-                (0..self.select)
-                    .rev()
-                    .find(|&line| self.search_impl(pattern, line))
-            };
+        let line = if forward {
+            (self.select + 1..self.source.num_lines()).find(|&line| self.search_impl(pattern, line))
+        } else {
+            (0..self.select)
+                .rev()
+                .find(|&line| self.search_impl(pattern, line))
+        };
         if let Some(line) = line {
             self.move_to(line);
         }
@@ -776,7 +790,8 @@ impl<'build, 'result> Pager<'build, 'result> {
     where
         'state: 'result,
     {
-        let area = builder.take_lines(LayoutItem1D::new(Constraint1D::new_min(5)).id(state_id, true));
+        let area =
+            builder.take_lines(LayoutItem1D::new(Constraint1D::new_min(5)).id(state_id, true));
         let has_focus = builder.check_focus(state_id);
 
         state.last_height = area.height;
@@ -784,8 +799,8 @@ impl<'build, 'result> Pager<'build, 'result> {
         let mut result = PagerResult::new(self.source, state);
 
         // Handle events
-        let vertical_page_size = std::cmp::max((area.height / 2) as isize + 1,
-                                               area.height as isize - 5);
+        let vertical_page_size =
+            std::cmp::max((area.height / 2) as isize + 1, area.height as isize - 5);
         let horizontal_page_size = std::cmp::max(1, (area.width / 2) as isize);
         let mouse_page_size = std::cmp::min(5, vertical_page_size);
 
@@ -793,13 +808,16 @@ impl<'build, 'result> Pager<'build, 'result> {
             if builder.on_key_press(KeyCode::Left) {
                 if result.scroll.1 > 0 {
                     result.scroll_by(0, -horizontal_page_size);
-                } else if let Some((range, _)) = self.source.get_folding_range(result.select, false) {
+                } else if let Some((range, _)) = self.source.get_folding_range(result.select, false)
+                {
                     if result.select != range.start {
                         result.move_to(range.start);
                     } else {
                         if !result.is_collapsed(result.select) {
                             result.set_collapsed(result.select, true);
-                        } else if let Some((range, _)) = self.source.get_folding_range(result.select, true) {
+                        } else if let Some((range, _)) =
+                            self.source.get_folding_range(result.select, true)
+                        {
                             result.move_to(range.start);
                         }
                     }
@@ -872,17 +890,21 @@ impl<'build, 'result> Pager<'build, 'result> {
             let point = result.classify_point(pos.x - area.x, pos.y - area.y);
 
             match point.col {
-            PagerColumn::Text(_) => {
-                let line = result.move_to_no_scroll(point.line);
-                if point.sticky_header {
-                    result.scroll_line_into_view(line);
+                PagerColumn::Text(_) => {
+                    let line = result.move_to_no_scroll(point.line);
+                    if point.sticky_header {
+                        result.scroll_line_into_view(line);
+                    }
                 }
-            },
-            PagerColumn::Folding => {
-                if self.source.get_folding_range(point.line, false).is_some_and(|(r, _)| r.start == point.line) {
-                    result.toggle_collapsed(point.line);
+                PagerColumn::Folding => {
+                    if self
+                        .source
+                        .get_folding_range(point.line, false)
+                        .is_some_and(|(r, _)| r.start == point.line)
+                    {
+                        result.toggle_collapsed(point.line);
+                    }
                 }
-            }
             }
 
             builder.grab_focus(state_id);
@@ -890,17 +912,19 @@ impl<'build, 'result> Pager<'build, 'result> {
 
         // Render widget
         let block = Block::default().style(builder.theme().pane_background);
-        builder.frame().render_widget(block, Rect {
-            x: area.x.saturating_add(1),
-            width: area.width.saturating_sub(1),
-            ..area
-        });
+        builder.frame().render_widget(
+            block,
+            Rect {
+                x: area.x.saturating_add(1),
+                width: area.width.saturating_sub(1),
+                ..area
+            },
+        );
 
         let block = Block::default().style(builder.theme().modal_background);
-        builder.frame().render_widget(block, Rect {
-            width: 1,
-            ..area
-        });
+        builder
+            .frame()
+            .render_widget(block, Rect { width: 1, ..area });
 
         let num_lines = self.source.num_lines();
         let selection = result.selection();
@@ -911,39 +935,53 @@ impl<'build, 'result> Pager<'build, 'result> {
             let y = area.y + ry as u16;
 
             let block = Block::default().style(builder.theme().modal_background);
-            builder.frame().render_widget(block, Rect {
-                y,
-                height: 1,
-                ..area
-            });
+            builder.frame().render_widget(
+                block,
+                Rect {
+                    y,
+                    height: 1,
+                    ..area
+                },
+            );
 
-            let line = self.source.get_line(builder.theme().text(builder.theme_context()), line_no, result.scroll.1, area.width as usize);
-            builder.frame().render_widget(line, Rect {
-                y,
-                height: 1,
-                ..area
-            });
+            let line = self.source.get_line(
+                builder.theme().text(builder.theme_context()),
+                line_no,
+                result.scroll.1,
+                area.width as usize,
+            );
+            builder.frame().render_widget(
+                line,
+                Rect {
+                    y,
+                    height: 1,
+                    ..area
+                },
+            );
         }
 
         let text_width = area.width.saturating_sub(1);
 
-        for (ry, line_no) in
-            result.screen_forward(result.scroll.0)
-                .enumerate()
-                .take(result.state.last_height as usize)
-                .skip(sticky_headers.len())
+        for (ry, line_no) in result
+            .screen_forward(result.scroll.0)
+            .enumerate()
+            .take(result.state.last_height as usize)
+            .skip(sticky_headers.len())
         {
             let y = area.y + (ry as u16);
             assert!(line_no < num_lines);
 
             if selection.contains(&line_no) {
-                let block = Block::default().style(
-                    builder.theme().text(builder.theme_context()).selected);
-                builder.frame().render_widget(block, Rect {
-                    y,
-                    height: 1,
-                    ..area
-                });
+                let block =
+                    Block::default().style(builder.theme().text(builder.theme_context()).selected);
+                builder.frame().render_widget(
+                    block,
+                    Rect {
+                        y,
+                        height: 1,
+                        ..area
+                    },
+                );
             }
 
             if let Some((range, _)) = self.source.get_folding_range(line_no, false) {
@@ -954,11 +992,14 @@ impl<'build, 'result> Pager<'build, 'result> {
                         false => "▼",
                     };
                     let span = Span::from(marker).style(builder.theme().modal_text.normal);
-                    builder.frame().render_widget(span, Rect {
-                        y,
-                        height: 1,
-                        ..area
-                    });
+                    builder.frame().render_widget(
+                        span,
+                        Rect {
+                            y,
+                            height: 1,
+                            ..area
+                        },
+                    );
                 }
             }
 
@@ -966,32 +1007,39 @@ impl<'build, 'result> Pager<'build, 'result> {
                 // Get the complete line and extract the raw text.
                 //
                 // TODO: This loses a whole bunch of the efficiency that PagerSource was built for.
-                let line =
-                    self.source.get_line(
-                        builder.theme().text(builder.theme_context()),
-                        line_no, 0, usize::MAX);
-                let text = line.spans.iter()
+                let line = self.source.get_line(
+                    builder.theme().text(builder.theme_context()),
+                    line_no,
+                    0,
+                    usize::MAX,
+                );
+                let text = line
+                    .spans
+                    .iter()
                     .map(|span: &Span| span.content.as_ref())
                     .join("");
 
                 // Find matches.
-                let matches =
-                    pattern.find_iter(&text)
-                        .map(|m| m.range())
-                        .collect::<Vec<_>>();
+                let matches = pattern
+                    .find_iter(&text)
+                    .map(|m| m.range())
+                    .collect::<Vec<_>>();
 
                 // Combine the pre-existing styles with matches and render spans on the fly.
                 let search = builder.theme().text(builder.theme_context()).search;
                 let normal = builder.theme().text(builder.theme_context()).normal;
 
-                let mut styles = line.spans.iter()
+                let mut styles = line
+                    .spans
+                    .iter()
                     .scan(0, |idx, span| {
                         let start = *idx;
                         *idx += span.content.len();
                         Some((start, span.style))
                     })
                     .peekable();
-                let mut matches = matches.iter()
+                let mut matches = matches
+                    .iter()
                     .flat_map(|m| [(m.start, true), (m.end, false)])
                     .peekable();
 
@@ -1000,15 +1048,16 @@ impl<'build, 'result> Pager<'build, 'result> {
                 let mut row_col = text.row_col_scan((0, 0)).peekable();
 
                 'line: while let Some(&((_, mut begin_col), mut begin_idx)) = row_col.peek() {
-                    let (next_style_idx, next_style) =
-                        styles.peek()
-                            .map(Clone::clone)
-                            .unwrap_or((usize::MAX, Style::default()));
-                    let (next_match_idx, next_match) =
-                        matches.peek()
-                            .map(Clone::clone)
-                            .unwrap_or((usize::MAX, false));
-                    let end_idx = std::cmp::min(text.len(), std::cmp::min(next_style_idx, next_match_idx));
+                    let (next_style_idx, next_style) = styles
+                        .peek()
+                        .map(Clone::clone)
+                        .unwrap_or((usize::MAX, Style::default()));
+                    let (next_match_idx, next_match) = matches
+                        .peek()
+                        .map(Clone::clone)
+                        .unwrap_or((usize::MAX, false));
+                    let end_idx =
+                        std::cmp::min(text.len(), std::cmp::min(next_style_idx, next_match_idx));
 
                     while begin_col < result.scroll.1 && begin_idx < end_idx {
                         row_col.next();
@@ -1025,16 +1074,15 @@ impl<'build, 'result> Pager<'build, 'result> {
                     }
 
                     if begin_idx != end_idx {
-                        let style =
-                            if in_match {
-                                if base_style == normal {
-                                    search
-                                } else {
-                                    search.patch(base_style)
-                                }
+                        let style = if in_match {
+                            if base_style == normal {
+                                search
                             } else {
-                                base_style
-                            };
+                                search.patch(base_style)
+                            }
+                        } else {
+                            base_style
+                        };
 
                         let span = Span::from(&text[begin_idx..end_idx]).style(style);
                         let rx = (begin_col - result.scroll.1) as u16;
@@ -1069,15 +1117,15 @@ impl<'build, 'result> Pager<'build, 'result> {
                     }
                 }
             } else {
-                let line =
-                    self.source
-                        .get_line(
-                            builder.theme().text(builder.theme_context()),
-                            line_no,
-                            result.scroll.1,
-                            text_width as usize
-                        )
-                        .style(builder.theme().text.normal);
+                let line = self
+                    .source
+                    .get_line(
+                        builder.theme().text(builder.theme_context()),
+                        line_no,
+                        result.scroll.1,
+                        text_width as usize,
+                    )
+                    .style(builder.theme().text.normal);
 
                 builder.frame().render_widget(
                     line,
@@ -1203,47 +1251,51 @@ pub fn run(text: String) -> Result<()> {
             .build(builder, |builder, _| {
                 if let Some(error) = &error {
                     let area = builder.take_lines_fixed(1);
-                    let span = Span::from(error).style(builder.theme().text(builder.theme_context()).error);
+                    let span = Span::from(error)
+                        .style(builder.theme().text(builder.theme_context()).error);
                     builder.frame().render_widget(span, area);
                 }
             });
         match action {
-        command::CommandAction::None => {},
-        command::CommandAction::Command(_) => {
-            if was_search {
-                if let Some(pattern) = &search {
-                    pager_result.search(pattern, true);
-                }
-            }
-            error = None;
-        },
-        command::CommandAction::Changed(cmd) => {
-            assert!(!cmd.is_empty());
-
-            error = None;
-            if cmd.starts_with('/') {
-                search = None;
-                if cmd.len() > 1 {
-                    match Regex::new(&cmd[1..]) {
-                        Ok(regex) => {
-                            search = Some(regex);
-                        },
-                        Err(e) => {
-                            error = Some(format!("{}", e));
-                        }
+            command::CommandAction::None => {}
+            command::CommandAction::Command(_) => {
+                if was_search {
+                    if let Some(pattern) = &search {
+                        pager_result.search(pattern, true);
                     }
                 }
-            } else {
-                error = Some(format!("Unknown command prefix: {}", cmd.chars().next().unwrap()));
+                error = None;
             }
-            builder.need_refresh();
-        },
-        command::CommandAction::Cancelled => {
-            if was_search {
-                search = None;
+            command::CommandAction::Changed(cmd) => {
+                assert!(!cmd.is_empty());
+
+                error = None;
+                if cmd.starts_with('/') {
+                    search = None;
+                    if cmd.len() > 1 {
+                        match Regex::new(&cmd[1..]) {
+                            Ok(regex) => {
+                                search = Some(regex);
+                            }
+                            Err(e) => {
+                                error = Some(format!("{}", e));
+                            }
+                        }
+                    }
+                } else {
+                    error = Some(format!(
+                        "Unknown command prefix: {}",
+                        cmd.chars().next().unwrap()
+                    ));
+                }
+                builder.need_refresh();
             }
-            error = None;
-        },
+            command::CommandAction::Cancelled => {
+                if was_search {
+                    search = None;
+                }
+                error = None;
+            }
         }
 
         // Global key bindings
@@ -1268,19 +1320,26 @@ mod test {
 
     #[test]
     fn sps_basic() {
-        let filler: String = std::iter::repeat('+').take(500).chain(std::iter::once('\n')).collect();
-        let text =
-            "First line\n".to_owned() +
-            &filler +
-            "Third line\n" +
-            &filler +
-            "Fifth line\n";
+        let filler: String = std::iter::repeat('+')
+            .take(500)
+            .chain(std::iter::once('\n'))
+            .collect();
+        let text = "First line\n".to_owned() + &filler + "Third line\n" + &filler + "Fifth line\n";
         let source = StringPagerSource::new(&text);
         let theme = theme::Theme::default().text;
         assert_eq!(source.num_lines(), 5);
-        assert_eq!(source.get_line(&theme, 0, 0, usize::MAX).to_string(), "First line");
-        assert_eq!(source.get_line(&theme, 2, 3, usize::MAX).to_string(), "rd line");
-        assert_eq!(source.get_line(&theme, 4, 3, usize::MAX).to_string(), "th line");
+        assert_eq!(
+            source.get_line(&theme, 0, 0, usize::MAX).to_string(),
+            "First line"
+        );
+        assert_eq!(
+            source.get_line(&theme, 2, 3, usize::MAX).to_string(),
+            "rd line"
+        );
+        assert_eq!(
+            source.get_line(&theme, 4, 3, usize::MAX).to_string(),
+            "th line"
+        );
         assert_eq!(source.get_line(&theme, 0, 10, usize::MAX).width(), 0);
         assert_eq!(source.get_line(&theme, 0, 11, usize::MAX).width(), 0);
         assert_eq!(source.get_line(&theme, 2, 10, usize::MAX).width(), 0);

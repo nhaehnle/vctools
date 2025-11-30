@@ -2,7 +2,10 @@
 
 use rand::prelude::*;
 
-use ratatui::{layout::Rect, widgets::{Block, BorderType, Borders}};
+use ratatui::{
+    layout::Rect,
+    widgets::{Block, BorderType, Borders},
+};
 use vctuik::{event::KeyCode, prelude::*, state::Builder};
 
 const LEFT: u8 = 1;
@@ -38,12 +41,15 @@ impl GameState {
                 }
             }
         }
-        Self { width, height, maze }
+        Self {
+            width,
+            height,
+            maze,
+        }
     }
 }
 
-fn add_game_view(builder: &mut Builder, game_state: &mut GameState)
-{
+fn add_game_view(builder: &mut Builder, game_state: &mut GameState) {
     let area = builder.take_lines_fixed(game_state.height as u16 + 2);
 
     let game_area = Rect {
@@ -58,7 +64,10 @@ fn add_game_view(builder: &mut Builder, game_state: &mut GameState)
     let buffer = builder.frame().buffer_mut();
     for y in 0..game_state.height {
         for x in 0..game_state.width {
-            if let Some(cell) = buffer.cell_mut((game_area.x + (x + 1) as u16, game_area.y + (game_state.height - y) as u16)) {
+            if let Some(cell) = buffer.cell_mut((
+                game_area.x + (x + 1) as u16,
+                game_area.y + (game_state.height - y) as u16,
+            )) {
                 cell.set_char(CONNECTORS[game_state.maze[y * game_state.width + x] as usize]);
             }
         }

@@ -81,12 +81,7 @@ impl<'a> CheckBoxStateRef<'a> for &'a Cell<bool> {
     }
 }
 
-pub fn add_check_box<'s>(
-    builder: &mut Builder,
-    title: &str,
-    state: impl CheckBoxStateRef<'s>,
-)
-{
+pub fn add_check_box<'s>(builder: &mut Builder, title: &str, state: impl CheckBoxStateRef<'s>) {
     let state_id = builder.add_state_id(title);
     let mut state = state.as_check_box_state();
     let has_focus = builder.check_focus(state_id);
@@ -94,19 +89,30 @@ pub fn add_check_box<'s>(
     let text_width = title.graphemes(true).count() as u16;
 
     let area = builder.take_lines_fixed(1);
-    let click_area = Rect { width: 4 + text_width, ..area };
+    let click_area = Rect {
+        width: 4 + text_width,
+        ..area
+    };
 
-    if builder.on_mouse_press(click_area, MouseButton::Left).is_some() ||
-       (has_focus && builder.on_key_press(KeyCode::Char(' '))) {
+    if builder
+        .on_mouse_press(click_area, MouseButton::Left)
+        .is_some()
+        || (has_focus && builder.on_key_press(KeyCode::Char(' ')))
+    {
         state.toggle();
     }
 
-    let text = format!("[{state_char}] {title}", state_char = if state.get() { '*' } else { ' ' });
+    let text = format!(
+        "[{state_char}] {title}",
+        state_char = if state.get() { '*' } else { ' ' }
+    );
 
     let mut span = Span::from(text);
     if has_focus {
         span = span.theme_highlight(builder);
-        builder.frame().set_cursor_position(Position::new(area.x + 1, area.y));
+        builder
+            .frame()
+            .set_cursor_position(Position::new(area.x + 1, area.y));
     } else {
         span = span.theme_text(builder);
     }

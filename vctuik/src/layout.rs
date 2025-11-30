@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{collections::{HashMap}, ops::Range};
 use std::hash::Hash;
+use std::{collections::HashMap, ops::Range};
 
 pub type Layout1D = Vec<u16>;
 
@@ -33,7 +33,10 @@ impl Constraint1D {
     }
 
     pub fn new_fixed(size: u16) -> Self {
-        Self { min: size, max: size }
+        Self {
+            min: size,
+            max: size,
+        }
     }
 
     pub fn min(self) -> u16 {
@@ -142,22 +145,28 @@ impl<Id: Eq + Hash> LayoutEngine<Id> {
         self.size
     }
 
-    pub fn add(&mut self, cache: &LayoutCache<Id>, old_id: Option<Id>, item: LayoutItem1D<Id>) -> (u16, u16) {
+    pub fn add(
+        &mut self,
+        cache: &LayoutCache<Id>,
+        old_id: Option<Id>,
+        item: LayoutItem1D<Id>,
+    ) -> (u16, u16) {
         assert!(item.id.is_some() || !item.persistent_id);
 
         let pos = self.size;
-        let size =
-            if item.id.is_some() {
-                let cached_size =
-                    old_id
-                        .and_then(|old_id| cache.items.get(&old_id))
-                        .map(|item| item.size)
-                        .unwrap_or(0);
-                std::cmp::max(std::cmp::min(cached_size, item.constraint.max), item.constraint.min)
-            } else {
-                assert!(item.constraint.min == item.constraint.max);
-                item.constraint.min
-            };
+        let size = if item.id.is_some() {
+            let cached_size = old_id
+                .and_then(|old_id| cache.items.get(&old_id))
+                .map(|item| item.size)
+                .unwrap_or(0);
+            std::cmp::max(
+                std::cmp::min(cached_size, item.constraint.max),
+                item.constraint.min,
+            )
+        } else {
+            assert!(item.constraint.min == item.constraint.max);
+            item.constraint.min
+        };
 
         self.items.push(Item::new(item, pos, size));
         self.size += size;
@@ -170,12 +179,11 @@ impl<Id: Eq + Hash> LayoutEngine<Id> {
     pub fn drag(&mut self, anchor: u16, delta: i16) {
         // There can be 0-sized "slack" items, so handle the case where multiple items have the
         // same position gracefully.
-        let idx =
-            if delta > 0 {
-                self.items.partition_point(|item| item.pos <= anchor) - 1
-            } else {
-                self.items.partition_point(|item| item.pos < anchor)
-            };
+        let idx = if delta > 0 {
+            self.items.partition_point(|item| item.pos <= anchor) - 1
+        } else {
+            self.items.partition_point(|item| item.pos < anchor)
+        };
         assert!(idx > 0 && self.items[idx].pos == anchor);
         self.drags.push((idx, delta))
     }
@@ -217,10 +225,13 @@ impl<Id: Eq + Hash> LayoutEngine<Id> {
 
         for item in self.items {
             if let Some(id) = item.item.id {
-                cache.items.insert(id, CacheItem {
-                    size: item.size,
-                    persistent: item.item.persistent_id,
-                });
+                cache.items.insert(
+                    id,
+                    CacheItem {
+                        size: item.size,
+                        persistent: item.item.persistent_id,
+                    },
+                );
             }
         }
 
@@ -237,7 +248,12 @@ struct Calculator1D<'items, Id> {
 }
 impl<'items, Id> Calculator1D<'items, Id> {
     fn new(total: u16, constraint: Constraint1D, items: &'items mut [Item<Id>]) -> Self {
-        Self { total, constraint, items, changed: false }
+        Self {
+            total,
+            constraint,
+            items,
+            changed: false,
+        }
     }
 
     fn move_start(&mut self, index: usize, mut delta: i16) {
@@ -261,7 +277,10 @@ impl<'items, Id> Calculator1D<'items, Id> {
     }
 
     fn do_grow(&mut self, index: usize, delta: i16, shrink_range: Range<usize>) -> i16 {
-        let mut delta = std::cmp::min(delta as u16, self.items[index].item.constraint.max - self.items[index].size);
+        let mut delta = std::cmp::min(
+            delta as u16,
+            self.items[index].item.constraint.max - self.items[index].size,
+        );
 
         let mut growth = 0;
         let slack = std::cmp::min(self.constraint.max.saturating_sub(self.total), delta);
@@ -276,7 +295,10 @@ impl<'items, Id> Calculator1D<'items, Id> {
             }
 
             if i != index {
-                let slack = std::cmp::min(self.items[i].size - self.items[i].item.constraint.min, delta);
+                let slack = std::cmp::min(
+                    self.items[i].size - self.items[i].item.constraint.min,
+                    delta,
+                );
                 self.items[index].size += slack;
                 self.items[i].size -= slack;
                 delta -= slack;
@@ -292,7 +314,10 @@ impl<'items, Id> Calculator1D<'items, Id> {
     }
 
     fn do_shrink(&mut self, index: usize, delta: i16, grow_range: Range<usize>) -> i16 {
-        let mut delta = std::cmp::min(delta as u16, self.items[index].size - self.items[index].item.constraint.min);
+        let mut delta = std::cmp::min(
+            delta as u16,
+            self.items[index].size - self.items[index].item.constraint.min,
+        );
 
         let mut shrink = 0;
 
@@ -302,7 +327,10 @@ impl<'items, Id> Calculator1D<'items, Id> {
             }
 
             if i != index {
-                let slack = std::cmp::min(self.items[i].item.constraint.max - self.items[i].size, delta);
+                let slack = std::cmp::min(
+                    self.items[i].item.constraint.max - self.items[i].size,
+                    delta,
+                );
                 self.items[index].size -= slack;
                 self.items[i].size += slack;
                 delta -= slack;

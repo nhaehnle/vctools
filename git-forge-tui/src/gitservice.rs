@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 ///! Managed asynchronous access to local git repositories.
-
-use std::{collections::{HashMap, HashSet}, ffi::OsString, hash::Hash, sync::{atomic::{self, AtomicBool}, Arc, Condvar, Mutex, OnceLock}, time};
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::OsString,
+    hash::Hash,
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc, Condvar, Mutex, OnceLock,
+    },
+    time,
+};
 
 use blake2::Digest;
-use log::{debug, info, error};
+use log::{debug, error, info};
 use serde::Deserialize;
 
-use diff_modulo_base::{git_core::{self, Cacheability, ExecutionProvider}};
+use diff_modulo_base::git_core::{self, Cacheability, ExecutionProvider};
 use vctools_utils::prelude::*;
 use vctuik::signals::MergeWakeupSignal;
 
@@ -73,7 +81,7 @@ struct ServiceInner {
     job_done: Condvar,
     cache: Mutex<Cache>,
     wakeup_signal: MergeWakeupSignal,
-    timed_out: AtomicBool
+    timed_out: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -83,8 +91,14 @@ pub struct GitService {
 }
 impl GitService {
     /// Create a new service with the provided configuration
-    pub fn new(config: &Config, api_hosts: &[crate::github::Host], wakeup_signal: MergeWakeupSignal) -> Self {
-        let repositories = config.repositories.iter()
+    pub fn new(
+        config: &Config,
+        api_hosts: &[crate::github::Host],
+        wakeup_signal: MergeWakeupSignal,
+    ) -> Self {
+        let repositories = config
+            .repositories
+            .iter()
             .map(|repo| git_core::Repository::new(repo.path.clone()))
             .collect();
         let api_hosts = api_hosts.iter().map(|host| host.host.clone()).collect();
@@ -107,10 +121,7 @@ impl GitService {
             });
         }
 
-        Self {
-            inner,
-            frame: None,
-        }
+        Self { inner, frame: None }
     }
 
     pub fn start_frame(&mut self, frame_duration: time::Duration) {
@@ -137,7 +148,13 @@ impl GitService {
     }
 }
 impl git_core::ExecutionProvider for GitService {
-    fn exec(&self, path: &std::path::PathBuf, command: &str, args: Vec<std::ffi::OsString>, cacheable: Cacheability) -> git_core::ExecutionResult {
+    fn exec(
+        &self,
+        path: &std::path::PathBuf,
+        command: &str,
+        args: Vec<std::ffi::OsString>,
+        cacheable: Cacheability,
+    ) -> git_core::ExecutionResult {
         let deadline = self.frame.unwrap(); // must be inside of a frame
 
         // Mutating commands are executed directly.
@@ -145,10 +162,12 @@ impl git_core::ExecutionProvider for GitService {
             return git_core::SimpleExecutionProvider.exec(path, command, args, cacheable);
         }
 
-        type Blake2b128 = blake2::Blake2b::<blake2::digest::consts::U16>;
+        type Blake2b128 = blake2::Blake2b<blake2::digest::consts::U16>;
         struct MyHasher(Blake2b128);
         impl std::hash::Hasher for MyHasher {
-            fn finish(&self) -> u64 { unreachable!() }
+            fn finish(&self) -> u64 {
+                unreachable!()
+            }
             fn write(&mut self, bytes: &[u8]) {
                 self.0.update(bytes);
             }
@@ -197,7 +216,9 @@ impl git_core::ExecutionProvider for GitService {
             });
 
             let mut cache = self.inner.cache.lock().unwrap();
-            cache.index.insert(cache_key, git_core::ExecutionResult::Pending);
+            cache
+                .index
+                .insert(cache_key, git_core::ExecutionResult::Pending);
 
             self.inner.job_available.notify_all();
         }
@@ -228,14 +249,17 @@ impl ServiceInner {
         // Initial collection of remotes.
         let mut remotes = Vec::new();
         for repo in &self.repositories {
-            let current_remotes =
-                match repo.get_remotes(&mut git_core::SimpleExecutionProvider) {
+            let current_remotes = match repo.get_remotes(&mut git_core::SimpleExecutionProvider) {
                 Err(err) => {
-                    error!("Error fetching remotes for {}: {}", repo.path.display(), err);
+                    error!(
+                        "Error fetching remotes for {}: {}",
+                        repo.path.display(),
+                        err
+                    );
                     continue;
-                },
+                }
                 Ok(remotes) => remotes,
-                };
+            };
             for (remote, url) in current_remotes {
                 let Some(hostname) = url.hostname() else {
                     continue;
@@ -247,16 +271,13 @@ impl ServiceInner {
                 if !self.api_hosts.contains(hostname) {
                     continue;
                 }
-                let api = ApiRepository::new(
-                    hostname.to_string(),
-                    owner.to_string(),
-                    name.to_string()
-                );
+                let api =
+                    ApiRepository::new(hostname.to_string(), owner.to_string(), name.to_string());
                 let git = GitRepository::new(repo.path.clone(), remote);
                 remotes.push(Remote {
                     git,
                     api,
-                    prefetch: Mutex::new(RemotePrefetch::default())
+                    prefetch: Mutex::new(RemotePrefetch::default()),
                 });
             }
         }
@@ -304,9 +325,22 @@ impl ServiceInner {
                     std::mem::drop(prefetches);
                     std::mem::drop(job);
 
-                    info!("Prefetching remote {} {}", remote.git.repository.path.display(), remote.git.remote);
-                    if let Err(err) = remote.git.repository.prefetch(&git_core::SimpleExecutionProvider, &remote.git.remote) {
-                        error!("Error prefetching remote {} {}: {}", remote.git.repository.path.display(), remote.git.remote, err);
+                    info!(
+                        "Prefetching remote {} {}",
+                        remote.git.repository.path.display(),
+                        remote.git.remote
+                    );
+                    if let Err(err) = remote
+                        .git
+                        .repository
+                        .prefetch(&git_core::SimpleExecutionProvider, &remote.git.remote)
+                    {
+                        error!(
+                            "Error prefetching remote {} {}: {}",
+                            remote.git.repository.path.display(),
+                            remote.git.remote,
+                            err
+                        );
                     }
 
                     prefetch_counter = (prefetch_counter + i + 1) % remotes.len();
@@ -316,12 +350,23 @@ impl ServiceInner {
 
                 if !prefetches.pending.is_empty() {
                     let pending = std::mem::take(&mut prefetches.pending);
-                    prefetches.prefetched_commits.extend(pending.iter().cloned());
+                    prefetches
+                        .prefetched_commits
+                        .extend(pending.iter().cloned());
                     std::mem::drop(prefetches);
                     std::mem::drop(job);
 
-                    if let Err(err) = remote.git.repository.fetch_missing(&git_core::SimpleExecutionProvider, &remote.git.remote, &pending) {
-                        error!("Error prefetching commits for remote {} {}: {}", remote.git.repository.path.display(), remote.git.remote, err);
+                    if let Err(err) = remote.git.repository.fetch_missing(
+                        &git_core::SimpleExecutionProvider,
+                        &remote.git.remote,
+                        &pending,
+                    ) {
+                        error!(
+                            "Error prefetching commits for remote {} {}: {}",
+                            remote.git.repository.path.display(),
+                            remote.git.remote,
+                            err
+                        );
                     }
 
                     prefetch_counter = (prefetch_counter + i + 1) % remotes.len();
@@ -338,7 +383,12 @@ impl ServiceInner {
 
     fn do_job(&self, job: Job) -> Result<()> {
         debug!("Executing: git {} {:?}", job.command, job.args);
-        let result = git_core::SimpleExecutionProvider.exec(&job.path, &job.command, job.args, Cacheability::None);
+        let result = git_core::SimpleExecutionProvider.exec(
+            &job.path,
+            &job.command,
+            job.args,
+            Cacheability::None,
+        );
         let mut cache = self.cache.lock().unwrap();
         *cache.index.get_mut(&job.key).unwrap() = result;
         Ok(())

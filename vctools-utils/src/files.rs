@@ -6,9 +6,7 @@ use crate::prelude::*;
 
 fn read_bytes_impl(path: &Path) -> Result<Vec<u8>> {
     try_forward(
-        || -> Result<Vec<u8>> {
-            Ok(std::fs::read(path)?)
-        },
+        || -> Result<Vec<u8>> { Ok(std::fs::read(path)?) },
         || path.display().to_string(),
     )
 }

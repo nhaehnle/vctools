@@ -2,9 +2,11 @@
 
 use std::borrow::Cow;
 
-use ratatui::{prelude::*, widgets::{Block, Clear}};
 use crate::{event::KeyCode, input, state::Builder, theme};
-
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Clear},
+};
 
 pub enum CommandAction<'action> {
     None,
@@ -53,12 +55,22 @@ impl<'bar, 'cmd> CommandLine<'bar, 'cmd> {
         }
 
         let modal = self.command.is_some();
-        builder.nest()
+        builder
+            .nest()
             .modal(state_id, modal)
-            .theme_context(if modal { theme::Context::Modal } else { theme::Context::None })
+            .theme_context(if modal {
+                theme::Context::Modal
+            } else {
+                theme::Context::None
+            })
             .build(|builder| {
                 builder.frame().render_widget(Clear, area);
-                let block = Block::new().style(builder.theme().modal_background.patch(builder.theme().modal_text.normal));
+                let block = Block::new().style(
+                    builder
+                        .theme()
+                        .modal_background
+                        .patch(builder.theme().modal_text.normal),
+                );
                 builder.frame().render_widget(block, area);
 
                 let popup_height = std::cmp::min(state.popup_height, area.y);
@@ -69,17 +81,22 @@ impl<'bar, 'cmd> CommandLine<'bar, 'cmd> {
                 };
 
                 let background = builder.theme().modal_background;
-                builder.nest()
-                    .popup(popup_area, background, popup_height, &mut state.popup_height)
+                builder
+                    .nest()
+                    .popup(
+                        popup_area,
+                        background,
+                        popup_height,
+                        &mut state.popup_height,
+                    )
                     .build(|builder| {
                         popup(builder, self.command.as_mut());
                     });
 
                 if let Some(command) = self.command.as_mut() {
-                    match
-                        input::Input::new("command")
-                            .area(area)
-                            .build(builder, command)
+                    match input::Input::new("command")
+                        .area(area)
+                        .build(builder, command)
                     {
                         Some(input::InputAction::TextChanged) => {
                             if !command.is_empty() {
@@ -94,7 +111,7 @@ impl<'bar, 'cmd> CommandLine<'bar, 'cmd> {
                             builder.need_refresh();
                             return CommandAction::Command(cmd);
                         }
-                        None => {},
+                        None => {}
                     }
                 } else {
                     let help = Span::from(self.help.unwrap_or("--".into()))

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use ratatui::widgets::Block;
-use vctuik::{event::KeyCode, layout::{Constraint1D, LayoutItem1D}, state::Builder};
+use vctuik::{
+    event::KeyCode,
+    layout::{Constraint1D, LayoutItem1D},
+    state::Builder,
+};
 
 use tui_logger::{TuiLoggerWidget, TuiWidgetEvent, TuiWidgetState};
 
@@ -11,32 +15,31 @@ pub fn add_log_view(builder: &mut Builder) {
     let has_focus = builder.check_focus(state_id);
 
     if has_focus {
-        let event =
-            if builder.on_key_press(KeyCode::Char(' ')) {
-                Some(TuiWidgetEvent::SpaceKey)
-            } else if builder.on_key_press(KeyCode::Down) {
-                Some(TuiWidgetEvent::DownKey)
-            } else if builder.on_key_press(KeyCode::Up) {
-                Some(TuiWidgetEvent::UpKey)
-            } else if builder.on_key_press(KeyCode::Left) {
-                Some(TuiWidgetEvent::LeftKey)
-            } else if builder.on_key_press(KeyCode::Right) {
-                Some(TuiWidgetEvent::RightKey)
-            } else if builder.on_key_press(KeyCode::Char('+')) {
-                Some(TuiWidgetEvent::PlusKey)
-            } else if builder.on_key_press(KeyCode::Char('-')) {
-                Some(TuiWidgetEvent::MinusKey)
-            } else if builder.on_key_press(KeyCode::Char('h')) {
-                Some(TuiWidgetEvent::HideKey)
-            } else if builder.on_key_press(KeyCode::Char('f')) {
-                Some(TuiWidgetEvent::FocusKey)
-            } else if builder.on_key_press(KeyCode::PageDown) {
-                Some(TuiWidgetEvent::NextPageKey)
-            } else if builder.on_key_press(KeyCode::PageUp) {
-                Some(TuiWidgetEvent::PrevPageKey)
-            } else {
-                None
-            };
+        let event = if builder.on_key_press(KeyCode::Char(' ')) {
+            Some(TuiWidgetEvent::SpaceKey)
+        } else if builder.on_key_press(KeyCode::Down) {
+            Some(TuiWidgetEvent::DownKey)
+        } else if builder.on_key_press(KeyCode::Up) {
+            Some(TuiWidgetEvent::UpKey)
+        } else if builder.on_key_press(KeyCode::Left) {
+            Some(TuiWidgetEvent::LeftKey)
+        } else if builder.on_key_press(KeyCode::Right) {
+            Some(TuiWidgetEvent::RightKey)
+        } else if builder.on_key_press(KeyCode::Char('+')) {
+            Some(TuiWidgetEvent::PlusKey)
+        } else if builder.on_key_press(KeyCode::Char('-')) {
+            Some(TuiWidgetEvent::MinusKey)
+        } else if builder.on_key_press(KeyCode::Char('h')) {
+            Some(TuiWidgetEvent::HideKey)
+        } else if builder.on_key_press(KeyCode::Char('f')) {
+            Some(TuiWidgetEvent::FocusKey)
+        } else if builder.on_key_press(KeyCode::PageDown) {
+            Some(TuiWidgetEvent::NextPageKey)
+        } else if builder.on_key_press(KeyCode::PageUp) {
+            Some(TuiWidgetEvent::PrevPageKey)
+        } else {
+            None
+        };
 
         if let Some(event) = event {
             state.transition(event);

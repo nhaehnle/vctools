@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{any::Any, borrow::Cow, collections::{hash_map, HashMap}, ops::DerefMut, path::{Path, PathBuf}, sync::{Arc, Condvar, Mutex}, time::Instant};
+use std::{
+    any::Any,
+    borrow::Cow,
+    collections::{hash_map, HashMap},
+    ops::DerefMut,
+    path::{Path, PathBuf},
+    sync::{Arc, Condvar, Mutex},
+    time::Instant,
+};
 
 use itertools::Itertools;
-use log::{debug, info, warn, error};
+use log::{debug, error, info, warn};
 use reqwest::{header, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize};
 use vctools_utils::{files, prelude::*};
@@ -28,10 +36,7 @@ pub struct ClientConfig {
 }
 impl ClientConfig {
     pub fn offline(self, offline: bool) -> Self {
-        Self {
-            offline,
-            ..self
-        }
+        Self { offline, ..self }
     }
 
     pub fn cache_dir(self, cache_dir: PathBuf) -> Self {
@@ -42,10 +47,7 @@ impl ClientConfig {
     }
 
     pub fn maybe_cache_dir(self, cache_dir: Option<PathBuf>) -> Self {
-        Self {
-            cache_dir,
-            ..self
-        }
+        Self { cache_dir, ..self }
     }
 
     pub fn new(self) -> Result<Client> {
@@ -71,9 +73,9 @@ impl ClientConfig {
     }
 
     fn cache_for_url(&self, url: &str) -> Option<PathBuf> {
-        self.cache_dir.as_ref().map(|dir| {
-            dir.join(url.replace('/', "%"))
-        })
+        self.cache_dir
+            .as_ref()
+            .map(|dir| dir.join(url.replace('/', "%")))
     }
 }
 
@@ -124,12 +126,7 @@ impl Client {
         let url_api = self.url_api.clone();
 
         std::thread::spawn(move || {
-            run_helper(
-                cache,
-                helper,
-                config,
-                url_api,
-            );
+            run_helper(cache, helper, config, url_api);
         });
 
         Ok(())
@@ -138,13 +135,11 @@ impl Client {
     pub fn start_frame(&mut self, deadline: Option<Instant>) {
         assert!(self.frame.is_none());
 
-        self.frame = Some(
-            if let Some(deadline) = deadline {
-                WaitPolicy::Deadline(deadline)
-            } else {
-                WaitPolicy::Wait
-            }
-        );
+        self.frame = Some(if let Some(deadline) = deadline {
+            WaitPolicy::Deadline(deadline)
+        } else {
+            WaitPolicy::Wait
+        });
 
         if let Some(helper) = &self.helper {
             let mut state = helper.state.lock().unwrap();
@@ -192,7 +187,10 @@ trait DynParser: std::fmt::Debug + Send + Sync {
     fn parse(&self, s: &str) -> Result<Box<dyn Any + Send + Sync>>;
 }
 
-fn load_from_cache(cache_file: &Path, parser: &dyn DynParser) -> Response<Box<dyn Any + Send + Sync>> {
+fn load_from_cache(
+    cache_file: &Path,
+    parser: &dyn DynParser,
+) -> Response<Box<dyn Any + Send + Sync>> {
     if !cache_file.exists() {
         return Response::Pending;
     }
@@ -204,8 +202,12 @@ fn load_from_cache(cache_file: &Path, parser: &dyn DynParser) -> Response<Box<dy
     }();
 
     match result {
-    Ok(response) => response,
-    Err(err) => Response::Err(format!("Error reading cache file {}: {}", cache_file.display(), err)),
+        Ok(response) => response,
+        Err(err) => Response::Err(format!(
+            "Error reading cache file {}: {}",
+            cache_file.display(),
+            err
+        )),
     }
 }
 
@@ -222,7 +224,7 @@ impl<'frame> ClientRef<'frame> {
                 hash_map::Entry::Occupied(entry) => {
                     let entry = entry.get();
                     (false, entry.fetched.is_none(), entry.response.clone())
-                },
+                }
                 hash_map::Entry::Vacant(entry) => {
                     let mut response = Response::Pending;
                     if let Some(cache_file) = self.client.config.cache_for_url(url) {
@@ -238,7 +240,7 @@ impl<'frame> ClientRef<'frame> {
                     });
 
                     (true, false, response)
-                },
+                }
             }
         };
 
@@ -271,7 +273,10 @@ impl<'frame> ClientRef<'frame> {
                 }
                 WaitPolicy::Deadline(deadline) => {
                     let timed_out;
-                    (state, timed_out) = helper.response_notify.wait_timeout(state, deadline - Instant::now()).unwrap();
+                    (state, timed_out) = helper
+                        .response_notify
+                        .wait_timeout(state, deadline - Instant::now())
+                        .unwrap();
                     if timed_out.timed_out() {
                         if state.response_signal == ResponseSignal::Disabled {
                             state.response_signal = ResponseSignal::Requested;
@@ -279,7 +284,7 @@ impl<'frame> ClientRef<'frame> {
                         return response;
                     }
                 }
-                WaitPolicy::Prefetch => unreachable!()
+                WaitPolicy::Prefetch => unreachable!(),
             }
 
             if let Some(entry) = self.client.cache.cache.lock().unwrap().get(url) {
@@ -290,7 +295,10 @@ impl<'frame> ClientRef<'frame> {
         }
     }
 
-    fn get<'a, T: DeserializeOwned + Clone + Send + Sync + 'static>(&self, url: impl Into<Cow<'a, str>>) -> Response<T> {
+    fn get<'a, T: DeserializeOwned + Clone + Send + Sync + 'static>(
+        &self,
+        url: impl Into<Cow<'a, str>>,
+    ) -> Response<T> {
         struct Parser<T>(std::marker::PhantomData<T>);
         impl<T> std::fmt::Debug for Parser<T> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -313,21 +321,48 @@ impl<'frame> ClientRef<'frame> {
         //       It should be possible to fix that once MutexGuard::map becomes stable.
         self.get_impl(&url, Box::new(Parser::<T>(std::marker::PhantomData)))
             .map(|_| {
-                self.client.cache.cache
-                    .lock().unwrap()
-                    .get(&url).unwrap()
-                    .parsed.as_ref().unwrap()
-                    .downcast_ref::<T>().unwrap()
+                self.client
+                    .cache
+                    .cache
+                    .lock()
+                    .unwrap()
+                    .get(&url)
+                    .unwrap()
+                    .parsed
+                    .as_ref()
+                    .unwrap()
+                    .downcast_ref::<T>()
+                    .unwrap()
                     .clone()
             })
     }
 
-    pub fn pull<'a>(&self, organization: impl Into<Cow<'a, str>>, gh_repo: impl Into<Cow<'a, str>>, pull: u64) -> Response<api::Pull> {
-        self.get(format!("repos/{}/{}/pulls/{}", organization.into(), gh_repo.into(), pull))
+    pub fn pull<'a>(
+        &self,
+        organization: impl Into<Cow<'a, str>>,
+        gh_repo: impl Into<Cow<'a, str>>,
+        pull: u64,
+    ) -> Response<api::Pull> {
+        self.get(format!(
+            "repos/{}/{}/pulls/{}",
+            organization.into(),
+            gh_repo.into(),
+            pull
+        ))
     }
 
-    pub fn reviews<'a>(&self, organization: impl Into<Cow<'a, str>>, gh_repo: impl Into<Cow<'a, str>>, pull: u64) -> Response<Vec<api::Review>> {
-        self.get(format!("repos/{}/{}/pulls/{}/reviews", organization.into(), gh_repo.into(), pull))
+    pub fn reviews<'a>(
+        &self,
+        organization: impl Into<Cow<'a, str>>,
+        gh_repo: impl Into<Cow<'a, str>>,
+        pull: u64,
+    ) -> Response<Vec<api::Review>> {
+        self.get(format!(
+            "repos/{}/{}/pulls/{}/reviews",
+            organization.into(),
+            gh_repo.into(),
+            pull
+        ))
     }
 
     pub fn notifications<'a>(&self) -> Response<Vec<api::NotificationThread>> {
@@ -448,7 +483,14 @@ impl std::fmt::Debug for HelperState {
             .field("frame_requests", &self.frame_requests.len())
             .field("backlog_requests", &self.backlog_requests.len())
             .field("response_signal", &self.response_signal)
-            .field("response_callback", if self.response_callback.is_some() { &"Some(...)" } else { &"None" })
+            .field(
+                "response_callback",
+                if self.response_callback.is_some() {
+                    &"Some(...)"
+                } else {
+                    &"None"
+                },
+            )
             .finish()
     }
 }
@@ -477,34 +519,32 @@ fn do_request(
     url_api: &Url,
     url: &str,
     cache_file: Option<PathBuf>,
-    parser: Box<dyn DynParser>)
--> Result<Response<Box<dyn Any + Send + Sync>>>
-{
+    parser: Box<dyn DynParser>,
+) -> Result<Response<Box<dyn Any + Send + Sync>>> {
     let url = url_api.join(url).unwrap();
     info!("Requesting {}", url);
 
     let response = client.get(url).send()?;
     debug!("Response: {:?}", &response);
 
-    let converted =
-        if response.status().is_success() {
-            let text = response.text()?;
+    let converted = if response.status().is_success() {
+        let text = response.text()?;
 
-            if let Some(cache_file) = cache_file {
-                if let Err(err) = std::fs::write(&cache_file, text.as_bytes()) {
-                    warn!("Error writing cache file {}: {}", cache_file.display(), err);
-                }
+        if let Some(cache_file) = cache_file {
+            if let Err(err) = std::fs::write(&cache_file, text.as_bytes()) {
+                warn!("Error writing cache file {}: {}", cache_file.display(), err);
             }
+        }
 
-            match parser.parse(&text) {
-                Ok(parsed) => Response::Ok(parsed),
-                Err(err) => Response::Err(format!("Error parsing response: {}", err)),
-            }
-        } else if response.status() == StatusCode::NOT_FOUND {
-            Response::NotFound
-        } else {
-            Response::Err(format!("HTTP error: {}", response.status()))
-        };
+        match parser.parse(&text) {
+            Ok(parsed) => Response::Ok(parsed),
+            Err(err) => Response::Err(format!("Error parsing response: {}", err)),
+        }
+    } else if response.status() == StatusCode::NOT_FOUND {
+        Response::NotFound
+    } else {
+        Response::Err(format!("HTTP error: {}", response.status()))
+    };
 
     Ok(converted)
 }
@@ -526,26 +566,30 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
 
         let mut state = ctrl.state.lock().unwrap();
         while state.running {
-            let (request, is_backlog) =
-                if !state.frame_requests.is_empty() {
-                    (state.frame_requests.drain(0..1).next(), false)
-                } else {
-                    (state.backlog_requests.pop(), true)
-                };
+            let (request, is_backlog) = if !state.frame_requests.is_empty() {
+                (state.frame_requests.drain(0..1).next(), false)
+            } else {
+                (state.backlog_requests.pop(), true)
+            };
             let Some(request) = request else {
                 state = ctrl.helper_wakeup.wait(state).unwrap();
                 continue;
             };
             std::mem::drop(state);
 
-            let response =
-                match do_request(&client, &url_api, &request.url, config.cache_for_url(&request.url), request.parser) {
-                    Ok(response) => response,
-                    Err(err) => {
-                        error!("Error processing request: {}", err);
-                        Response::Err(err.to_string())
-                    }
-                };
+            let response = match do_request(
+                &client,
+                &url_api,
+                &request.url,
+                config.cache_for_url(&request.url),
+                request.parser,
+            ) {
+                Ok(response) => response,
+                Err(err) => {
+                    error!("Error processing request: {}", err);
+                    Response::Err(err.to_string())
+                }
+            };
 
             // Re-acquire the control lock *before* updating the cache.
             //

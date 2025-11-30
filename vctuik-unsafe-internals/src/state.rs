@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{any::Any, collections::{hash_map, HashMap}, hash::Hash};
+use std::{
+    any::Any,
+    collections::{hash_map, HashMap},
+    hash::Hash,
+};
 
 pub struct Store<K> {
     previous: HashMap<K, Box<dyn Any>>,
@@ -31,17 +35,18 @@ impl<'frame, K: Eq + Hash> Builder<'frame, K> {
         Self { store }
     }
 
-    pub fn entry<'entry, T: 'static>(&'entry mut self, new_key: K, old_key: Option<K>)
-            -> Access<'frame, 'entry, K, T> {
+    pub fn entry<'entry, T: 'static>(
+        &'entry mut self,
+        new_key: K,
+        old_key: Option<K>,
+    ) -> Access<'frame, 'entry, K, T> {
         let entry = self.store.current.entry(new_key);
         match entry {
-            hash_map::Entry::Occupied(_) =>
-                panic!("Key inserted again in the same frame"),
+            hash_map::Entry::Occupied(_) => panic!("Key inserted again in the same frame"),
             hash_map::Entry::Vacant(entry) => {
-                let previous =
-                    old_key
-                        .and_then(|key| self.store.previous.remove(&key))
-                        .filter(|value| value.is::<T>());
+                let previous = old_key
+                    .and_then(|key| self.store.previous.remove(&key))
+                    .filter(|value| value.is::<T>());
                 match previous {
                     Some(value) => Access::Existing(Insert::new(entry).insert_box(value)),
                     None => Access::New(Insert::new(entry)),
@@ -50,14 +55,19 @@ impl<'frame, K: Eq + Hash> Builder<'frame, K> {
         }
     }
 
-    pub fn get_or_insert_with<T, F>(&mut self, new_key: K, old_key: Option<K>, f: F) -> &'frame mut T
+    pub fn get_or_insert_with<T, F>(
+        &mut self,
+        new_key: K,
+        old_key: Option<K>,
+        f: F,
+    ) -> &'frame mut T
     where
         T: 'static,
         F: FnOnce() -> T,
     {
         match self.entry(new_key, old_key) {
             Access::Existing(value) => value,
-            Access::New(insert) => insert.insert(f())
+            Access::New(insert) => insert.insert(f()),
         }
     }
 
@@ -71,8 +81,7 @@ impl<'frame, K: Eq + Hash> Builder<'frame, K> {
     pub fn preserve(&mut self, new_key: K, old_key: K) -> bool {
         let entry = self.store.current.entry(new_key);
         match entry {
-            hash_map::Entry::Occupied(_) =>
-                panic!("Key inserted again in the same frame"),
+            hash_map::Entry::Occupied(_) => panic!("Key inserted again in the same frame"),
             hash_map::Entry::Vacant(entry) => {
                 if let Some(value) = self.store.previous.remove(&old_key) {
                     entry.insert(value);

@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use ratatui::{prelude::*, DefaultTerminal};
 
@@ -26,9 +23,7 @@ pub trait TopWidget {
 type PhantomUnsync = std::marker::PhantomData<std::cell::Cell<()>>;
 type PhantomUnsend = std::marker::PhantomData<std::sync::MutexGuard<'static, ()>>;
 
-pub struct StateMarker {
-
-}
+pub struct StateMarker {}
 
 pub struct StateRef<'t, T> {
     state: std::cell::RefCell<&'t mut T>,
@@ -45,10 +40,7 @@ impl<'t, T> StateRef<'t, T> {
     }
 }
 
-
-struct CheckBox {
-
-}
+struct CheckBox {}
 impl CheckBox {
     fn new(state: &mut bool) -> Self {
         CheckBox {}

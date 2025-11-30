@@ -6,7 +6,10 @@ use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
         execute,
-    }, layout::Position, widgets::Clear, DefaultTerminal,
+    },
+    layout::Position,
+    widgets::Clear,
+    DefaultTerminal,
 };
 
 use crate::{
@@ -28,15 +31,18 @@ impl Events {
         let (signal, recv) = signals::make_channel();
 
         std::thread::spawn(move || {
-            if let Err(err) = try_forward(|| -> Result<()> {
-                loop {
-                    signal.signal(Ok(event::read()?));
-                }
-            }, || "") {
+            if let Err(err) = try_forward(
+                || -> Result<()> {
+                    loop {
+                        signal.signal(Ok(event::read()?));
+                    }
+                },
+                || "",
+            ) {
                 signal.signal(Err(err));
             }
         });
-        
+
         Self {
             recv,
             injected: Vec::new(),
@@ -46,20 +52,20 @@ impl Events {
 
     fn get(&mut self, wait: bool) -> Result<Option<EventExt>> {
         if !self.injected.is_empty() {
-            return Ok(Some(EventExt::Custom(self.injected.drain(0..1).next().unwrap())));
+            return Ok(Some(EventExt::Custom(
+                self.injected.drain(0..1).next().unwrap(),
+            )));
         }
 
         let mut the_event = None;
         let mut the_err = None;
         let mut dispatch = Dispatch::new();
-        dispatch.add(self.recv.dispatch_one(|event| {
-            match event {
-                Ok(event) => {
-                    the_event = Some(EventExt::Event(event));
-                }
-                Err(err) => {
-                    the_err = Some(err);
-                }
+        dispatch.add(self.recv.dispatch_one(|event| match event {
+            Ok(event) => {
+                the_event = Some(EventExt::Event(event));
+            }
+            Err(err) => {
+                the_err = Some(err);
             }
         }));
         for wait in &mut self.wakeup_waits {
@@ -151,7 +157,13 @@ impl Terminal {
                                 return Ok(());
                             }
 
-                            if layout.finish(Constraint1D::new_fixed(area.height), &mut build_store.current_layout_mut()).0 {
+                            if layout
+                                .finish(
+                                    Constraint1D::new_fixed(area.height),
+                                    &mut build_store.current_layout_mut(),
+                                )
+                                .0
+                            {
                                 build_store.need_refresh = true;
                             }
                         }

@@ -5,15 +5,25 @@ use std::time::Duration;
 use clap::Parser;
 
 use diff_modulo_base::*;
-use log::{trace, debug, info, warn, error, LevelFilter};
+use log::{debug, error, info, trace, warn, LevelFilter};
 use ratatui::{prelude::*, widgets::Block};
 use utils::{try_forward, Result};
 use vctuik::{
-    command, event::{Event, KeyCode, KeyEventKind, MouseEventKind}, label::add_label, prelude::*, section::with_section, signals
+    command,
+    event::{Event, KeyCode, KeyEventKind, MouseEventKind},
+    label::add_label,
+    prelude::*,
+    section::with_section,
+    signals,
 };
 
 use git_forge_tui::{
-    get_project_dirs, github, gitservice::GitService, load_config, logview::add_log_view, tui::{actions, Inbox, Review}, ApiRepository, CompletePullRequest
+    get_project_dirs, github,
+    gitservice::GitService,
+    load_config,
+    logview::add_log_view,
+    tui::{actions, Inbox, Review},
+    ApiRepository, CompletePullRequest,
 };
 
 #[derive(Parser, Debug)]
@@ -89,13 +99,10 @@ fn do_main() -> Result<()> {
         let block = Block::new().style(builder.theme().pane_background);
         builder.frame().render_widget(block, frame_area);
 
-        let notification_thread =
-            with_section(builder, "Inbox", |builder| {
-                Inbox::new()
-                    .build(builder, &mut connections)
-            }).and_then(|result| {
-                result.selection
-            });
+        let notification_thread = with_section(builder, "Inbox", |builder| {
+            Inbox::new().build(builder, &mut connections)
+        })
+        .and_then(|result| result.selection);
 
         with_section(builder, "Notification", |builder| {
             let Some((host, thread)) = notification_thread else {
@@ -104,22 +111,29 @@ fn do_main() -> Result<()> {
                 return;
             };
 
-            let id = thread.subject.url.split('/').last().and_then(|id_str| id_str.parse::<u64>().ok());
-            if id.is_none() || thread.subject.subject_type != github::api::SubjectType::PullRequest {
+            let id = thread
+                .subject
+                .url
+                .split('/')
+                .last()
+                .and_then(|id_str| id_str.parse::<u64>().ok());
+            if id.is_none() || thread.subject.subject_type != github::api::SubjectType::PullRequest
+            {
                 add_label(builder, format!("Notification: {}", &thread.subject.url));
                 add_label(builder, "(unsupported)");
                 builder.add_slack();
                 return;
             }
 
-            let api_repo = ApiRepository::new(host, thread.repository.owner.login, thread.repository.name);
+            let api_repo =
+                ApiRepository::new(host, thread.repository.owner.login, thread.repository.name);
             let pr = match CompletePullRequest::from_api(api_repo, id.unwrap(), &git_service) {
                 Err(err) => {
                     add_label(builder, format!("Notification: {}", &thread.subject.url));
                     add_label(builder, format!("{}", err));
                     builder.add_slack();
                     return;
-                },
+                }
                 Ok(pr) => pr,
             };
             Review::new(&git_service, &pr)
@@ -144,58 +158,62 @@ fn do_main() -> Result<()> {
             .build(builder, |builder, _| {
                 if let Some(error) = &error {
                     let area = builder.take_lines_fixed(1);
-                    let span = Span::from(error).style(builder.theme().text(builder.theme_context()).error);
+                    let span = Span::from(error)
+                        .style(builder.theme().text(builder.theme_context()).error);
                     builder.frame().render_widget(span, area);
                 }
             });
         match action {
-        command::CommandAction::None => {},
-        command::CommandAction::Command(cmd) => {
-            error = None;
-            if was_search {
-                if let Some(pattern) = search.as_ref() {
-                    builder.inject_custom(actions::Search(pattern.clone()));
-                }
-            } else if let Some(cmd) = cmd.strip_prefix(':') {
-                if cmd == "log" {
-                    show_debug_log = !show_debug_log;
-                } else if cmd == "q" || cmd == "quit" {
-                    running = false;
-                } else {
-                    error = Some(format!("Unknown command: {cmd}"));
-                }
-            }
-            builder.need_refresh();
-        },
-        command::CommandAction::Changed(cmd) => {
-            assert!(!cmd.is_empty());
-
-            error = None;
-            if cmd.starts_with('/') {
-                search = None;
-                if cmd.len() > 1 {
-                    match regex::Regex::new(&cmd[1..]) {
-                        Ok(regex) => {
-                            search = Some(regex);
-                        },
-                        Err(e) => {
-                            error = Some(format!("{}", e));
-                        }
+            command::CommandAction::None => {}
+            command::CommandAction::Command(cmd) => {
+                error = None;
+                if was_search {
+                    if let Some(pattern) = search.as_ref() {
+                        builder.inject_custom(actions::Search(pattern.clone()));
+                    }
+                } else if let Some(cmd) = cmd.strip_prefix(':') {
+                    if cmd == "log" {
+                        show_debug_log = !show_debug_log;
+                    } else if cmd == "q" || cmd == "quit" {
+                        running = false;
+                    } else {
+                        error = Some(format!("Unknown command: {cmd}"));
                     }
                 }
-            } else if cmd.starts_with(':') {
-                // nothing to do
-            } else {
-                error = Some(format!("Unknown command prefix: {}", cmd.chars().next().unwrap()));
+                builder.need_refresh();
             }
-            builder.need_refresh();
-        },
-        command::CommandAction::Cancelled => {
-            if was_search {
-                search = None;
+            command::CommandAction::Changed(cmd) => {
+                assert!(!cmd.is_empty());
+
+                error = None;
+                if cmd.starts_with('/') {
+                    search = None;
+                    if cmd.len() > 1 {
+                        match regex::Regex::new(&cmd[1..]) {
+                            Ok(regex) => {
+                                search = Some(regex);
+                            }
+                            Err(e) => {
+                                error = Some(format!("{}", e));
+                            }
+                        }
+                    }
+                } else if cmd.starts_with(':') {
+                    // nothing to do
+                } else {
+                    error = Some(format!(
+                        "Unknown command prefix: {}",
+                        cmd.chars().next().unwrap()
+                    ));
+                }
+                builder.need_refresh();
             }
-            error = None;
-        },
+            command::CommandAction::Cancelled => {
+                if was_search {
+                    search = None;
+                }
+                error = None;
+            }
         }
 
         // Global key bindings

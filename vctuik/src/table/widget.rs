@@ -4,9 +4,18 @@ use std::{borrow::Cow, cmp::Ordering, collections::HashMap};
 
 use itertools::{FoldWhile, Itertools};
 
-use ratatui::{layout::Rect, text::{Line, Span}, widgets::Block};
+use ratatui::{
+    layout::Rect,
+    text::{Line, Span},
+    widgets::Block,
+};
 
-use crate::{event::*, layout::{Constraint1D, LayoutCache, LayoutEngine, LayoutItem1D}, state::Builder, table::TableSource};
+use crate::{
+    event::*,
+    layout::{Constraint1D, LayoutCache, LayoutEngine, LayoutItem1D},
+    state::Builder,
+    table::TableSource,
+};
 
 trait SourceExtras {
     /// Iterate over all ancestors, including the item itself, towards the root.
@@ -47,7 +56,11 @@ impl<T: TableSource + ?Sized> SourceExtras for T {
             .any(|id| id == ancestor_id)
     }
 
-    fn nearest_common_ancestor(&self, mut lhs: u64, mut rhs: u64) -> (u64, Option<u64>, Option<u64>) {
+    fn nearest_common_ancestor(
+        &self,
+        mut lhs: u64,
+        mut rhs: u64,
+    ) -> (u64, Option<u64>, Option<u64>) {
         if lhs == rhs {
             return (lhs, None, None);
         }
@@ -63,14 +76,22 @@ impl<T: TableSource + ?Sized> SourceExtras for T {
         while lhs != 0 && rhs != 0 {
             let lhs_parent = self.parent_id(lhs);
             if let Some(rhs_idx) = rhs_path.iter().position(|&id| id == lhs_parent) {
-                return (lhs_parent, Some(lhs), rhs_idx.checked_sub(1).map(|idx| rhs_path[idx]));
+                return (
+                    lhs_parent,
+                    Some(lhs),
+                    rhs_idx.checked_sub(1).map(|idx| rhs_path[idx]),
+                );
             }
             lhs_path.push(lhs_parent);
             lhs = lhs_parent;
 
             let rhs_parent = self.parent_id(rhs);
             if let Some(lhs_idx) = lhs_path.iter().position(|&id| id == rhs_parent) {
-                return (rhs_parent, lhs_idx.checked_sub(1).map(|idx| lhs_path[idx]), Some(rhs));
+                return (
+                    rhs_parent,
+                    lhs_idx.checked_sub(1).map(|idx| lhs_path[idx]),
+                    Some(rhs),
+                );
             }
             rhs_path.push(rhs_parent);
             rhs = rhs_parent;
@@ -79,7 +100,11 @@ impl<T: TableSource + ?Sized> SourceExtras for T {
         while lhs != 0 {
             let lhs_parent = self.parent_id(lhs);
             if let Some(rhs_idx) = rhs_path.iter().position(|&id| id == lhs_parent) {
-                return (lhs_parent, Some(lhs), rhs_idx.checked_sub(1).map(|idx| rhs_path[idx]));
+                return (
+                    lhs_parent,
+                    Some(lhs),
+                    rhs_idx.checked_sub(1).map(|idx| rhs_path[idx]),
+                );
             }
             lhs_path.push(lhs_parent);
             lhs = lhs_parent;
@@ -88,7 +113,11 @@ impl<T: TableSource + ?Sized> SourceExtras for T {
         while rhs != 0 {
             let rhs_parent = self.parent_id(rhs);
             if let Some(lhs_idx) = lhs_path.iter().position(|&id| id == rhs_parent) {
-                return (rhs_parent, lhs_idx.checked_sub(1).map(|idx| lhs_path[idx]), Some(rhs));
+                return (
+                    rhs_parent,
+                    lhs_idx.checked_sub(1).map(|idx| lhs_path[idx]),
+                    Some(rhs),
+                );
             }
             rhs_path.push(rhs_parent);
             rhs = rhs_parent;
@@ -130,26 +159,36 @@ struct LiveState<'a> {
     column_extents: Vec<(u16, u16)>,
 }
 impl<'a> LiveState<'a> {
-    fn new<'b>(state: &'a mut TableState, width: u16, height: usize, source: &'a dyn TableSource, columns: &[Column<'b>]) -> Self {
+    fn new<'b>(
+        state: &'a mut TableState,
+        width: u16,
+        height: usize,
+        source: &'a dyn TableSource,
+        columns: &[Column<'b>],
+    ) -> Self {
         // Update columns.
         let column_extents = {
             let old_cache = std::mem::take(&mut state.column_cache);
             let mut layout = LayoutEngine::<usize>::new();
 
-            let items = columns.iter().map(|column| (Some(column.source_id), column.constraint));
-            Itertools::intersperse(items, (None, Constraint1D::new_fixed(1)))
-                .for_each(|(source_id, constraint)| {
+            let items = columns
+                .iter()
+                .map(|column| (Some(column.source_id), column.constraint));
+            Itertools::intersperse(items, (None, Constraint1D::new_fixed(1))).for_each(
+                |(source_id, constraint)| {
                     let mut item = LayoutItem1D::new(constraint);
                     if let Some(source_id) = source_id {
                         item = item.id(source_id, true);
                     }
                     layout.add(&old_cache, source_id, item);
-                });
+                },
+            );
 
             layout.finish(Constraint1D::new_fixed(width), &mut state.column_cache);
             state.column_cache.save_persistent(old_cache, |id| id);
 
-            columns.iter()
+            columns
+                .iter()
                 .map(|column| state.column_cache.get(&column.source_id).unwrap())
                 .scan(0, |x, width| {
                     let result = (*x, width);
@@ -177,11 +216,9 @@ impl<'a> LiveState<'a> {
             for ancestor_id in live.source.strict_ancestor_ids(selection) {
                 if live.is_collapsed(ancestor_id) {
                     live.state.selection = Some(ancestor_id);
-                    selection_y =
-                        live.screen_pos(ancestor_id)
-                            .or_else(|| {
-                                initial_selection_y.map(|y| y.saturating_sub(1))
-                            });
+                    selection_y = live
+                        .screen_pos(ancestor_id)
+                        .or_else(|| initial_selection_y.map(|y| y.saturating_sub(1)));
                 }
             }
         }
@@ -263,24 +300,25 @@ impl<'a> LiveState<'a> {
         screen.push((depth, top_row_id));
         for _ in 1..self.height {
             let (depth, item_id) = screen.last().copied().unwrap();
-            let Some((next_id, relative_depth)) = self.next_item(item_id) else { break };
+            let Some((next_id, relative_depth)) = self.next_item(item_id) else {
+                break;
+            };
             screen.push((depth.checked_add_signed(relative_depth).unwrap(), next_id));
         }
 
         // If we didn't fill the entire screen, attempt to correct that by going backwards.
         let slack = self.height - screen.len();
-        let mut top =
-            std::iter::repeat_n((), slack)
-                .scan((depth, top_row_id), |state, _| {
-                    if let Some((prev_id, relative_depth)) = self.prev_item(state.1) {
-                        state.0 = state.0.checked_add_signed(relative_depth).unwrap();
-                        state.1 = prev_id;
-                        Some(*state)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
+        let mut top = std::iter::repeat_n((), slack)
+            .scan((depth, top_row_id), |state, _| {
+                if let Some((prev_id, relative_depth)) = self.prev_item(state.1) {
+                    state.0 = state.0.checked_add_signed(relative_depth).unwrap();
+                    state.1 = prev_id;
+                    Some(*state)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         top.reverse();
         screen.splice(0..0, top);
 
@@ -302,13 +340,18 @@ impl<'a> LiveState<'a> {
     }
 
     fn is_collapsed(&self, item_id: u64) -> bool {
-        self.state.collapsed.get(&item_id).copied().unwrap_or(self.state.default_collapsed)
+        self.state
+            .collapsed
+            .get(&item_id)
+            .copied()
+            .unwrap_or(self.state.default_collapsed)
     }
 
     /// Find the nearest (non-strict) ancestor of the given item that is potentially visible
     /// on screen (i.e. not hidden due to a collapsed ancestor). May return `item_id`.
     fn nearest_visible_ancestor(&self, item_id: u64) -> u64 {
-        self.source.strict_ancestor_ids(item_id)
+        self.source
+            .strict_ancestor_ids(item_id)
             .fold(item_id, |current_id, ancestor_id| {
                 if self.is_collapsed(ancestor_id) {
                     ancestor_id
@@ -365,7 +408,7 @@ impl<'a> LiveState<'a> {
                     break Some((self.source.child_id(parent_id, child_idx + 1), depth));
                 }
                 if parent_id == 0 {
-                    break None
+                    break None;
                 }
                 current = parent_id;
                 depth -= 1;
@@ -411,65 +454,68 @@ impl<'a> LiveState<'a> {
 
         let margin = std::cmp::min(4, self.height / 3);
 
-        let ordering =
-            'ordering: {
-                if let Some(y) = self.screen_pos(item_id) {
-                    // Item is already on screen, just check whether it's in the margins.
-                    if y < margin {
-                        Ordering::Less
-                    } else if y > self.height - margin - 1 {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Equal
-                    }
+        let ordering = 'ordering: {
+            if let Some(y) = self.screen_pos(item_id) {
+                // Item is already on screen, just check whether it's in the margins.
+                if y < margin {
+                    Ordering::Less
+                } else if y > self.height - margin - 1 {
+                    Ordering::Greater
                 } else {
-                    // Item is off-screen. Check whether it is above or below.
-                    let (screen_ancestor, screen_top_prev, screen_bot_prev) =
-                        self.source.nearest_common_ancestor(
-                            self.state.screen.first().unwrap().1,
-                            self.state.screen.last().unwrap().1);
-
-                    let (item_ancestor, item_prev, screen_prev) =
-                        self.source.nearest_common_ancestor(item_id, screen_ancestor);
-
-                    let Some(item_prev) = item_prev else {
-                        // The chosen item is an ancestor of what's on screen.
-                        debug_assert!(item_ancestor == item_id);
-                        break 'ordering Ordering::Less;
-                    };
-
-                    if let Some(screen_prev) = screen_prev {
-                        // item_prev is a sibling of screen_prev, and the entire
-                        // screen is descendant of screen_prev.
-                        debug_assert!(item_prev != screen_prev);
-                        break 'ordering Ord::cmp(&self.source.child_idx(item_prev),
-                                                 &self.source.child_idx(screen_prev));
-                    }
-                    debug_assert!(item_ancestor == screen_ancestor);
-
-                    let Some(screen_top_prev) = screen_top_prev else {
-                        // The top row of the screen is an ancestor of the item.
-                        debug_assert!(item_ancestor == self.state.screen[0].1);
-                        break 'ordering Ordering::Greater
-                    };
-
-                    let screen_bot_prev = screen_bot_prev.unwrap();
-
-                    // item_prev, screen_top_prev, screen_bot_prev all have the
-                    // same parent.
-                    let item_child_idx = self.source.child_idx(item_prev);
-                    let screen_top_child_idx = self.source.child_idx(screen_top_prev);
-                    let screen_bot_child_idx = self.source.child_idx(screen_bot_prev);
-                    debug_assert!(screen_top_child_idx < screen_bot_child_idx);
-
-                    if item_child_idx <= screen_top_child_idx {
-                        Ordering::Less
-                    } else {
-                        debug_assert!(item_child_idx >= screen_bot_child_idx);
-                        Ordering::Greater
-                    }
+                    Ordering::Equal
                 }
-            };
+            } else {
+                // Item is off-screen. Check whether it is above or below.
+                let (screen_ancestor, screen_top_prev, screen_bot_prev) =
+                    self.source.nearest_common_ancestor(
+                        self.state.screen.first().unwrap().1,
+                        self.state.screen.last().unwrap().1,
+                    );
+
+                let (item_ancestor, item_prev, screen_prev) = self
+                    .source
+                    .nearest_common_ancestor(item_id, screen_ancestor);
+
+                let Some(item_prev) = item_prev else {
+                    // The chosen item is an ancestor of what's on screen.
+                    debug_assert!(item_ancestor == item_id);
+                    break 'ordering Ordering::Less;
+                };
+
+                if let Some(screen_prev) = screen_prev {
+                    // item_prev is a sibling of screen_prev, and the entire
+                    // screen is descendant of screen_prev.
+                    debug_assert!(item_prev != screen_prev);
+                    break 'ordering Ord::cmp(
+                        &self.source.child_idx(item_prev),
+                        &self.source.child_idx(screen_prev),
+                    );
+                }
+                debug_assert!(item_ancestor == screen_ancestor);
+
+                let Some(screen_top_prev) = screen_top_prev else {
+                    // The top row of the screen is an ancestor of the item.
+                    debug_assert!(item_ancestor == self.state.screen[0].1);
+                    break 'ordering Ordering::Greater;
+                };
+
+                let screen_bot_prev = screen_bot_prev.unwrap();
+
+                // item_prev, screen_top_prev, screen_bot_prev all have the
+                // same parent.
+                let item_child_idx = self.source.child_idx(item_prev);
+                let screen_top_child_idx = self.source.child_idx(screen_top_prev);
+                let screen_bot_child_idx = self.source.child_idx(screen_bot_prev);
+                debug_assert!(screen_top_child_idx < screen_bot_child_idx);
+
+                if item_child_idx <= screen_top_child_idx {
+                    Ordering::Less
+                } else {
+                    debug_assert!(item_child_idx >= screen_bot_child_idx);
+                    Ordering::Greater
+                }
+            }
+        };
 
         match ordering {
             Ordering::Less => {
@@ -488,28 +534,26 @@ impl<'a> LiveState<'a> {
         }
 
         if delta > 0 {
-            let new_top_row =
-                std::iter::repeat_n((), delta as usize)
-                    .fold_while(self.state.screen[0].1, |current_id, _| {
-                        if let Some((next_id, _)) = self.next_item(current_id) {
-                            FoldWhile::Continue(next_id)
-                        } else {
-                            FoldWhile::Done(current_id)
-                        }
-                    })
-                    .into_inner();
+            let new_top_row = std::iter::repeat_n((), delta as usize)
+                .fold_while(self.state.screen[0].1, |current_id, _| {
+                    if let Some((next_id, _)) = self.next_item(current_id) {
+                        FoldWhile::Continue(next_id)
+                    } else {
+                        FoldWhile::Done(current_id)
+                    }
+                })
+                .into_inner();
             self.update_screen(new_top_row, 0);
         } else if delta < 0 {
-            let new_top_row =
-                std::iter::repeat_n((), (-delta) as usize)
-                    .fold_while(self.state.screen[0].1, |current_id, _| {
-                        if let Some((prev_id, _)) = self.prev_item(current_id) {
-                            FoldWhile::Continue(prev_id)
-                        } else {
-                            FoldWhile::Done(current_id)
-                        }
-                    })
-                    .into_inner();
+            let new_top_row = std::iter::repeat_n((), (-delta) as usize)
+                .fold_while(self.state.screen[0].1, |current_id, _| {
+                    if let Some((prev_id, _)) = self.prev_item(current_id) {
+                        FoldWhile::Continue(prev_id)
+                    } else {
+                        FoldWhile::Done(current_id)
+                    }
+                })
+                .into_inner();
             self.update_screen(new_top_row, 0);
         }
     }
@@ -521,9 +565,10 @@ impl<'a> LiveState<'a> {
 
         if delta > 0 {
             for _ in 0..delta {
-                let selection =
-                    self.state.selection
-                        .unwrap_or_else(|| self.source.child_id(0, 0));
+                let selection = self
+                    .state
+                    .selection
+                    .unwrap_or_else(|| self.source.child_id(0, 0));
                 if let Some((next_id, _)) = self.next_item(selection) {
                     self.state.selection = Some(next_id);
                 } else {
@@ -532,9 +577,10 @@ impl<'a> LiveState<'a> {
             }
         } else if delta < 0 {
             for _ in 0..(-delta) {
-                let selection =
-                    self.state.selection
-                        .unwrap_or_else(|| self.last_descendant(0).0);
+                let selection = self
+                    .state
+                    .selection
+                    .unwrap_or_else(|| self.last_descendant(0).0);
                 if let Some((prev_id, _)) = self.prev_item(selection) {
                     self.state.selection = Some(prev_id);
                 } else {
@@ -563,7 +609,11 @@ pub struct Column<'table> {
     pub constraint: Constraint1D,
 }
 impl<'table> Column<'table> {
-    pub fn new(source_id: usize, title: impl Into<Cow<'table, str>>, constraint: Constraint1D) -> Self {
+    pub fn new(
+        source_id: usize,
+        title: impl Into<Cow<'table, str>>,
+        constraint: Constraint1D,
+    ) -> Self {
         Self {
             source_id,
             title: title.into(),
@@ -608,10 +658,7 @@ impl<'table> Table<'table> {
     }
 
     pub fn columns(self, columns: Vec<Column<'table>>) -> Self {
-        Self {
-            columns,
-            ..self
-        }
+        Self { columns, ..self }
     }
 
     pub fn state(self, state: &'table mut TableState) -> Self {
@@ -646,18 +693,16 @@ impl<'table> Table<'table> {
         let state_id = builder.add_state_id(self.id.unwrap_or("table".into()));
         let state = self.state.unwrap_or_else(|| builder.get_state(state_id));
 
-        let area = builder.take_lines(LayoutItem1D::new(Constraint1D::new_min(5)).id(state_id, true));
+        let area =
+            builder.take_lines(LayoutItem1D::new(Constraint1D::new_min(5)).id(state_id, true));
         let has_focus = builder.check_focus(state_id);
 
         if self.columns.is_empty() {
-            self.columns.push(Column::new(0, "", Constraint1D::new_min(5)));
+            self.columns
+                .push(Column::new(0, "", Constraint1D::new_min(5)));
         }
 
-        let header_height =
-            std::cmp::min(
-                if self.show_headers { 1 } else { 0 },
-                area.height
-            );
+        let header_height = std::cmp::min(if self.show_headers { 1 } else { 0 }, area.height);
         let body_height = area.height.saturating_sub(header_height);
 
         let header_area = Rect {
@@ -672,10 +717,18 @@ impl<'table> Table<'table> {
 
         state.default_collapsed = self.default_collapsed;
 
-        let mut live = LiveState::new(state, header_area.width, body_height as usize, self.source, &self.columns);
+        let mut live = LiveState::new(
+            state,
+            header_area.width,
+            body_height as usize,
+            self.source,
+            &self.columns,
+        );
 
-        let page_size = std::cmp::max((body_area.height / 2) as isize + 1,
-                                      body_area.height as isize - 5);
+        let page_size = std::cmp::max(
+            (body_area.height / 2) as isize + 1,
+            body_area.height as isize - 5,
+        );
         let mouse_page_size = std::cmp::min(5, page_size);
 
         if has_focus {
@@ -757,7 +810,10 @@ impl<'table> Table<'table> {
                     width,
                     ..header_area
                 };
-                let span = Span::styled(std::mem::replace(&mut column.title, "".into()), header_style);
+                let span = Span::styled(
+                    std::mem::replace(&mut column.title, "".into()),
+                    header_style,
+                );
                 builder.frame().render_widget(span, column_area);
 
                 if idx != 0 {
@@ -766,13 +822,19 @@ impl<'table> Table<'table> {
                         width: 1,
                         ..column_area
                     };
-                    builder.frame().render_widget(Span::from("│").style(header_style), bar_area);
+                    builder
+                        .frame()
+                        .render_widget(Span::from("│").style(header_style), bar_area);
                 }
             }
         }
 
-        let block = Block::new().style(builder.theme().pane_background.patch(
-            builder.theme().text(builder.theme_context()).normal));
+        let block = Block::new().style(
+            builder
+                .theme()
+                .pane_background
+                .patch(builder.theme().text(builder.theme_context()).normal),
+        );
         builder.frame().render_widget(block, body_area);
 
         for (ry, (depth, item_id)) in live.state.screen.iter().copied().enumerate() {
@@ -785,51 +847,51 @@ impl<'table> Table<'table> {
 
             let selected = live.state.selection == Some(item_id);
             if selected {
-                let block = Block::default().style(
-                    builder.theme().text(builder.theme_context()).selected);
+                let block =
+                    Block::default().style(builder.theme().text(builder.theme_context()).selected);
                 builder.frame().render_widget(block, line_area);
             }
 
-            let base_style =
-                if has_focus && selected {
-                    builder.theme().text(builder.theme_context()).highlight
-                } else {
-                    builder.theme().text(builder.theme_context()).normal
-                };
+            let base_style = if has_focus && selected {
+                builder.theme().text(builder.theme_context()).highlight
+            } else {
+                builder.theme().text(builder.theme_context()).normal
+            };
 
             for (idx, column) in self.columns.iter().enumerate() {
                 let column_area = Rect {
-                    x: body_area.x.saturating_add(live.column_extents[column.source_id].0),
+                    x: body_area
+                        .x
+                        .saturating_add(live.column_extents[column.source_id].0),
                     width: live.column_extents[column.source_id].1,
                     ..line_area
                 };
 
-                let item_area =
-                    if idx != 0 {
-                        column_area
-                    } else {
-                        let column_area = Rect {
-                            x: column_area.x.saturating_add(indent),
-                            width: column_area.width.saturating_sub(indent),
-                            ..column_area
-                        };
-
-                        if self.source.num_children(item_id) != 0 {
-                            // Render the folding range marker.
-                            let marker = match live.is_collapsed(item_id) {
-                                true => "▶",
-                                false => "▼",
-                            };
-                            let span = Span::from(marker).style(base_style);
-                            builder.frame().render_widget(span, column_area);
-                        }
-
-                        Rect {
-                            x: column_area.x.saturating_add(2),
-                            width: column_area.width.saturating_sub(2),
-                            ..column_area
-                        }
+                let item_area = if idx != 0 {
+                    column_area
+                } else {
+                    let column_area = Rect {
+                        x: column_area.x.saturating_add(indent),
+                        width: column_area.width.saturating_sub(indent),
+                        ..column_area
                     };
+
+                    if self.source.num_children(item_id) != 0 {
+                        // Render the folding range marker.
+                        let marker = match live.is_collapsed(item_id) {
+                            true => "▶",
+                            false => "▼",
+                        };
+                        let span = Span::from(marker).style(base_style);
+                        builder.frame().render_widget(span, column_area);
+                    }
+
+                    Rect {
+                        x: column_area.x.saturating_add(2),
+                        width: column_area.width.saturating_sub(2),
+                        ..column_area
+                    }
+                };
 
                 let spans = self.source.get_data(item_id, column.source_id);
                 let line = Line::from(spans).style(base_style);

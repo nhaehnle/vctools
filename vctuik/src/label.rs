@@ -2,14 +2,12 @@
 
 use std::borrow::Cow;
 
-use ratatui::{text::{Span, Text}};
+use ratatui::text::{Span, Text};
 
 use crate::{state::Builder, theme::Themed};
 
-pub fn add_label<'title, T>(
-    builder: &mut Builder,
-    title: T,
-) where
+pub fn add_label<'title, T>(builder: &mut Builder, title: T)
+where
     T: Into<Cow<'title, str>>,
 {
     let area = builder.take_lines_fixed(1);
@@ -17,10 +15,8 @@ pub fn add_label<'title, T>(
     builder.frame().render_widget(span, area);
 }
 
-pub fn add_multiline_label<'title, T>(
-    builder: &mut Builder,
-    text: T,
-) where
+pub fn add_multiline_label<'title, T>(builder: &mut Builder, text: T)
+where
     T: Into<Cow<'title, str>>,
 {
     let text = Text::raw(text).theme_text(builder);

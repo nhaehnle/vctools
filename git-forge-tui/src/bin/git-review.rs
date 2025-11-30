@@ -5,17 +5,21 @@ use std::time::Duration;
 use clap::Parser;
 
 use diff_modulo_base::*;
-use log::{trace, debug, info, warn, error, LevelFilter};
+use log::{debug, error, info, trace, warn, LevelFilter};
 use ratatui::prelude::*;
 use vctuik::{
     command,
     event::{Event, KeyCode, KeyEventKind, MouseEventKind},
     prelude::*,
-    section::with_section, signals,
+    section::with_section,
+    signals,
 };
 
 use git_forge_tui::{
-    get_project_dirs, github, gitservice, load_config, logview::add_log_view, tui::{actions, Review}, GitRepository, CompletePullRequest
+    get_project_dirs, github, gitservice, load_config,
+    logview::add_log_view,
+    tui::{actions, Review},
+    CompletePullRequest, GitRepository,
 };
 
 #[derive(Parser, Debug)]
@@ -54,7 +58,12 @@ fn do_main() -> Result<()> {
         connections.hosts(),
         refresh_signal.clone(),
     );
-    let pr = CompletePullRequest::from_git(git_repository, args.pull, connections.hosts(), &git_core::SimpleExecutionProvider)?;
+    let pr = CompletePullRequest::from_git(
+        git_repository,
+        args.pull,
+        connections.hosts(),
+        &git_core::SimpleExecutionProvider,
+    )?;
 
     tui_logger::init_logger(LevelFilter::Debug)?;
     tui_logger::set_default_level(LevelFilter::Debug);
@@ -111,58 +120,62 @@ fn do_main() -> Result<()> {
             .build(builder, |builder, _| {
                 if let Some(error) = &error {
                     let area = builder.take_lines_fixed(1);
-                    let span = Span::from(error).style(builder.theme().text(builder.theme_context()).error);
+                    let span = Span::from(error)
+                        .style(builder.theme().text(builder.theme_context()).error);
                     builder.frame().render_widget(span, area);
                 }
             });
         match action {
-        command::CommandAction::None => {},
-        command::CommandAction::Command(cmd) => {
-            error = None;
-            if was_search {
-                if let Some(pattern) = search.as_ref() {
-                    builder.inject_custom(actions::Search(pattern.clone()));
-                }
-            } else if let Some(cmd) = cmd.strip_prefix(':') {
-                if cmd == "log" {
-                    show_debug_log = !show_debug_log;
-                } else if cmd == "q" || cmd == "quit" {
-                    running = false;
-                } else {
-                    error = Some(format!("Unknown command: {cmd}"));
-                }
-            }
-            builder.need_refresh();
-        },
-        command::CommandAction::Changed(cmd) => {
-            assert!(!cmd.is_empty());
-
-            error = None;
-            if cmd.starts_with('/') {
-                search = None;
-                if cmd.len() > 1 {
-                    match regex::Regex::new(&cmd[1..]) {
-                        Ok(regex) => {
-                            search = Some(regex);
-                        },
-                        Err(e) => {
-                            error = Some(format!("{}", e));
-                        }
+            command::CommandAction::None => {}
+            command::CommandAction::Command(cmd) => {
+                error = None;
+                if was_search {
+                    if let Some(pattern) = search.as_ref() {
+                        builder.inject_custom(actions::Search(pattern.clone()));
+                    }
+                } else if let Some(cmd) = cmd.strip_prefix(':') {
+                    if cmd == "log" {
+                        show_debug_log = !show_debug_log;
+                    } else if cmd == "q" || cmd == "quit" {
+                        running = false;
+                    } else {
+                        error = Some(format!("Unknown command: {cmd}"));
                     }
                 }
-            } else if cmd.starts_with(':') {
-                // nothing to do
-            } else {
-                error = Some(format!("Unknown command prefix: {}", cmd.chars().next().unwrap()));
+                builder.need_refresh();
             }
-            builder.need_refresh();
-        },
-        command::CommandAction::Cancelled => {
-            if was_search {
-                search = None;
+            command::CommandAction::Changed(cmd) => {
+                assert!(!cmd.is_empty());
+
+                error = None;
+                if cmd.starts_with('/') {
+                    search = None;
+                    if cmd.len() > 1 {
+                        match regex::Regex::new(&cmd[1..]) {
+                            Ok(regex) => {
+                                search = Some(regex);
+                            }
+                            Err(e) => {
+                                error = Some(format!("{}", e));
+                            }
+                        }
+                    }
+                } else if cmd.starts_with(':') {
+                    // nothing to do
+                } else {
+                    error = Some(format!(
+                        "Unknown command prefix: {}",
+                        cmd.chars().next().unwrap()
+                    ));
+                }
+                builder.need_refresh();
             }
-            error = None;
-        },
+            command::CommandAction::Cancelled => {
+                if was_search {
+                    search = None;
+                }
+                error = None;
+            }
         }
 
         // Global key bindings

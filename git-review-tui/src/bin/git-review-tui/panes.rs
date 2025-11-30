@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fmt};
 
 use ratatui::{
-    prelude::*,
     crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers},
+    prelude::*,
     widgets::{Block, BorderType, Borders, StatefulWidget, Widget},
 };
 
@@ -53,15 +53,17 @@ impl PanesState {
     pub fn handle_event(&mut self, ev: Event) -> Response {
         match ev {
             Event::Key(key) => {
-                if key.code == KeyCode::Tab &&
-                   !KeyModifiers::SHIFT.complement().intersects(key.modifiers) {
+                if key.code == KeyCode::Tab
+                    && !KeyModifiers::SHIFT.complement().intersects(key.modifiers)
+                {
                     if key.kind == KeyEventKind::Press && !self.tab_order.is_empty() {
                         let backwards = key.modifiers.contains(KeyModifiers::SHIFT);
 
-                        let order_idx =
-                            *self.tab_order.iter()
-                                .find(|&&x| x == self.focus)
-                                .unwrap_or(&self.tab_order.len());
+                        let order_idx = *self
+                            .tab_order
+                            .iter()
+                            .find(|&&x| x == self.focus)
+                            .unwrap_or(&self.tab_order.len());
                         if backwards {
                             if order_idx > 0 {
                                 self.focus = self.tab_order[order_idx - 1];
@@ -80,7 +82,7 @@ impl PanesState {
                 }
                 Response::Route(self.focus, ev)
             }
-            _ => { Response::NotHandled }
+            _ => Response::NotHandled,
         }
     }
 }
@@ -130,7 +132,10 @@ struct TypeErasedStatefulWidget<'state, W: StatefulWidget> {
 }
 impl<'state, W: StatefulWidget> MutWidgetRef for TypeErasedStatefulWidget<'state, W> {
     fn render_ref(&mut self, area: Rect, buf: &mut Buffer) {
-        self.widget.take().unwrap().render(area, buf, &mut self.state);
+        self.widget
+            .take()
+            .unwrap()
+            .render(area, buf, &mut self.state);
     }
 }
 
@@ -157,12 +162,18 @@ impl<'state> Pane<'state> {
     }
 
     pub fn widget<W: Widget + 'state>(mut self, widget: W) -> Self {
-        let boxed = Box::new(TypeErasedWidget { widget: Some(widget) });
+        let boxed = Box::new(TypeErasedWidget {
+            widget: Some(widget),
+        });
         self.widget = Some(WidgetBox(boxed));
         self
     }
 
-    pub fn stateful_widget<W: StatefulWidget + 'state>(mut self, widget: W, state: &'state mut W::State) -> Self {
+    pub fn stateful_widget<W: StatefulWidget + 'state>(
+        mut self,
+        widget: W,
+        state: &'state mut W::State,
+    ) -> Self {
         let boxed = Box::new(TypeErasedStatefulWidget {
             widget: Some(widget),
             state,
@@ -179,10 +190,7 @@ pub struct Panes<'state, 'theme> {
 }
 impl<'state, 'theme> Panes<'state, 'theme> {
     pub fn new(panes: Vec<Pane<'state>>) -> Self {
-        Self {
-            panes,
-            theme: None,
-        }
+        Self { panes, theme: None }
     }
 
     pub fn add_pane(mut self, pane: Pane<'state>) -> Self {
@@ -196,20 +204,33 @@ impl<'state, 'theme> Panes<'state, 'theme> {
     }
 
     pub fn layout(&self, state: &PanesState, area: Rect) -> PanesLayout {
-        let panes: Vec<_> = self.panes.iter().filter(|pane| {
-            state.get_state(pane.key).map_or(true, |state| state.visible)
-        }).collect();
+        let panes: Vec<_> = self
+            .panes
+            .iter()
+            .filter(|pane| {
+                state
+                    .get_state(pane.key)
+                    .map_or(true, |state| state.visible)
+            })
+            .collect();
 
-        let constraints: Vec<_> = panes.iter().map(|pane| {
-            vec![
-                Constraint::Length(1),
-                pane.constraint.unwrap_or(Constraint::Percentage(100 / self.panes.len() as u16))
-            ]
-        }).flatten().collect();
+        let constraints: Vec<_> = panes
+            .iter()
+            .map(|pane| {
+                vec![
+                    Constraint::Length(1),
+                    pane.constraint
+                        .unwrap_or(Constraint::Percentage(100 / self.panes.len() as u16)),
+                ]
+            })
+            .flatten()
+            .collect();
         let layout = Layout::new(Direction::Vertical, constraints).split(area);
 
         PanesLayout {
-            panes: panes.into_iter().zip(layout.into_iter().skip(1).step_by(2))
+            panes: panes
+                .into_iter()
+                .zip(layout.into_iter().skip(1).step_by(2))
                 .map(|(pane, &layout)| (pane.key, layout))
                 .collect(),
         }
@@ -221,13 +242,20 @@ impl<'state, 'theme> StatefulWidget for Panes<'state, 'theme> {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let layout = self.layout(state, area);
 
-        let panes = self.panes.into_iter().filter_map(|pane| {
-            layout.inner(pane.key).map(|inner_area| (pane, inner_area))
-        }).collect::<Vec<_>>();
+        let panes = self
+            .panes
+            .into_iter()
+            .filter_map(|pane| layout.inner(pane.key).map(|inner_area| (pane, inner_area)))
+            .collect::<Vec<_>>();
 
         state.tab_order = panes.iter().map(|(pane, _)| pane.key).collect();
 
-        if state.tab_order.iter().find(|&&x| x == state.focus).is_none() {
+        if state
+            .tab_order
+            .iter()
+            .find(|&&x| x == state.focus)
+            .is_none()
+        {
             state.focus = state.tab_order[0];
         }
 
@@ -239,9 +267,7 @@ impl<'state, 'theme> StatefulWidget for Panes<'state, 'theme> {
                 height: inner_area.height + 1,
             };
 
-            let mut block = Block::default()
-                .title(pane.title)
-                .borders(Borders::TOP);
+            let mut block = Block::default().title(pane.title).borders(Borders::TOP);
 
             if state.focus == pane.key {
                 block = block.border_type(BorderType::Thick)

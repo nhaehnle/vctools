@@ -44,7 +44,7 @@ pub struct Receiver<Item> {
 impl<Item> Receiver<Item> {
     pub fn dispatch<'recv, F>(&'recv mut self, f: F) -> impl Dispatchable + 'recv
     where
-        F: FnMut(Item) + 'recv
+        F: FnMut(Item) + 'recv,
     {
         struct Impl<'recv, Item, F> {
             channel: &'recv Mutex<Channel<Item>>,
@@ -74,7 +74,7 @@ impl<Item> Receiver<Item> {
 
     pub fn dispatch_one<'recv, F>(&'recv mut self, f: F) -> impl Dispatchable + 'recv
     where
-        F: FnOnce(Item) + 'recv
+        F: FnOnce(Item) + 'recv,
     {
         struct Impl<'recv, Item, F> {
             channel: &'recv Mutex<Channel<Item>>,
@@ -114,7 +114,12 @@ pub fn make_channel<Item>() -> (Sender<Item>, Receiver<Item>) {
         items: Vec::new(),
         waker: None,
     }));
-    (Sender { channel: channel.clone() }, Receiver { channel })
+    (
+        Sender {
+            channel: channel.clone(),
+        },
+        Receiver { channel },
+    )
 }
 
 #[derive(Debug)]
@@ -231,10 +236,12 @@ impl<'slf> Dispatch<'slf> {
     ///
     /// If `wait` is true, we block once until at least one dispatchable was dispatched.
     pub fn poll(mut self, wait: bool) {
-        let wakeups = wait.then(|| Arc::new(Wakeups {
-            condvar: Condvar::new(),
-            woken: Mutex::new(Vec::new()),
-        }));
+        let wakeups = wait.then(|| {
+            Arc::new(Wakeups {
+                condvar: Condvar::new(),
+                woken: Mutex::new(Vec::new()),
+            })
+        });
 
         let all_wait = self.do_poll(&wakeups, 0..self.receivers.len());
 
@@ -263,16 +270,22 @@ impl<'slf> Dispatch<'slf> {
     ///
     /// If `wakeups` is provided, returns true if all dispatchables have to wait. (If `wakeups` is
     /// not provided, the return value is meaningless.)
-    fn do_poll<I: Iterator<Item = usize>>(&mut self, wakeups: &Option<Arc<Wakeups>>, indices: I) -> bool {
+    fn do_poll<I: Iterator<Item = usize>>(
+        &mut self,
+        wakeups: &Option<Arc<Wakeups>>,
+        indices: I,
+    ) -> bool {
         let mut waker = None;
         let mut all_wait = true;
 
         for index in indices {
             if let Some(wakeups) = wakeups.as_ref() {
-                waker.get_or_insert_with(|| Waker {
-                    wakeups: wakeups.clone(),
-                    key: index,
-                }).key = index;
+                waker
+                    .get_or_insert_with(|| Waker {
+                        wakeups: wakeups.clone(),
+                        key: index,
+                    })
+                    .key = index;
             }
 
             self.receivers[index].poll(&mut waker);

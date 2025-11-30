@@ -3,7 +3,10 @@
 use std::{any::Any, borrow::Cow, collections::HashMap, ops::Range, time::Instant};
 
 use ratatui::{
-    layout::{Position, Rect}, style::Style, widgets::{Block, Clear}, Frame
+    layout::{Position, Rect},
+    style::Style,
+    widgets::{Block, Clear},
+    Frame,
 };
 
 use vctuik_unsafe_internals::state;
@@ -11,7 +14,7 @@ use vctuik_unsafe_internals::state;
 use crate::{
     event::{Event, EventExt, KeyCode, KeyEventKind, KeySequence, MouseButton, MouseEventKind},
     layout::{Constraint1D, LayoutCache, LayoutEngine, LayoutItem1D},
-    theme::{Context, Theme}
+    theme::{Context, Theme},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,12 +80,10 @@ impl IdState {
 
     fn focus_chain_first(&self, prefix: &str) -> Option<usize> {
         if prefix.is_empty() {
-            (self.focus_chain.len() > 0)
-                .then_some(0)
+            (self.focus_chain.len() > 0).then_some(0)
         } else {
-            (0..self.focus_chain.len()).position(|index| {
-                self.focus_chain_index_has_prefix(index, prefix)
-            })
+            (0..self.focus_chain.len())
+                .position(|index| self.focus_chain_index_has_prefix(index, prefix))
         }
     }
 
@@ -91,12 +92,18 @@ impl IdState {
             0..self.focus_chain.len()
         } else {
             let mut iter = (0..self.focus_chain.len()).peekable();
-            while iter.peek().is_some_and(|&i| !self.focus_chain_index_has_prefix(i, prefix)) {
+            while iter
+                .peek()
+                .is_some_and(|&i| !self.focus_chain_index_has_prefix(i, prefix))
+            {
                 iter.next();
             }
             let start = *iter.peek().unwrap_or(&self.focus_chain.len());
 
-            while iter.peek().is_some_and(|&i| self.focus_chain_index_has_prefix(i, prefix)) {
+            while iter
+                .peek()
+                .is_some_and(|&i| self.focus_chain_index_has_prefix(i, prefix))
+            {
                 iter.next();
             }
             let end = *iter.peek().unwrap_or(&self.focus_chain.len());
@@ -126,7 +133,10 @@ impl IdStore {
         let name: String = name.into();
         assert!(!self.current.id_map.contains_key(&name));
         self.current.id_map.insert(name.clone(), new_id);
-        self.current.ids.push(IdEntry { name, other_id: old_id });
+        self.current.ids.push(IdEntry {
+            name,
+            other_id: old_id,
+        });
 
         new_id
     }
@@ -166,10 +176,13 @@ pub(crate) struct BuildStore<'store, 'frame> {
     start_frame: Instant,
 }
 impl<'store, 'frame> BuildStore<'store, 'frame> {
-    pub(crate) fn new(state: &'store mut Store, theme: &'store Theme,
-                      frame: &'store mut Frame<'frame>,
-                      event: Option<EventExt>,
-                      start_frame: Instant) -> Self {
+    pub(crate) fn new(
+        state: &'store mut Store,
+        theme: &'store Theme,
+        frame: &'store mut Frame<'frame>,
+        event: Option<EventExt>,
+        start_frame: Instant,
+    ) -> Self {
         let ids = &mut state.ids;
         let layout = &mut state.layout;
         let state_builder = state::Builder::new(&mut state.state);
@@ -199,15 +212,18 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
         &mut self.layout.current
     }
 
-    fn find_old_id_in_focus_chain(&self, old_id: StateId, cur_range: Range<usize>) -> Option<usize> {
-        self.ids.previous.ids[old_id.0].other_id
-            .and_then(|new_id| {
-                self.ids.current.focus_chain[cur_range.clone()]
-                    .iter()
-                    .enumerate()
-                    .find(|(_, id)| **id == new_id)
-                    .map(|(index, _)| cur_range.start + index)
-            })
+    fn find_old_id_in_focus_chain(
+        &self,
+        old_id: StateId,
+        cur_range: Range<usize>,
+    ) -> Option<usize> {
+        self.ids.previous.ids[old_id.0].other_id.and_then(|new_id| {
+            self.ids.current.focus_chain[cur_range.clone()]
+                .iter()
+                .enumerate()
+                .find(|(_, id)| **id == new_id)
+                .map(|(index, _)| cur_range.start + index)
+        })
     }
 
     pub fn end_frame(&mut self) {
@@ -219,9 +235,12 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
             let mut last_preserved = true;
 
             for focus in std::mem::take(&mut self.ids.previous.focus) {
-                let is_modal_prefix =
-                    focus.modal.is_empty() ||
-                    self.ids.current.modal.strip_prefix(&focus.modal)
+                let is_modal_prefix = focus.modal.is_empty()
+                    || self
+                        .ids
+                        .current
+                        .modal
+                        .strip_prefix(&focus.modal)
                         .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with("-##-"));
                 if !is_modal_prefix {
                     // Modal changed in a way to make this and all children irrelevant.
@@ -330,7 +349,10 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
         }
 
         // If there is no focus, assign it to the first available item.
-        if new_focus.last().is_none_or(|focus| focus.modal != self.ids.current.modal) {
+        if new_focus
+            .last()
+            .is_none_or(|focus| focus.modal != self.ids.current.modal)
+        {
             if let Some(first_idx) = self.ids.current.focus_chain_first(&self.ids.current.modal) {
                 new_focus.push(Focus {
                     modal: self.ids.current.modal.clone(),
@@ -343,30 +365,37 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
 
         // Handle focus actions.
         match self.focus_action {
-            FocusAction::None => {},
+            FocusAction::None => {}
             FocusAction::Grab(id) => {
-                if let Some(chain_idx) = self.ids.current.focus_chain.iter().position(|x| *x == id) {
+                if let Some(chain_idx) = self.ids.current.focus_chain.iter().position(|x| *x == id)
+                {
                     let name = &self.ids.current.ids[id.0].name;
                     if let Some(focus) = new_focus.iter_mut().rev().find(|focus| {
-                        focus.modal.is_empty() ||
-                        name.strip_prefix(&focus.modal).is_some_and(|suffix| suffix.starts_with("-##-"))
+                        focus.modal.is_empty()
+                            || name
+                                .strip_prefix(&focus.modal)
+                                .is_some_and(|suffix| suffix.starts_with("-##-"))
                     }) {
                         focus.index = chain_idx;
                         focus.dropped = false;
                     } else {
-                        new_focus.insert(0, Focus {
-                            modal: String::new(),
-                            index: chain_idx,
-                            dropped: false,
-                        });
+                        new_focus.insert(
+                            0,
+                            Focus {
+                                modal: String::new(),
+                                index: chain_idx,
+                                dropped: false,
+                            },
+                        );
                     }
                     self.need_refresh = true;
                 }
-            },
+            }
             FocusAction::Drop(id) => {
-                if let Some(focus) =
-                        new_focus.iter_mut()
-                            .find(|focus| self.ids.current.focus_chain[focus.index] == id) {
+                if let Some(focus) = new_focus
+                    .iter_mut()
+                    .find(|focus| self.ids.current.focus_chain[focus.index] == id)
+                {
                     focus.dropped = true;
                     self.need_refresh = true;
                 }
@@ -387,16 +416,18 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
         if !self.event_handled {
             let next = match self.event {
                 Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press => {
-                    if ev.code == KeyCode::Tab ||
-                       (ev.code == KeyCode::Down && ev.modifiers.is_empty()) {
+                    if ev.code == KeyCode::Tab
+                        || (ev.code == KeyCode::Down && ev.modifiers.is_empty())
+                    {
                         Some(true)
-                    } else if ev.code == KeyCode::BackTab ||
-                              (ev.code == KeyCode::Up && ev.modifiers.is_empty()) {
+                    } else if ev.code == KeyCode::BackTab
+                        || (ev.code == KeyCode::Up && ev.modifiers.is_empty())
+                    {
                         Some(false)
                     } else {
                         None
                     }
-                },
+                }
                 _ => None,
             };
 
@@ -437,11 +468,12 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
         self.ids.current.focus = new_focus;
 
         // State double-buffer management
-        self.layout.current.save_persistent(
-            std::mem::take(&mut self.layout.previous),
-            |old_id| {
+        self.layout
+            .current
+            .save_persistent(std::mem::take(&mut self.layout.previous), |old_id| {
                 self.ids.previous.ids[old_id.0].other_id.unwrap_or_else(|| {
-                    self.ids.add_state_id(self.ids.previous.ids[old_id.0].name.clone())
+                    self.ids
+                        .add_state_id(self.ids.previous.ids[old_id.0].name.clone())
                 })
             });
 
@@ -463,7 +495,11 @@ pub struct Builder<'builder, 'store, 'frame> {
     layout: &'builder mut LayoutEngine<StateId>,
 }
 impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
-    pub(crate) fn new(store: &'builder mut BuildStore<'store, 'frame>, layout: &'builder mut LayoutEngine<StateId>, viewport: Rect) -> Self {
+    pub(crate) fn new(
+        store: &'builder mut BuildStore<'store, 'frame>,
+        layout: &'builder mut LayoutEngine<StateId>,
+        viewport: Rect,
+    ) -> Self {
         Builder {
             store,
             name_prefix: String::new(),
@@ -498,7 +534,9 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
     }
 
     pub fn take_lines(&mut self, item: LayoutItem1D<StateId>) -> Rect {
-        let old_id = item.id.and_then(|id| self.store.ids.current.ids[id.0].other_id);
+        let old_id = item
+            .id
+            .and_then(|id| self.store.ids.current.ids[id.0].other_id);
         let (pos, size) = self.layout.add(&self.store.layout.previous, old_id, item);
 
         let rel_y = std::cmp::min(pos, self.viewport.height);
@@ -541,17 +579,15 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
     }
 
     pub fn has_group_focus(&self) -> bool {
-        let name =
-            self.store.ids.previous.focus
-                .last()
-                .map(|focus| {
-                    let id = self.store.ids.previous.focus_chain[focus.index];
-                    &self.store.ids.previous.ids[id.0].name
-                });
+        let name = self.store.ids.previous.focus.last().map(|focus| {
+            let id = self.store.ids.previous.focus_chain[focus.index];
+            &self.store.ids.previous.ids[id.0].name
+        });
         name.and_then(|name| {
             name.strip_prefix(&self.name_prefix)
                 .map(|suffix| suffix.starts_with("-##-"))
-        }).unwrap_or(false)
+        })
+        .unwrap_or(false)
     }
 
     /// Register the given ID as being able to receive focus and check whether it
@@ -566,7 +602,10 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         //  - automatically re-focus ghosts or
         //  - automatically focus the first item in the chain.
         // Doing so might cause inconsistencies with earlier has_group_focus checks.
-        if !self.store.ids.current.ids[id.0].name.starts_with(&self.store.ids.previous.modal) {
+        if !self.store.ids.current.ids[id.0]
+            .name
+            .starts_with(&self.store.ids.previous.modal)
+        {
             return false;
         }
 
@@ -644,16 +683,16 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         let key_seq = key_seq.into();
         matches!(
             self.store.event,
-            Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press && key_seq.matches(&ev)) &&
-            self.store.event_handled()
+            Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press && key_seq.matches(&ev))
+            && self.store.event_handled()
     }
 
     pub fn on_key_press_any(&mut self, key_seqs: &[KeySequence]) -> bool {
         match self.store.event {
-        Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press => {
-            key_seqs.iter().any(|seq| seq.matches(&ev)) && self.store.event_handled()
-        },
-        _ => false,
+            Some(EventExt::Event(Event::Key(ev))) if ev.kind == KeyEventKind::Press => {
+                key_seqs.iter().any(|seq| seq.matches(&ev)) && self.store.event_handled()
+            }
+            _ => false,
         }
     }
 
@@ -661,8 +700,10 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         match self.store.event {
             Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::Down(button) => {
                 let pos = Position::new(ev.column, ev.row);
-                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
-            },
+                area.contains(pos)
+                    .then_some(pos)
+                    .filter(|_| self.store.event_handled())
+            }
             _ => None,
         }
     }
@@ -671,8 +712,10 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         match self.store.event {
             Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollDown => {
                 let pos = Position::new(ev.column, ev.row);
-                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
-            },
+                area.contains(pos)
+                    .then_some(pos)
+                    .filter(|_| self.store.event_handled())
+            }
             _ => None,
         }
     }
@@ -681,8 +724,10 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         match self.store.event {
             Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollUp => {
                 let pos = Position::new(ev.column, ev.row);
-                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
-            },
+                area.contains(pos)
+                    .then_some(pos)
+                    .filter(|_| self.store.event_handled())
+            }
             _ => None,
         }
     }
@@ -691,8 +736,10 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         match self.store.event {
             Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollLeft => {
                 let pos = Position::new(ev.column, ev.row);
-                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
-            },
+                area.contains(pos)
+                    .then_some(pos)
+                    .filter(|_| self.store.event_handled())
+            }
             _ => None,
         }
     }
@@ -701,8 +748,10 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
         match self.store.event {
             Some(EventExt::Event(Event::Mouse(ev))) if ev.kind == MouseEventKind::ScrollRight => {
                 let pos = Position::new(ev.column, ev.row);
-                area.contains(pos).then_some(pos).filter(|_| self.store.event_handled())
-            },
+                area.contains(pos)
+                    .then_some(pos)
+                    .filter(|_| self.store.event_handled())
+            }
             _ => None,
         }
     }
@@ -734,7 +783,7 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
     pub fn nest<'nest>(&'nest mut self) -> Nest<'nest, 'store, 'frame> {
         Nest {
             parent: None,
-            builder: Builder { 
+            builder: Builder {
                 store: self.store,
                 name_prefix: self.name_prefix.clone(),
                 theme_context: self.theme_context,
@@ -760,9 +809,13 @@ impl<'nest, 'store, 'frame> Nest<'nest, 'store, 'frame> {
     {
         if self.modal {
             assert!(
-                self.builder.store.ids.current.modal.is_empty() ||
-                self.builder.name_prefix.strip_prefix(&self.builder.store.ids.current.modal)
-                    .is_some_and(|suffix| suffix.starts_with("-##-")));
+                self.builder.store.ids.current.modal.is_empty()
+                    || self
+                        .builder
+                        .name_prefix
+                        .strip_prefix(&self.builder.store.ids.current.modal)
+                        .is_some_and(|suffix| suffix.starts_with("-##-"))
+            );
             self.builder.store.ids.current.modal = self.builder.name_prefix.to_string();
         }
 
@@ -775,12 +828,16 @@ impl<'nest, 'store, 'frame> Nest<'nest, 'store, 'frame> {
 
             let area = builder.viewport();
             builder.frame().render_widget(Clear, area);
-            builder.frame().render_widget(Block::new().style(style), area);
+            builder
+                .frame()
+                .render_widget(Block::new().style(style), area);
 
             let result = f(&mut builder);
 
-            let (changed, height) =
-                std::mem::take(builder.layout).finish(Constraint1D::new(0, max_height), &mut builder.store.layout.current);
+            let (changed, height) = std::mem::take(builder.layout).finish(
+                Constraint1D::new(0, max_height),
+                &mut builder.store.layout.current,
+            );
             *out_height = height;
             if changed || height != area.height {
                 builder.store.need_refresh = true;
@@ -815,7 +872,13 @@ impl<'nest, 'store, 'frame> Nest<'nest, 'store, 'frame> {
         }
     }
 
-    pub fn popup(self, area: Rect, style: Style, max_height: u16, out_height: &'nest mut u16) -> Self {
+    pub fn popup(
+        self,
+        area: Rect,
+        style: Style,
+        max_height: u16,
+        out_height: &'nest mut u16,
+    ) -> Self {
         Nest {
             builder: Builder {
                 viewport: area,

@@ -78,17 +78,17 @@ fn make_solarized(dark: bool) -> Theme {
     // The original Solarized color theme is:
     //
     // Copyright (c) 2011 Ethan Schoonover
-    // 
+    //
     // Permission is hereby granted, free of charge, to any person obtaining a copy
     // of this software and associated documentation files (the "Software"), to deal
     // in the Software without restriction, including without limitation the rights
     // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
     // copies of the Software, and to permit persons to whom the Software is
     // furnished to do so, subject to the following conditions:
-    // 
+    //
     // The above copyright notice and this permission notice shall be included in
     // all copies or substantial portions of the Software.
-    // 
+    //
     // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
     // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
     // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -96,22 +96,22 @@ fn make_solarized(dark: bool) -> Theme {
     // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     // THE SOFTWARE.
-    let mut base03 =    Color::Rgb(0x00, 0x2b, 0x36);
-    let mut base02 =    Color::Rgb(0x07, 0x36, 0x42);
-    let mut base01 =    Color::Rgb(0x58, 0x6e, 0x75);
-    let mut base00 =    Color::Rgb(0x65, 0x7b, 0x83);
-    let mut base0 =     Color::Rgb(0x83, 0x94, 0x96);
-    let mut base1 =     Color::Rgb(0x93, 0xa1, 0xa1);
-    let mut base2 =     Color::Rgb(0xee, 0xe8, 0xd5);
-    let mut base3 =     Color::Rgb(0xfd, 0xf6, 0xe3);
-    let yellow =        Color::Rgb(0xb5, 0x89, 0x00);
-    let _orange =       Color::Rgb(0xcb, 0x4b, 0x16);
-    let red =           Color::Rgb(0xdc, 0x32, 0x2f);
-    let _magenta =      Color::Rgb(0xd3, 0x36, 0x82);
-    let violet =        Color::Rgb(0x6c, 0x71, 0xc4);
-    let blue =          Color::Rgb(0x26, 0x8b, 0xd2);
-    let cyan =          Color::Rgb(0x2a, 0xa1, 0x98);
-    let green =         Color::Rgb(0x85, 0x99, 0x00);
+    let mut base03 = Color::Rgb(0x00, 0x2b, 0x36);
+    let mut base02 = Color::Rgb(0x07, 0x36, 0x42);
+    let mut base01 = Color::Rgb(0x58, 0x6e, 0x75);
+    let mut base00 = Color::Rgb(0x65, 0x7b, 0x83);
+    let mut base0 = Color::Rgb(0x83, 0x94, 0x96);
+    let mut base1 = Color::Rgb(0x93, 0xa1, 0xa1);
+    let mut base2 = Color::Rgb(0xee, 0xe8, 0xd5);
+    let mut base3 = Color::Rgb(0xfd, 0xf6, 0xe3);
+    let yellow = Color::Rgb(0xb5, 0x89, 0x00);
+    let _orange = Color::Rgb(0xcb, 0x4b, 0x16);
+    let red = Color::Rgb(0xdc, 0x32, 0x2f);
+    let _magenta = Color::Rgb(0xd3, 0x36, 0x82);
+    let violet = Color::Rgb(0x6c, 0x71, 0xc4);
+    let blue = Color::Rgb(0x26, 0x8b, 0xd2);
+    let cyan = Color::Rgb(0x2a, 0xa1, 0x98);
+    let green = Color::Rgb(0x85, 0x99, 0x00);
 
     if dark {
         std::mem::swap(&mut base0, &mut base00);
@@ -168,12 +168,8 @@ fn make_solarized(dark: bool) -> Theme {
     }
 }
 
-pub static SOLARIZED_LIGHT: LazyLock<Theme> = LazyLock::new(|| {
-    make_solarized(false)
-});
-pub static SOLARIZED_DARK: LazyLock<Theme> = LazyLock::new(|| {
-    make_solarized(true)
-});
+pub static SOLARIZED_LIGHT: LazyLock<Theme> = LazyLock::new(|| make_solarized(false));
+pub static SOLARIZED_DARK: LazyLock<Theme> = LazyLock::new(|| make_solarized(true));
 
 pub trait Themed {
     type Item;

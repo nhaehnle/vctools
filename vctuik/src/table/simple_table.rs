@@ -9,8 +9,12 @@
 ///! The contents of the table are fully re-built each frame, but the state
 ///! persisted in `SourceState` is used to ensure that items with corresponding
 ///! keys are treated as stable across frames.
-
-use std::{borrow::Cow, collections::{hash_map::Entry, HashMap}, hash::Hash, ops::Range};
+use std::{
+    borrow::Cow,
+    collections::{hash_map::Entry, HashMap},
+    hash::Hash,
+    ops::Range,
+};
 
 use ratatui::{style::Style, text::Span};
 
@@ -38,12 +42,15 @@ impl<K> SourceState<K> {
         old_ids.sort_by(|a, b| a.cmp(b));
 
         let mut items = HashMap::new();
-        items.insert(0, Item {
-            parent_id: 0,
-            child_idx: 0,
-            children: 0..0,
-            data: vec![],
-        });
+        items.insert(
+            0,
+            Item {
+                parent_id: 0,
+                child_idx: 0,
+                children: 0..0,
+                data: vec![],
+            },
+        );
         let builder = GenericSourceBuilder {
             styles: vec![Style::default()],
             items,
@@ -68,7 +75,7 @@ struct GenericSourceBuilder<'source> {
     /// Map of all items by internal ID.
     items: HashMap<u64, Item<'source>>,
 
-    /// List of all (non-root) IDs 
+    /// List of all (non-root) IDs
     old_ids: Vec<u64>,
     old_ids_idx: usize,
     next_id: u64,
@@ -86,7 +93,11 @@ impl<'source> GenericSourceBuilder<'source> {
         StyleId((self.styles.len() - 1) as u32)
     }
 
-    fn add<'builder>(&'builder mut self, parent: u64, id: Option<u64>) -> ItemBuilder<'builder, 'source> {
+    fn add<'builder>(
+        &'builder mut self,
+        parent: u64,
+        id: Option<u64>,
+    ) -> ItemBuilder<'builder, 'source> {
         assert!(self.items.contains_key(&parent));
 
         let id = id.unwrap_or_else(|| {
@@ -120,10 +131,7 @@ impl<'source> GenericSourceBuilder<'source> {
 
         self.child_links.push((parent, id));
 
-        ItemBuilder {
-            id,
-            item,
-        }
+        ItemBuilder { id, item }
     }
 
     fn finish(mut self) -> Source<'source> {
@@ -139,9 +147,7 @@ impl<'source> GenericSourceBuilder<'source> {
         let mut start = 0;
         for (parent_id, child_id) in self.child_links.into_iter() {
             if prev_parent_id != parent_id {
-                self.items.get_mut(&prev_parent_id)
-                    .unwrap()
-                    .children = start..children.len();
+                self.items.get_mut(&prev_parent_id).unwrap().children = start..children.len();
 
                 prev_parent_id = parent_id;
                 start = children.len();
@@ -154,9 +160,7 @@ impl<'source> GenericSourceBuilder<'source> {
             children.push(child_id);
         }
 
-        self.items.get_mut(&prev_parent_id)
-            .unwrap()
-            .children = start..children.len();
+        self.items.get_mut(&prev_parent_id).unwrap().children = start..children.len();
 
         Source {
             styles: self.styles,
@@ -198,14 +202,21 @@ impl<'state, 'source, K: Eq + Hash> SourceBuilder<'state, 'source, K> {
     /// If a `key` is given, and there was an item with the same key under the
     /// equivalent parent in the previous frame, then this new item is considered
     /// to be equivalent as well.
-    pub fn add<'builder>(&'builder mut self, parent: u64, key: K) -> ItemBuilder<'builder, 'source> {
+    pub fn add<'builder>(
+        &'builder mut self,
+        parent: u64,
+        key: K,
+    ) -> ItemBuilder<'builder, 'source> {
         let key = (parent, key);
         let id = self.state.map.get(&key).cloned();
 
         let builder = self.builder.add(parent, id);
 
         let is_new = self.new_map.insert(key, builder.id).is_none();
-        assert!(is_new, "Item with the same key already exists under the same parent");
+        assert!(
+            is_new,
+            "Item with the same key already exists under the same parent"
+        );
 
         builder
     }
@@ -227,7 +238,9 @@ pub struct ItemBuilder<'builder, 'source> {
 impl<'builder, 'source> ItemBuilder<'builder, 'source> {
     pub fn raw_impl(self, column_idx: usize, text: Cow<'source, str>) -> Self {
         if column_idx >= self.item.data.len() {
-            self.item.data.resize(column_idx + 1, (StyleId(0), "".into()));
+            self.item
+                .data
+                .resize(column_idx + 1, (StyleId(0), "".into()));
         }
         self.item.data[column_idx] = (StyleId(0), text);
         self
@@ -239,13 +252,20 @@ impl<'builder, 'source> ItemBuilder<'builder, 'source> {
 
     pub fn styled_impl(self, column_idx: usize, text: Cow<'source, str>, style: StyleId) -> Self {
         if column_idx >= self.item.data.len() {
-            self.item.data.resize(column_idx + 1, (StyleId(0), "".into()));
+            self.item
+                .data
+                .resize(column_idx + 1, (StyleId(0), "".into()));
         }
         self.item.data[column_idx] = (style, text);
         self
     }
 
-    pub fn styled(self, column_idx: usize, text: impl Into<Cow<'source, str>>, style: StyleId) -> Self {
+    pub fn styled(
+        self,
+        column_idx: usize,
+        text: impl Into<Cow<'source, str>>,
+        style: StyleId,
+    ) -> Self {
         self.styled_impl(column_idx, text.into(), style)
     }
 
@@ -285,11 +305,11 @@ impl TableSource for Source<'_> {
 
     fn get_data(&self, item_id: u64, column_idx: usize) -> Vec<Span> {
         let item = self.items.get(&item_id).unwrap();
-        let (style_id, text) =
-            item.data
-                .get(column_idx)
-                .map(|(style_id, text)| (style_id.0, text.as_ref()))
-                .unwrap_or((0, ""));
+        let (style_id, text) = item
+            .data
+            .get(column_idx)
+            .map(|(style_id, text)| (style_id.0, text.as_ref()))
+            .unwrap_or((0, ""));
         vec![Span::styled(text, self.styles[style_id as usize])]
     }
 }

@@ -37,17 +37,25 @@ impl Clients {
         &mut self,
         config: &LiveConfig,
         deadline: Option<Instant>,
-        hostname: String)
-    -> Result<&RefCell<github::Client>> {
-        self.clients.entry(hostname)
+        hostname: String,
+    ) -> Result<&RefCell<github::Client>> {
+        self.clients
+            .entry(hostname)
             .or_insert_with_key(|hostname: &String| -> Result<RefCell<github::Client>> {
                 let Some(host) = config.hosts.iter().find(|h| h.host == *hostname) else {
-                    Err(format!("Host not configured; add it to your github.toml: {hostname}"))?
+                    Err(format!(
+                        "Host not configured; add it to your github.toml: {hostname}"
+                    ))?
                 };
 
                 github::Client::build(host.clone())
                     .offline(config.offline)
-                    .maybe_cache_dir(config.cache_dir.as_ref().map(|cache_dir| cache_dir.join(&host.host)))
+                    .maybe_cache_dir(
+                        config
+                            .cache_dir
+                            .as_ref()
+                            .map(|cache_dir| cache_dir.join(&host.host)),
+                    )
                     .new()
                     .map(|mut client| {
                         client.start_frame(deadline);
@@ -57,8 +65,11 @@ impl Clients {
             .as_ref_ok()
     }
 
-    pub fn all_clients<'a>(&'a mut self, config: &'a LiveConfig, deadline: Option<Instant>)
-    -> impl Iterator<Item=(&'a github::Host, Result<&'a RefCell<github::Client>>)> {
+    pub fn all_clients<'a>(
+        &'a mut self,
+        config: &'a LiveConfig,
+        deadline: Option<Instant>,
+    ) -> impl Iterator<Item = (&'a github::Host, Result<&'a RefCell<github::Client>>)> {
         if !self.have_all_clients {
             for host in &config.hosts {
                 let _ = self.client(config, deadline, host.host.clone());
@@ -66,11 +77,10 @@ impl Clients {
             self.have_all_clients = true;
         }
 
-        config.hosts.iter()
-            .map(|host| {
-                let client = self.clients.get(&host.host).unwrap();
-                (host, client.as_ref_ok())
-            })
+        config.hosts.iter().map(|host| {
+            let client = self.clients.get(&host.host).unwrap();
+            (host, client.as_ref_ok())
+        })
     }
 }
 
@@ -126,7 +136,9 @@ impl Connections {
         self.clients.client(&self.config, deadline, host.into())
     }
 
-    pub fn all_clients(&mut self) -> impl Iterator<Item=(&github::Host, Result<&RefCell<github::Client>>)> {
+    pub fn all_clients(
+        &mut self,
+    ) -> impl Iterator<Item = (&github::Host, Result<&RefCell<github::Client>>)> {
         // Only allowed between start_frame and end_frame
         let deadline = self.frame.unwrap();
         self.clients.all_clients(&self.config, deadline)

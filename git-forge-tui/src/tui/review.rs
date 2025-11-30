@@ -10,7 +10,10 @@ use ratatui::text::Text;
 use regex::Regex;
 use vctuik::label::{add_multiline_label, add_text_label};
 use vctuik::{
-    event::KeyCode, pager::{Pager, PagerState}, prelude::*, state::Builder
+    event::KeyCode,
+    pager::{Pager, PagerState},
+    prelude::*,
+    state::Builder,
 };
 
 use crate::{github::connections::Connections, CompletePullRequest};
@@ -36,12 +39,15 @@ impl ReviewState {
         &mut self,
         connections: &mut Connections,
         ep: &dyn git_core::ExecutionProvider,
-        pr: GCow<'_, CompletePullRequest>) {
+        pr: GCow<'_, CompletePullRequest>,
+    ) {
         let result = || -> Result<_> {
             let mut client = connections.client(&pr.api.host)?.borrow_mut();
             let client_ref = client.access();
             let pull = client_ref.pull(&pr.api.owner, &pr.api.name, pr.id).ok()?;
-            let reviews = client_ref.reviews(&pr.api.owner, &pr.api.name, pr.id).ok()?;
+            let reviews = client_ref
+                .reviews(&pr.api.owner, &pr.api.name, pr.id)
+                .ok()?;
 
             Ok((client.host().user.to_string(), pull, reviews))
         }();
@@ -70,24 +76,13 @@ impl ReviewState {
                 pr.api.owner, pr.api.name, pr.id
             )?;
             if let Some(review) = &most_recent_review {
-                writeln!(
-                    &mut header,
-                    "  Most recent review: {}",
-                    review.commit_id
-                )?;
+                writeln!(&mut header, "  Most recent review: {}", review.commit_id)?;
             }
-            writeln!(
-                &mut header,
-                "  Current head:       {}",
-                pull.head.sha
-            )?;
-            writeln!(
-                &mut header,
-                "  Target branch:      {}",
-                pull.base.ref_
-            )?;
+            writeln!(&mut header, "  Current head:       {}", pull.head.sha)?;
+            writeln!(&mut header, "  Target branch:      {}", pull.base.ref_)?;
             Ok(header)
-        }().unwrap();
+        }()
+        .unwrap();
 
         let result = || -> Result<_> {
             let refs: Vec<_> = [&pull.head.sha, &pull.base.sha]
@@ -100,7 +95,8 @@ impl ReviewState {
             let old = if let Some(review) = most_recent_review {
                 review.commit_id
             } else {
-                pr.git.repository
+                pr.git
+                    .repository
                     .merge_base(ep, &Ref::new(&pull.base.sha), &Ref::new(&pull.head.sha))?
                     .name
             };
@@ -125,7 +121,12 @@ impl ReviewState {
         };
 
         if self.inner.as_ref().is_some_and(|inner| {
-            !inner.timed_out && inner.pr == *pr && inner.dmb_args.as_ref().is_some_and(|args| dmb_args == *args)
+            !inner.timed_out
+                && inner.pr == *pr
+                && inner
+                    .dmb_args
+                    .as_ref()
+                    .is_some_and(|args| dmb_args == *args)
         }) {
             return;
         }
@@ -159,7 +160,10 @@ pub struct Review<'build> {
     search: Option<&'build Regex>,
 }
 impl<'build> Review<'build> {
-    pub fn new(ep: &'build dyn git_core::ExecutionProvider, pr: impl Into<GCow<'build, CompletePullRequest>>) -> Self {
+    pub fn new(
+        ep: &'build dyn git_core::ExecutionProvider,
+        pr: impl Into<GCow<'build, CompletePullRequest>>,
+    ) -> Self {
         Self {
             pr: pr.into(),
             ep,
@@ -176,10 +180,7 @@ impl<'build> Review<'build> {
     }
 
     pub fn maybe_search(self, search: Option<&'build Regex>) -> Self {
-        Self {
-            search,
-            ..self
-        }
+        Self { search, ..self }
     }
 
     pub fn options(self, options: &'build mut GitDiffModuloBaseOptions) -> Self {
@@ -197,49 +198,50 @@ impl<'build> Review<'build> {
             state_outer.options = **options;
         }
 
-        state_outer.update(
-            connections,
-            self.ep,
-            self.pr);
+        state_outer.update(connections, self.ep, self.pr);
 
         let state = state_outer.inner.as_mut().unwrap();
 
-        builder.nest().id(state_id).build(|builder| {
-            match &mut state.pager {
-            Ok((pager_source, pager_state)) => {
-                let has_focus = builder.check_group_focus(state_id);
+        builder
+            .nest()
+            .id(state_id)
+            .build(|builder| match &mut state.pager {
+                Ok((pager_source, pager_state)) => {
+                    let has_focus = builder.check_group_focus(state_id);
 
-                let mut pager = Pager::new(pager_source);
-                if let Some(regex) = self.search {
-                    pager = pager.search(Cow::Borrowed(regex));
-                }
-                let mut pager_result = pager.build_with_state(builder, "pager", pager_state);
+                    let mut pager = Pager::new(pager_source);
+                    if let Some(regex) = self.search {
+                        pager = pager.search(Cow::Borrowed(regex));
+                    }
+                    let mut pager_result = pager.build_with_state(builder, "pager", pager_state);
 
-                if has_focus {
-                    if builder.on_key_press(KeyCode::Char('C')) {
-                        state_outer.options.combined = !state_outer.options.combined;
-                        if let Some(options) = self.options {
-                            options.combined = state_outer.options.combined;
+                    if has_focus {
+                        if builder.on_key_press(KeyCode::Char('C')) {
+                            state_outer.options.combined = !state_outer.options.combined;
+                            if let Some(options) = self.options {
+                                options.combined = state_outer.options.combined;
+                            }
+                            builder.need_refresh();
+                        } else if builder.on_key_press(KeyCode::Char('d')) {
+                            std::mem::drop(pager_result);
+                            pager_source.toggle_mode();
+                            builder.need_refresh();
+                        } else if let Some(search) = builder.on_custom::<actions::Search>() {
+                            pager_result.search(&search.0, true);
+                            builder.need_refresh();
                         }
-                        builder.need_refresh();
-                    } else if builder.on_key_press(KeyCode::Char('d')) {
-                        std::mem::drop(pager_result);
-                        pager_source.toggle_mode();
-                        builder.need_refresh();
-                    } else if let Some(search) = builder.on_custom::<actions::Search>() {
-                        pager_result.search(&search.0, true);
-                        builder.need_refresh();
                     }
                 }
-            },
-            Err(err) => {
-                if !state.header.is_empty() {
-                    add_multiline_label(builder, &state.header);
+                Err(err) => {
+                    if !state.header.is_empty() {
+                        add_multiline_label(builder, &state.header);
+                    }
+                    add_text_label(
+                        builder,
+                        Text::raw(format!("Error: {err}")).style(builder.theme().pane_text.error),
+                    );
+                    builder.add_slack();
                 }
-                add_text_label(builder, Text::raw(format!("Error: {err}")).style(builder.theme().pane_text.error));
-                builder.add_slack();
-            },
-            }
-        });
+            });
     }
 }

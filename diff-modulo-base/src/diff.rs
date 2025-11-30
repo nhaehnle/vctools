@@ -544,7 +544,9 @@ impl<'a> Hunkify<'a> {
 
     fn add_unimportant(&mut self, status: HunkLineStatus, lines: &[DiffRef]) -> Option<Hunk> {
         if self.num_context_lines.is_none() {
-            self.hunk.lines.extend(HunkLine::from_range(self.buffer, status, lines));
+            self.hunk
+                .lines
+                .extend(HunkLine::from_range(self.buffer, status, lines));
             return None;
         }
 
@@ -564,11 +566,15 @@ impl<'a> Hunkify<'a> {
             // lines. This is so we don't split hunks with changed lines separated by at most
             // twice the context.
             if lines.len() <= missing_context + num_context_lines {
-                self.hunk.lines.extend(HunkLine::from_range(self.buffer, status, lines));
-            } else {
                 self.hunk
                     .lines
-                    .extend(HunkLine::from_range(self.buffer, status, &lines[..missing_context]));
+                    .extend(HunkLine::from_range(self.buffer, status, lines));
+            } else {
+                self.hunk.lines.extend(HunkLine::from_range(
+                    self.buffer,
+                    status,
+                    &lines[..missing_context],
+                ));
                 taken += missing_context;
 
                 result = self.flush_hunk();
@@ -583,9 +589,11 @@ impl<'a> Hunkify<'a> {
             self.hunk.old_begin += excess_old;
             self.hunk.new_begin += excess_new;
 
-            self.hunk
-                .lines
-                .extend(HunkLine::from_range(self.buffer, status, &lines[lines.len() - count..]));
+            self.hunk.lines.extend(HunkLine::from_range(
+                self.buffer,
+                status,
+                &lines[lines.len() - count..],
+            ));
             taken += count;
 
             if status.covers_old() {
@@ -600,7 +608,9 @@ impl<'a> Hunkify<'a> {
     }
 
     fn add_important(&mut self, status: HunkLineStatus, lines: &[DiffRef]) {
-        self.hunk.lines.extend(HunkLine::from_range(self.buffer, status, lines));
+        self.hunk
+            .lines
+            .extend(HunkLine::from_range(self.buffer, status, lines));
         self.important_end = self.hunk.lines.len();
     }
 
@@ -762,7 +772,11 @@ impl DiffFile {
     ///
     /// Otherwise, hunks will be reduced to at most the given number of lines
     /// surrounding important changes.
-    fn hunks<'a>(&'a self, buffer: &'a Buffer, num_context_lines: Option<usize>) -> impl Iterator<Item = Hunk> + 'a {
+    fn hunks<'a>(
+        &'a self,
+        buffer: &'a Buffer,
+        num_context_lines: Option<usize>,
+    ) -> impl Iterator<Item = Hunk> + 'a {
         Hunkify {
             buffer,
             blocks: &self.blocks,
@@ -1833,7 +1847,9 @@ pub fn diff_modulo_base(
             let mut need_target_header = false;
 
             let mut base_hunks = base_file.hunks(buffer, Some(num_context_lines)).peekable();
-            let mut target_hunks = target_file.hunks(buffer, Some(num_context_lines)).peekable();
+            let mut target_hunks = target_file
+                .hunks(buffer, Some(num_context_lines))
+                .peekable();
 
             let mut hunks: Vec<(Context, Hunk)> = Vec::new();
 
@@ -1896,7 +1912,11 @@ pub fn diff_modulo_base(
                     .and_then(|base_new_file| base_index.find_new_file(&base_new_file.old_name))
             });
         if base_file.is_none() {
-            target_file.render(buffer, num_context_lines, &mut writer.with_context(Context::Change));
+            target_file.render(
+                buffer,
+                num_context_lines,
+                &mut writer.with_context(Context::Change),
+            );
         }
     }
 

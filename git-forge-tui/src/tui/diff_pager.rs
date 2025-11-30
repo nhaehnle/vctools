@@ -5,7 +5,9 @@ use std::ops::Range;
 use diff_modulo_base::{diff, git_core};
 use ratatui::text::{Line, Span};
 use vctuik::{
-    pager::{self, PagerSource}, prelude::*, theme
+    pager::{self, PagerSource},
+    prelude::*,
+    theme,
 };
 
 #[derive(Debug)]
@@ -75,8 +77,7 @@ pub struct DiffPagerSource {
 }
 impl std::fmt::Debug for DiffPagerSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ReviewPagerSource")
-            .finish_non_exhaustive()
+        f.debug_struct("ReviewPagerSource").finish_non_exhaustive()
     }
 }
 impl DiffPagerSource {
@@ -104,38 +105,43 @@ impl DiffPagerSource {
     /// Find the nearest folding header at or below the given depth.
     ///
     /// If forward is true, find the smallest index strictly greater than the given index.
-    /// 
+    ///
     /// If forward is false, find the largest index less than or equal to the given index.
     /// Returns (header_idx, depth).
-    fn find_folding_header(&self, idx: usize, forward: bool, max_depth: usize) -> Option<(usize, usize)> {
-        [
-            &self.commits,
-            &self.files,
-            &self.hunks,
-        ]
-        .into_iter()
-        .take(max_depth.saturating_add(1))
-        .enumerate()
-        .filter_map(|(depth, indices)| {
-            let i = indices.partition_point(|&i| i <= idx);
-            if forward {
-                if i < indices.len() {
-                    Some((indices[i], depth))
+    fn find_folding_header(
+        &self,
+        idx: usize,
+        forward: bool,
+        max_depth: usize,
+    ) -> Option<(usize, usize)> {
+        [&self.commits, &self.files, &self.hunks]
+            .into_iter()
+            .take(max_depth.saturating_add(1))
+            .enumerate()
+            .filter_map(|(depth, indices)| {
+                let i = indices.partition_point(|&i| i <= idx);
+                if forward {
+                    if i < indices.len() {
+                        Some((indices[i], depth))
+                    } else {
+                        Some((self.elements.len(), 0))
+                    }
                 } else {
-                    Some((self.elements.len(), 0))
+                    if i == 0 {
+                        None
+                    } else {
+                        Some((indices[i - 1], depth))
+                    }
                 }
-            } else {
-                if i == 0 {
-                    None
+            })
+            .max_by(|a, b| {
+                let o = a.0.cmp(&b.0);
+                if forward {
+                    o.reverse()
                 } else {
-                    Some((indices[i - 1], depth))
+                    o
                 }
-            }
-        })
-        .max_by(|a, b| {
-            let o = a.0.cmp(&b.0);
-            if forward { o.reverse() } else { o }
-        })
+            })
     }
 }
 impl diff::ChunkWriter for DiffPagerSource {
@@ -216,19 +222,18 @@ impl PagerSource for DiffPagerSource {
 
         let (mut header_idx, mut depth) = self.find_folding_header(idx, false, usize::MAX)?;
         if parent && header_idx == idx && line == 0 {
-            if idx == 0 || depth == 0{
+            if idx == 0 || depth == 0 {
                 return None;
             }
             (header_idx, depth) = self.find_folding_header(idx, false, depth - 1)?;
         }
 
         let end_idx = self.find_folding_header(header_idx, true, depth).unwrap().0;
-        let end_line =
-            if end_idx < self.global_lines.len() {
-                self.global_lines[end_idx]
-            } else {
-                self.num_global_lines()
-            };
+        let end_line = if end_idx < self.global_lines.len() {
+            self.global_lines[end_idx]
+        } else {
+            self.num_global_lines()
+        };
 
         Some((self.global_lines[header_idx]..end_line, depth))
     }

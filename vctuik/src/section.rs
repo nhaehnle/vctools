@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use ratatui::{crossterm::event::KeyCode, layout::{Alignment, Rect}, widgets::{block::Title, Block, BorderType, Borders}};
+use ratatui::{
+    crossterm::event::KeyCode,
+    layout::{Alignment, Rect},
+    widgets::{block::Title, Block, BorderType, Borders},
+};
 
 use crate::{
-    event::{Event, MouseButton, MouseEventKind}, state::{Builder, StateId}
+    event::{Event, MouseButton, MouseEventKind},
+    state::{Builder, StateId},
 };
 
 #[derive(Debug, Default)]
@@ -19,8 +24,8 @@ pub struct Section {
 }
 impl Section {
     pub fn new<T>(title: T) -> Self
-    where 
-        T: Into<String>
+    where
+        T: Into<String>,
     {
         let title = title.into();
         Self {
@@ -40,10 +45,7 @@ impl Section {
         self
     }
 
-    pub fn build<F>(
-        self,
-        builder: &mut Builder,
-        f: F) -> bool
+    pub fn build<F>(self, builder: &mut Builder, f: F) -> bool
     where
         F: FnOnce(&mut Builder),
     {
@@ -68,7 +70,11 @@ impl Section {
                 ..header_area
             };
 
-            if !is_first && builder.on_mouse_press(drag_area, MouseButton::Left).is_some() {
+            if !is_first
+                && builder
+                    .on_mouse_press(drag_area, MouseButton::Left)
+                    .is_some()
+            {
                 state.dragging = true;
             } else if !is_first && state.dragging {
                 if let Some(Event::Mouse(ev)) = builder.peek_event() {
@@ -81,7 +87,11 @@ impl Section {
                         state.dragging = false;
                     }
                 }
-            } else if self.collapsible && builder.on_mouse_press(collapse_area, MouseButton::Left).is_some() {
+            } else if self.collapsible
+                && builder
+                    .on_mouse_press(collapse_area, MouseButton::Left)
+                    .is_some()
+            {
                 state.collapsed = !state.collapsed;
             }
 
@@ -125,7 +135,6 @@ impl Section {
                     builder.need_refresh();
                 }
             }
-
         });
 
         !state.collapsed
@@ -135,13 +144,16 @@ impl Section {
 pub fn with_section<'a, 'outer_builder, 'inner_builder, 'store, 'frame, F, R>(
     builder: &'a mut Builder<'outer_builder, 'store, 'frame>,
     title: impl Into<String>,
-    f: F) -> Option<R>
+    f: F,
+) -> Option<R>
 where
     F: FnOnce(&mut Builder<'_, '_, '_>) -> R,
 {
     let mut result = None;
-    Section::new(title).collapsible(true).build(builder, |builder| {
-        result = Some(f(builder));
-    });
+    Section::new(title)
+        .collapsible(true)
+        .build(builder, |builder| {
+            result = Some(f(builder));
+        });
     result
 }

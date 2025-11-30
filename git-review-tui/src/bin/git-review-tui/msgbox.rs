@@ -1,14 +1,10 @@
-use std::{
-    io,
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, io, rc::Rc};
 
 use ratatui::{
-    prelude::*,
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    prelude::*,
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
     DefaultTerminal,
-    widgets::{Block, Borders, BorderType, Clear, Paragraph, Wrap},
 };
 
 use vctuik::theme::{Theme, Themed};
@@ -31,7 +27,9 @@ impl<'slf> MessageBox<'slf> {
 
     pub fn run(mut self) -> io::Result<()> {
         loop {
-            self.terminal().borrow_mut().draw(|frame| self.render_to_frame(frame))?;
+            self.terminal()
+                .borrow_mut()
+                .draw(|frame| self.render_to_frame(frame))?;
 
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -59,8 +57,16 @@ impl<'slf> TopWidget for MessageBox<'slf> {
 
         const TW: u16 = 30;
         const TH: u16 = 15;
-        let width = if area.width < TW { area.width } else { TW + (area.width - TW) / 3 };
-        let height = if area.height < TH { area.height } else { TH + (area.height - TH) / 3 };
+        let width = if area.width < TW {
+            area.width
+        } else {
+            TW + (area.width - TW) / 3
+        };
+        let height = if area.height < TH {
+            area.height
+        } else {
+            TH + (area.height - TH) / 3
+        };
 
         let msg_area = Rect::new(
             area.x + (area.width - width) / 2,

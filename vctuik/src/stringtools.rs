@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{cell::Cell};
 use itertools::Itertools;
+use std::cell::Cell;
 
 trait State<T> {
     fn get(&self) -> T;
@@ -59,11 +59,7 @@ pub trait StrScan {
     ) -> impl Iterator<Item = ((usize, usize), usize)>;
     fn get_first_line(&self, max_cols: usize) -> &str;
     fn row_col_index(&self, pos: (usize, usize)) -> usize;
-    fn substr_row_col(
-        &self,
-        start: (usize, usize),
-        end: (usize, usize),
-    ) -> &str;
+    fn substr_row_col(&self, start: (usize, usize), end: (usize, usize)) -> &str;
 }
 impl StrScan for str {
     /// Creates an iterator over ((line, column), byte_offset) tuples.
@@ -121,11 +117,7 @@ impl StrScan for str {
         &self[0..bytes]
     }
 
-    fn substr_row_col(
-        &self,
-        start: (usize, usize),
-        end: (usize, usize),
-    ) -> &str {
+    fn substr_row_col(&self, start: (usize, usize), end: (usize, usize)) -> &str {
         let mut start_byte = 0;
         let mut end_byte = 0;
 

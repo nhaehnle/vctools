@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::diff;
 
-pub use vctools_utils::prelude::*;
 pub use vctools_utils::files::read_bytes;
+pub use vctools_utils::prelude::*;
 
 fn read_diff_impl(buffer: &mut diff::Buffer, path: &Path) -> Result<diff::Diff> {
     let buf = read_bytes(path)?;

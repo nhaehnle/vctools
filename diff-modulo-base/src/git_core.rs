@@ -129,17 +129,31 @@ pub enum Cacheability {
 
 /// Trait for providing execution of Git commands.
 pub trait ExecutionProvider {
-    fn exec(&self, path: &std::path::PathBuf, command: &str, args: Vec<OsString>, cacheable: Cacheability) -> ExecutionResult;
+    fn exec(
+        &self,
+        path: &std::path::PathBuf,
+        command: &str,
+        args: Vec<OsString>,
+        cacheable: Cacheability,
+    ) -> ExecutionResult;
 
     /// Return true if the current execution frame has timed out.
-    fn timed_out(&self) -> bool { false }
+    fn timed_out(&self) -> bool {
+        false
+    }
 }
 
 /// Simple execution provider that just runs a git process directly.
 #[derive(Debug, Clone)]
 pub struct SimpleExecutionProvider;
 impl ExecutionProvider for SimpleExecutionProvider {
-    fn exec(&self, path: &std::path::PathBuf, command: &str, args: Vec<OsString>, _cacheable: Cacheability) -> ExecutionResult {
+    fn exec(
+        &self,
+        path: &std::path::PathBuf,
+        command: &str,
+        args: Vec<OsString>,
+        _cacheable: Cacheability,
+    ) -> ExecutionResult {
         let mut cmd = std::process::Command::new("git");
         cmd.args(["-C", path.to_str().unwrap()]);
         cmd.arg(command);
@@ -164,18 +178,23 @@ impl ExecutionProvider for SimpleExecutionProvider {
             let mut child = cmd.spawn()?;
 
             let mut stderr = child.stderr.take().unwrap();
-            let stderr_thread = std::thread::spawn(move || -> std::result::Result<Vec<u8>, String> {
-                let mut stderr_buf = Vec::new();
-                match stderr.read_to_end(&mut stderr_buf) {
-                    Ok(_) => Ok(stderr_buf),
-                    Err(e) => Err(format!("reading stderr: {e}")),
-                }
-            });
+            let stderr_thread =
+                std::thread::spawn(move || -> std::result::Result<Vec<u8>, String> {
+                    let mut stderr_buf = Vec::new();
+                    match stderr.read_to_end(&mut stderr_buf) {
+                        Ok(_) => Ok(stderr_buf),
+                        Err(e) => Err(format!("reading stderr: {e}")),
+                    }
+                });
             let output = child.wait_with_output()?;
             let stderr = stderr_thread.join().unwrap()?;
 
             if !output.status.success() {
-                Ok(ExecutionResult::Err(output.stdout, stderr, output.status.code()))
+                Ok(ExecutionResult::Err(
+                    output.stdout,
+                    stderr,
+                    output.status.code(),
+                ))
             } else {
                 Ok(ExecutionResult::Ok(output.stdout, stderr))
             }
@@ -192,7 +211,13 @@ pub struct MockExecutionProvider {
     pub mock_data_path: std::path::PathBuf,
 }
 impl ExecutionProvider for MockExecutionProvider {
-    fn exec(&self, _path: &std::path::PathBuf, command: &str, mut args: Vec<OsString>, _cacheable: Cacheability) -> ExecutionResult {
+    fn exec(
+        &self,
+        _path: &std::path::PathBuf,
+        command: &str,
+        mut args: Vec<OsString>,
+        _cacheable: Cacheability,
+    ) -> ExecutionResult {
         args.insert(0, OsString::from(command));
         let cmdline = args.join(&std::ffi::OsString::from(" "));
         let mut name = cmdline.to_string_lossy().to_string();
@@ -229,9 +254,7 @@ pub struct Repository {
 }
 impl Repository {
     pub fn new(path: std::path::PathBuf) -> Self {
-        Self {
-            path,
-        }
+        Self { path }
     }
 
     fn exec_with_stderr<I, A>(
@@ -249,21 +272,25 @@ impl Repository {
         let result = ep.exec(&self.path, subcommand, args_vec, cacheable);
         match result {
             ExecutionResult::Ok(stdout, stderr) => Ok((stdout, stderr)),
-            ExecutionResult::Err(stdout, stderr, _) => {
-                Err(format!(
-                    "git {} failed\nstdout:\n{}\nstderr:\n{}",
-                    subcommand,
-                    String::from_utf8_lossy(&stdout),
-                    String::from_utf8_lossy(&stderr),
-                ))?
-            }
+            ExecutionResult::Err(stdout, stderr, _) => Err(format!(
+                "git {} failed\nstdout:\n{}\nstderr:\n{}",
+                subcommand,
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr),
+            ))?,
             ExecutionResult::Pending => {
                 Err(format!("git {} execution is still pending", subcommand))?
             }
         }
     }
 
-    fn exec<I, A>(&self, ep: &dyn ExecutionProvider, subcommand: &str, args: I, cacheable: Cacheability) -> Result<Vec<u8>>
+    fn exec<I, A>(
+        &self,
+        ep: &dyn ExecutionProvider,
+        subcommand: &str,
+        args: I,
+        cacheable: Cacheability,
+    ) -> Result<Vec<u8>>
     where
         I: Iterator<Item = A>,
         A: Into<OsString>,
@@ -280,7 +307,12 @@ impl Repository {
         Ok(stdout)
     }
 
-    fn exec_noarg(&self, ep: &dyn ExecutionProvider, subcommand: &str, cacheable: Cacheability) -> Result<Vec<u8>> {
+    fn exec_noarg(
+        &self,
+        ep: &dyn ExecutionProvider,
+        subcommand: &str,
+        cacheable: Cacheability,
+    ) -> Result<Vec<u8>> {
         let empty: Vec<String> = vec![];
         self.exec(ep, subcommand, empty.into_iter(), cacheable)
     }
@@ -288,7 +320,12 @@ impl Repository {
     pub fn get_url(&self, ep: &dyn ExecutionProvider, remote: &str) -> Result<Url> {
         try_forward(
             || -> Result<Url> {
-                let raw = self.exec(ep, "remote", [&"get-url", remote].iter(), Cacheability::Cacheable)?;
+                let raw = self.exec(
+                    ep,
+                    "remote",
+                    [&"get-url", remote].iter(),
+                    Cacheability::Cacheable,
+                )?;
                 let url = String::from_utf8(raw)?;
                 let url = url.trim();
 
@@ -315,30 +352,36 @@ impl Repository {
     }
 
     pub fn get_remotes(&self, ep: &dyn ExecutionProvider) -> Result<Vec<(String, Url)>> {
-        try_forward(|| -> Result<Vec<(String, Url)>> {
-                let output = String::from_utf8(self.exec_noarg(ep, "remote", Cacheability::Cacheable)?)?;
-                let remotes: Result<Vec<_>> =
-                    output.lines()
-                        .map(|remote| -> Result<(String, Url)> {
-                            let url = self.get_url(ep, &remote)?;
-                            Ok((remote.to_string(), url))
-                        })
-                        .collect();
+        try_forward(
+            || -> Result<Vec<(String, Url)>> {
+                let output =
+                    String::from_utf8(self.exec_noarg(ep, "remote", Cacheability::Cacheable)?)?;
+                let remotes: Result<Vec<_>> = output
+                    .lines()
+                    .map(|remote| -> Result<(String, Url)> {
+                        let url = self.get_url(ep, &remote)?;
+                        Ok((remote.to_string(), url))
+                    })
+                    .collect();
                 remotes
             },
             || format!("failed to query remotes for {}", self.path.display()),
         )
     }
 
-    pub fn diff(&self, ep: &dyn ExecutionProvider, range: Range<&Ref>, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
+    pub fn diff(
+        &self,
+        ep: &dyn ExecutionProvider,
+        range: Range<&Ref>,
+        paths: Option<&[&[u8]]>,
+    ) -> Result<Vec<u8>> {
         try_forward(
             || -> Result<Vec<u8>> {
-                let cacheability =
-                    if range.start.is_hash() && range.end.is_hash() {
-                        Cacheability::Pure
-                    } else {
-                        Cacheability::Cacheable
-                    };
+                let cacheability = if range.start.is_hash() && range.end.is_hash() {
+                    Cacheability::Pure
+                } else {
+                    Cacheability::Cacheable
+                };
 
                 let mut args: Vec<String> = Vec::new();
                 args.push(format!("{}..{}", range.start, range.end));
@@ -353,19 +396,28 @@ impl Repository {
         )
     }
 
-    pub fn diff_commit(&self, ep: &dyn ExecutionProvider, commit: &Ref, paths: Option<&[&[u8]]>) -> Result<Vec<u8>> {
+    pub fn diff_commit(
+        &self,
+        ep: &dyn ExecutionProvider,
+        commit: &Ref,
+        paths: Option<&[&[u8]]>,
+    ) -> Result<Vec<u8>> {
         self.diff(ep, &commit.first_parent()..commit, paths)
     }
 
-    pub fn show_commit(&self, ep: &dyn ExecutionProvider, commit: &Ref, options: &ShowOptions) -> Result<Vec<u8>> {
+    pub fn show_commit(
+        &self,
+        ep: &dyn ExecutionProvider,
+        commit: &Ref,
+        options: &ShowOptions,
+    ) -> Result<Vec<u8>> {
         try_forward(
             || -> Result<Vec<u8>> {
-                let cacheability =
-                    if commit.is_hash() {
-                        Cacheability::Pure
-                    } else {
-                        Cacheability::Cacheable
-                    };
+                let cacheability = if commit.is_hash() {
+                    Cacheability::Pure
+                } else {
+                    Cacheability::Cacheable
+                };
 
                 let mut args: Vec<String> = Vec::new();
                 if !options.show_patch {
@@ -391,14 +443,18 @@ impl Repository {
     pub fn merge_base(&self, ep: &dyn ExecutionProvider, a: &Ref, b: &Ref) -> Result<Ref> {
         try_forward(
             || -> Result<Ref> {
-                let cacheability =
-                    if a.is_hash() && b.is_hash() {
-                        Cacheability::Pure
-                    } else {
-                        Cacheability::Cacheable
-                    };
+                let cacheability = if a.is_hash() && b.is_hash() {
+                    Cacheability::Pure
+                } else {
+                    Cacheability::Cacheable
+                };
 
-                let result = self.exec(ep, "merge-base", [format!("{a}"), format!("{b}")].iter(), cacheability)?;
+                let result = self.exec(
+                    ep,
+                    "merge-base",
+                    [format!("{a}"), format!("{b}")].iter(),
+                    cacheability,
+                )?;
 
                 Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
             },
@@ -409,12 +465,11 @@ impl Repository {
     pub fn rev_parse(&self, ep: &dyn ExecutionProvider, a: &Ref) -> Result<Ref> {
         try_forward(
             || -> Result<Ref> {
-                let cacheability =
-                    if a.is_hash() {
-                        Cacheability::Pure
-                    } else {
-                        Cacheability::Cacheable
-                    };
+                let cacheability = if a.is_hash() {
+                    Cacheability::Pure
+                } else {
+                    Cacheability::Cacheable
+                };
                 let result = self.exec(ep, "rev-parse", [format!("{a}")].iter(), cacheability)?;
 
                 Ok(Ref::new(String::from_utf8_lossy(trim_ascii(&result))))
@@ -426,18 +481,32 @@ impl Repository {
     pub fn prefetch(&self, ep: &dyn ExecutionProvider, remote: &str) -> Result<()> {
         try_forward(
             || -> Result<()> {
-                self.exec_with_stderr(ep, "fetch", ["--prefetch", remote].iter(), Cacheability::None)?;
+                self.exec_with_stderr(
+                    ep,
+                    "fetch",
+                    ["--prefetch", remote].iter(),
+                    Cacheability::None,
+                )?;
                 Ok(())
             },
             || format!("failed to prefetch remote {}", remote),
         )
     }
 
-    pub fn fetch_missing(&self, ep: &dyn ExecutionProvider, remote: &str, refs: &[Ref]) -> Result<()> {
+    pub fn fetch_missing(
+        &self,
+        ep: &dyn ExecutionProvider,
+        remote: &str,
+        refs: &[Ref],
+    ) -> Result<()> {
         try_forward(
             || -> Result<()> {
                 // Test if the refs are present
-                let cacheability = refs.iter().all(Ref::is_hash).then(|| Cacheability::Pure).unwrap_or(Cacheability::Cacheable);
+                let cacheability = refs
+                    .iter()
+                    .all(Ref::is_hash)
+                    .then(|| Cacheability::Pure)
+                    .unwrap_or(Cacheability::Cacheable);
 
                 if self
                     .exec(
@@ -468,19 +537,19 @@ impl Repository {
             || "failed to fetch missing refs",
         )
     }
-    
+
     pub fn log<R>(&self, ep: &dyn ExecutionProvider, range: Range<R>) -> Result<Vec<LogEntry>>
     where
         R: std::borrow::Borrow<Ref>,
     {
         try_forward(
             || -> Result<Vec<LogEntry>> {
-                let cacheability =
-                    if range.start.borrow().is_hash() && range.end.borrow().is_hash() {
-                        Cacheability::Pure
-                    } else {
-                        Cacheability::Cacheable
-                    };
+                let cacheability = if range.start.borrow().is_hash() && range.end.borrow().is_hash()
+                {
+                    Cacheability::Pure
+                } else {
+                    Cacheability::Cacheable
+                };
                 let result = self.exec(
                     ep,
                     "log",
@@ -523,7 +592,12 @@ impl Repository {
         )
     }
 
-    pub fn range_diff<R>(&self, ep: &dyn ExecutionProvider, old: Range<R>, new: Range<R>) -> Result<RangeDiff>
+    pub fn range_diff<R>(
+        &self,
+        ep: &dyn ExecutionProvider,
+        old: Range<R>,
+        new: Range<R>,
+    ) -> Result<RangeDiff>
     where
         R: std::borrow::Borrow<Ref>,
     {
@@ -621,12 +695,7 @@ impl RangeDiffMatch {
             (format!("{idx}").len(), format!("{hash}").len())
         });
 
-        RangeDiffMatchColumnWidths(
-            old_idx.0,
-            old_idx.1,
-            new_idx.0,
-            new_idx.1,
-        )
+        RangeDiffMatchColumnWidths(old_idx.0, old_idx.1, new_idx.0, new_idx.1)
     }
 
     pub fn format(&self, widths: RangeDiffMatchColumnWidths) -> String {
@@ -662,7 +731,8 @@ impl RangeDiffMatch {
             Column(widths.2, new_idx),
             Column(widths.3, new_hash),
             String::from_utf8_lossy(&self.title)
-        ).to_string()
+        )
+        .to_string()
     }
 }
 

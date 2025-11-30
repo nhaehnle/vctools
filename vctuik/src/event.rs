@@ -11,7 +11,11 @@ pub struct KeySequence {
 }
 impl KeySequence {
     pub fn new(key: KeyCode, modifiers: KeyModifiers) -> Self {
-        KeySequence { code: key, modifiers }.normalized()
+        KeySequence {
+            code: key,
+            modifiers,
+        }
+        .normalized()
     }
 
     pub fn matches(&self, ev: &KeyEvent) -> bool {

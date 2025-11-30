@@ -82,7 +82,12 @@ pub struct CompletePullRequest {
     id: u64,
 }
 impl CompletePullRequest {
-    pub fn from_git(git: GitRepository, id: u64, hosts: &[github::Host], ep: &dyn git_core::ExecutionProvider) -> Result<Self> {
+    pub fn from_git(
+        git: GitRepository,
+        id: u64,
+        hosts: &[github::Host],
+        ep: &dyn git_core::ExecutionProvider,
+    ) -> Result<Self> {
         let url = git.repository.get_url(ep, &git.remote)?;
 
         let Some(hostname) = url.hostname() else {
@@ -93,21 +98,25 @@ impl CompletePullRequest {
         };
 
         if !hosts.iter().any(|host| host.host == hostname) {
-            Err(format!("Host not configured; add it to your github.toml: {hostname}"))?
+            Err(format!(
+                "Host not configured; add it to your github.toml: {hostname}"
+            ))?
         }
 
-        let api =
-            ApiRepository::new(
-                hostname.to_string(),
-                owner.to_string(),
-                name.to_string(),
-            );
+        let api = ApiRepository::new(hostname.to_string(), owner.to_string(), name.to_string());
         Ok(CompletePullRequest { git, api, id })
     }
 
-    pub fn from_api(api: ApiRepository, id: u64, git_service: &gitservice::GitService) -> Result<Self> {
+    pub fn from_api(
+        api: ApiRepository,
+        id: u64,
+        git_service: &gitservice::GitService,
+    ) -> Result<Self> {
         let Some(git) = git_service.find_git(&api) else {
-            Err(format!("Local clone not found; add it to your repositories.toml: {}/{}", api.owner, api.name))?
+            Err(format!(
+                "Local clone not found; add it to your repositories.toml: {}/{}",
+                api.owner, api.name
+            ))?
         };
         Ok(CompletePullRequest {
             git: git.clone(),

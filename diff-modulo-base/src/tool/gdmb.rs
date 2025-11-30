@@ -5,9 +5,9 @@ use std::ops::Range;
 use clap::Parser;
 
 use crate::*;
+use diff::ChunkWriter;
 use git_core::{RangeDiffWriter, Ref};
 use utils::Result;
-use diff::ChunkWriter;
 
 #[derive(Parser, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct GitDiffModuloBaseOptions {
@@ -52,7 +52,7 @@ fn parse_rev_or_range(name: &str) -> Result<RevSpec> {
     }
 }
 
-pub trait DiffModuloBaseWriter : ChunkWriter + RangeDiffWriter {}
+pub trait DiffModuloBaseWriter: ChunkWriter + RangeDiffWriter {}
 impl<T: ChunkWriter + RangeDiffWriter> DiffModuloBaseWriter for T {}
 
 pub fn git_diff_modulo_base(
@@ -65,12 +65,11 @@ pub fn git_diff_modulo_base(
         return Err("need both an old and a new revision".into());
     }
 
-    let (base, old, new) =
-        if args.new.is_some() {
-            (args.base.as_ref(), args.old.as_ref(), args.new.as_ref())
-        } else {
-            (None, args.base.as_ref(), args.old.as_ref())
-        };
+    let (base, old, new) = if args.new.is_some() {
+        (args.base.as_ref(), args.old.as_ref(), args.new.as_ref())
+    } else {
+        (None, args.base.as_ref(), args.old.as_ref())
+    };
 
     let base = match base {
         Some(s) => Some(parse_rev_or_range(&s)?),

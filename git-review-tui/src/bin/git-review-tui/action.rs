@@ -480,7 +480,8 @@ impl<'data, 'theme> StatefulWidget for &ActionBar<'data, 'theme> {
     type State = ActionBarState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut ActionBarState) {
-        let style = self.theme
+        let style = self
+            .theme
             .map(|theme| theme.modal_background.patch(theme.modal_frame))
             .unwrap_or_default();
         match &mut state.state {
