@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "diff-modulo-base",
     "git-forge-tui",
-    "git-review-tui",
     "vctools-utils",
     "vctuik",
     "vctuik-unsafe-internals",
