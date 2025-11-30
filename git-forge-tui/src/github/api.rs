@@ -2,14 +2,15 @@
 
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct Branch {
     #[serde(rename = "ref")]
     pub ref_: String,
     pub sha: String,
+    pub repo: MinimalRepository,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct Label {
     pub name: String,
 }
@@ -23,8 +24,13 @@ pub enum PullState {
     #[serde(other)]
     Other,
 }
+impl Default for PullState {
+    fn default() -> Self {
+        PullState::Other
+    }
+}
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct Pull {
     pub number: u64,
     pub state: PullState,
@@ -45,7 +51,7 @@ pub struct Pull {
     pub html_url: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct User {
     pub login: String,
 }
@@ -61,8 +67,13 @@ pub enum ReviewState {
     #[serde(other)]
     Other,
 }
+impl Default for ReviewState {
+    fn default() -> Self {
+        ReviewState::Other
+    }
+}
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct Review {
     pub user: User,
 
@@ -73,7 +84,7 @@ pub struct Review {
     pub state: ReviewState,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct MinimalRepository {
     pub id: u64,
     pub node_id: String,
@@ -88,8 +99,13 @@ pub enum SubjectType {
     #[serde(other)]
     Unknown,
 }
+impl Default for SubjectType {
+    fn default() -> Self {
+        SubjectType::Unknown
+    }
+}
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct NotificationSubject {
     pub title: String,
     pub url: String,
@@ -97,7 +113,7 @@ pub struct NotificationSubject {
     pub subject_type: SubjectType,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Default, Debug, Clone)]
 pub struct NotificationThread {
     pub id: String,
     pub last_read_at: Option<String>,
@@ -112,5 +128,17 @@ impl NotificationThread {
             Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
             Err(_) => None,
         }
+    }
+
+    pub fn pull_number(&self) -> Option<u64> {
+        if self.subject.subject_type != SubjectType::PullRequest {
+            return None;
+        }
+        self
+            .subject
+            .url
+            .split('/')
+            .last()
+            .and_then(|id_str| id_str.parse::<u64>().ok())
     }
 }

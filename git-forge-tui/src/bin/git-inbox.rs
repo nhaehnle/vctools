@@ -130,14 +130,8 @@ fn do_main() -> Result<()> {
                 return;
             };
 
-            let id = thread
-                .subject
-                .url
-                .split('/')
-                .last()
-                .and_then(|id_str| id_str.parse::<u64>().ok());
-            if id.is_none() || thread.subject.subject_type != github::api::SubjectType::PullRequest
-            {
+            let id = thread.pull_number();
+            if id.is_none() {
                 add_label(builder, format!("Notification: {}", &thread.subject.url));
                 add_label(builder, "(unsupported)");
                 builder.add_slack();

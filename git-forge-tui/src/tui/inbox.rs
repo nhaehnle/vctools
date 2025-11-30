@@ -51,43 +51,140 @@ impl Inbox {
                 .styled(0, &host.host, host_style)
                 .id();
 
-            let response =
-                client.and_then(|client| Ok(client.borrow_mut().access().notifications().ok()?));
+            let result =
+                client.and_then(|client| {
+                    let mut client = client.borrow_mut();
+                    let notifications = client.access().notifications().ok()?;
+                    Ok((client, notifications))
+                });
 
-            match response {
-                Ok(notifications) => {
-                    let mut repo_ids: HashMap<u64, u64> = HashMap::new();
+            let Ok((mut client, notifications)) = result else {
+                table_builder
+                    .add(top_level, String::new())
+                    .raw(0, result.err().unwrap().to_string());
+                continue;
+            };
 
-                    for notification in notifications.into_iter() {
-                        let repo_id = repo_ids
-                            .entry(notification.repository.id)
-                            .or_insert_with(|| {
-                                table_builder
-                                    .add(top_level, notification.repository.node_id.clone())
-                                    .styled(
-                                        0,
-                                        format!(
-                                            "{} / {}",
-                                            &notification.repository.owner.login,
-                                            &notification.repository.name
-                                        ),
-                                        repo_style,
-                                    )
-                                    .id()
+            let prefetch = client.prefetch();
+            let mut notifications =
+                notifications
+                    .into_iter()
+                    .map(|n| {
+                        let org = &n.repository.owner.login;
+                        let gh_repo = &n.repository.name;
+                        let pull =
+                            n.pull_number().and_then(|id| {
+                                prefetch
+                                    .pull(org, gh_repo, id)
+                                    .ok()
+                                    .ok()
                             });
-                        let item =
-                            table_builder
-                            .add(*repo_id, notification.id.clone())
-                            .raw(0, notification.subject.title.clone())
-                            .raw(1, notification.updated_at.clone());
-                        threads.insert(item.id(), (host, notification));
+                        (n, pull)
+                    })
+                    .collect::<Vec<_>>();
+
+            // We create table entries for repositories on-demand based on
+            // notifications for them.
+            //
+            // Map API repo IDs to repo table item IDs.
+            let mut repo_ids: HashMap<u64, u64> = HashMap::new();
+
+            // We determine parent-child relationships between notifications
+            // for stacked pull requests.
+            //
+            // TODO: Ideally, we'd also show read pull requests of a stack here
+            //       in some grayed-out way. But that requires a different
+            //       approach -- maintaining our own cache database of pull
+            //       requests that we can efficiently query by branch name.
+            //
+            // Map of (repo ID, head ref) to (notification table item IDs, # children).
+            let mut head_map: HashMap<(u64, &str), (Option<u64>, usize)> = HashMap::new();
+
+            for (_, pull) in &notifications {
+                let Some(pull) = pull else { continue };
+
+                let repo_id = pull.head.repo.id;
+                let head_ref = pull.head.ref_.as_str();
+                head_map.insert((repo_id, head_ref), (None, 0));
+            }
+
+            for (_, pull) in &notifications {
+                let Some(pull) = pull else { continue };
+
+                let repo_id = pull.base.repo.id;
+                let head_ref = pull.base.ref_.as_str();
+                if let Some((_, count)) = head_map.get_mut(&(repo_id, head_ref)) {
+                    *count += 1;
+                }
+            }
+
+            // Now iterate multiple times to create parent items before child items.
+            let mut worklist = notifications.iter().enumerate().collect::<Vec<_>>();
+            let mut item_ids = Vec::new();
+            while !worklist.is_empty() {
+                for workitem in std::mem::take(&mut worklist) {
+                    let (notification_idx, (notification, pull)) = workitem;
+
+                    // Determine the parent item in the table.
+                    let mut parent_id = None;
+                    if let Some(pull) = pull {
+                        let base_repo_id = pull.base.repo.id;
+                        let base_ref = pull.base.ref_.as_str();
+                        if let Some((parent, _)) = head_map.get(&(base_repo_id, base_ref)) {
+                            if parent.is_none() {
+                                worklist.push(workitem);
+                                continue;
+                            }
+                            parent_id = *parent;
+                        }
                     }
+                    let is_top_level_in_repo = parent_id.is_none();
+                    let parent_id =
+                        parent_id.unwrap_or_else(|| {
+                            // Create the repository table item.
+                            *repo_ids
+                                .entry(notification.repository.id)
+                                .or_insert_with(|| {
+                                    table_builder
+                                        .add(top_level, notification.repository.node_id.clone())
+                                        .styled(
+                                            0,
+                                            format!(
+                                                "{} / {}",
+                                                &notification.repository.owner.login,
+                                                &notification.repository.name
+                                            ),
+                                            repo_style,
+                                        )
+                                        .id()
+                                })
+                        });
+
+                    // Create the table item for this notification.
+                    let item =
+                        table_builder
+                        .add(parent_id, notification.id.clone())
+                        .raw(0, notification.subject.title.clone())
+                        .raw(1, notification.updated_at.clone());
+                    let item_id = item.id();
+
+                    if let Some(pull) = pull {
+                        let repo_id = pull.head.repo.id;
+                        let head_ref = pull.head.ref_.as_str();
+                        let entry = head_map.get_mut(&(repo_id, head_ref)).unwrap();
+                        if entry.1 <= 1 && !is_top_level_in_repo {
+                            entry.0 = Some(parent_id);
+                        } else {
+                            entry.0 = Some(item_id);
+                        }
+                    }
+
+                    item_ids.push((notification_idx, item_id));
                 }
-                Err(err) => {
-                    table_builder
-                        .add(top_level, String::new())
-                        .raw(0, err.to_string());
-                }
+            }
+
+            for (notification_idx, item_id) in item_ids {
+                threads.insert(item_id, (host, std::mem::take(&mut notifications[notification_idx].0)));
             }
         }
 
