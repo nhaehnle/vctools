@@ -8,9 +8,8 @@
 
 * Display notifications with extra columns (repository, author)
 * Load more pages of notifications
-* Show PRs based on selection
-* Make git fetches asynchronous
 * Prefetch thread / PR data
+* Show stacked pull requests even when they're read
 
 ## Review view
 

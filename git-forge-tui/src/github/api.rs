@@ -56,7 +56,7 @@ pub struct User {
     pub login: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewState {
     #[serde(rename = "APPROVED")]
     Approved,
@@ -72,6 +72,11 @@ impl Default for ReviewState {
         ReviewState::Other
     }
 }
+impl ReviewState {
+    pub fn is_significant(&self) -> bool {
+        matches!(self, ReviewState::Approved | ReviewState::ChangesRequested)
+    }
+}
 
 #[derive(Deserialize, Default, Debug, Clone)]
 pub struct Review {
@@ -82,6 +87,38 @@ pub struct Review {
     pub submitted_at: String,
     pub body: String,
     pub state: ReviewState,
+}
+impl Review {
+    pub fn submitted_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        match chrono::DateTime::parse_from_rfc3339(&self.submitted_at) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => None,
+        }
+    }
+}
+
+#[derive(Deserialize, Default, Debug, Clone)]
+pub struct Comment {
+    pub id: u64,
+    pub user: User,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+impl Comment {
+    pub fn created_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        match chrono::DateTime::parse_from_rfc3339(&self.created_at) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => None,
+        }
+    }
+
+    pub fn updated_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        match chrono::DateTime::parse_from_rfc3339(&self.updated_at) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => None,
+        }
+    }
 }
 
 #[derive(Deserialize, Default, Debug, Clone)]

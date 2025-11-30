@@ -398,6 +398,21 @@ impl<'frame> ClientRef<'frame> {
         ))
     }
 
+    /// Returns the comments on an issue (including non-review comments on a PR).
+    pub fn issue_comments<'a>(
+        &self,
+        organization: impl Into<Cow<'a, str>>,
+        gh_repo: impl Into<Cow<'a, str>>,
+        number: u64,
+    ) -> Response<Vec<api::Comment>> {
+        self.get(format!(
+            "repos/{}/{}/issues/{}/comments",
+            organization.into(),
+            gh_repo.into(),
+            number,
+        ))
+    }
+
     /// Returns unread notifications (like github.com/notifications).
     ///
     /// The API seems to be unable to report the "done" state of notification
