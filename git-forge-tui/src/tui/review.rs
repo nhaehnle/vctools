@@ -16,6 +16,7 @@ use vctuik::{
     state::Builder,
 };
 
+use crate::github::api;
 use crate::{github::connections::Connections, CompletePullRequest};
 
 use super::{actions, diff_pager::DiffPagerSource};
@@ -64,23 +65,82 @@ impl ReviewState {
         };
 
         let most_recent_review = reviews
-            .into_iter()
+            .iter()
             .rev()
             .filter(|review| review.commit_id.is_some())
             .find(|review| review.user.login == user);
 
         let header = || -> Result<_> {
             let mut header = String::new();
+            let state = match pull.state {
+                api::PullState::Open => {
+                    if pull.draft {
+                        "⚪ Draft"
+                    } else {
+                        "🟢 Open"
+                    }
+                }
+                api::PullState::Closed => {
+                    if pull.merged {
+                        "🟣 Merged"
+                    } else {
+                        "🔴 Closed"
+                    }
+                }
+                api::PullState::Other => "❓ Unknown",
+            };
             writeln!(
                 &mut header,
-                "Review {}/{}#{}",
-                pr.api.owner, pr.api.name, pr.id
+                "Pull Request {}/{}#{} ({})",
+                pr.api.owner, pr.api.name, pr.id, pull.html_url,
             )?;
+            writeln!(&mut header, "Title:   {}", pull.title)?;
+            writeln!(&mut header, "Author:  @{}", pull.user.login)?;
+            writeln!(&mut header, "State:   {}", state)?;
+
+            if reviews.is_empty() {
+                writeln!(&mut header, "No reviews yet")?;
+            } else {
+                let mut reviews_by_user: Vec<&api::Review> = Vec::new();
+                let mut max_user_len = 0;
+                for review in &reviews {
+                    let user = &review.user.login;
+                    if let Some(r) = reviews_by_user.iter_mut().find(|r| r.user.login == *user) {
+                        *r = review;
+                    } else {
+                        reviews_by_user.push(review);
+                        max_user_len = max_user_len.max(user.len());
+                    }
+                }
+
+                writeln!(&mut header, "Most recent reviews:")?;
+                for review in reviews_by_user {
+                    let state = match review.state {
+                        api::ReviewState::Approved => "✅",
+                        api::ReviewState::ChangesRequested => "❌",
+                        api::ReviewState::Commented => "💬",
+                        api::ReviewState::Other => "❓",
+                    };
+                    writeln!(
+                        &mut header,
+                        "  @{:<max_user_len$} {} {}{}",
+                        review.user.login,
+                        state,
+                        review.submitted_at,
+                        if let Some(commit_id) = review.commit_id.as_ref() {
+                            format!(" (at {})", commit_id)
+                        } else {
+                            String::new()
+                        }
+                    )?;
+                }
+            }
+
             if let Some(review) = &most_recent_review {
                 writeln!(&mut header, "  Most recent review: {}", review.commit_id.as_ref().unwrap())?;
             }
-            writeln!(&mut header, "  Current head:       {}", pull.head.sha)?;
-            writeln!(&mut header, "  Target branch:      {}", pull.base.ref_)?;
+            writeln!(&mut header, "Current head:       {} ({})", pull.head.ref_, pull.head.sha)?;
+            writeln!(&mut header, "Target branch:      {} ({})", pull.base.ref_, pull.base.sha)?;
             Ok(header)
         }()
         .unwrap();
@@ -94,7 +154,7 @@ impl ReviewState {
             pr.git.repository.fetch_missing(ep, &pr.git.remote, &refs)?;
 
             let old = if let Some(review) = most_recent_review {
-                review.commit_id.unwrap()
+                review.commit_id.clone().unwrap()
             } else {
                 pr.git
                     .repository

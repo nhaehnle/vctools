@@ -354,21 +354,19 @@ impl<'frame> ClientRef<'frame> {
         //       It should be possible to fix that once MutexGuard::map becomes stable.
         self.get_impl(&url, Box::new(Parser::<T>(std::marker::PhantomData)))
             .map(|_| {
-                let mut response =
-                    self.client
-                        .cache
-                        .cache
-                        .lock()
-                        .unwrap()
-                        .get(&url)
-                        .unwrap()
-                        .parsed
-                        .as_ref()
-                        .unwrap()
-                        .downcast_ref::<T>()
-                        .unwrap()
-                        .clone();
-                response
+                self.client
+                    .cache
+                    .cache
+                    .lock()
+                    .unwrap()
+                    .get(&url)
+                    .unwrap()
+                    .parsed
+                    .as_ref()
+                    .unwrap()
+                    .downcast_ref::<T>()
+                    .unwrap()
+                    .clone()
             })
     }
 

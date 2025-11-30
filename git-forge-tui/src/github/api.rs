@@ -27,7 +27,7 @@ pub enum PullState {
 #[derive(Deserialize, Debug, Clone)]
 pub struct Pull {
     pub number: u64,
-    pub state: String,
+    pub state: PullState,
     pub draft: bool,
     pub merged: bool,
     pub user: User,
@@ -42,6 +42,7 @@ pub struct Pull {
     pub merged_at: Option<String>,
     pub assignees: Vec<User>,
     pub requested_reviewers: Vec<User>,
+    pub html_url: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
