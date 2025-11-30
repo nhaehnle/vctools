@@ -7,6 +7,7 @@ use super::PagerSource;
 #[derive(Debug)]
 pub enum Anchor {
     String(String),
+    Str(&'static str),
     USize(usize),
     U64(u64),
     USize2(usize, usize),

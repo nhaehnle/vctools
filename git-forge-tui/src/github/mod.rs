@@ -427,6 +427,16 @@ impl<T> Response<T> {
         }
     }
 
+    pub fn ok_or_pending(self) -> std::result::Result<Option<T>, Cow<'static, str>> {
+        match self {
+            Response::Ok(value) => Ok(Some(value)),
+            Response::Pending => Ok(None),
+            Response::Offline => Err(Cow::Borrowed(&"Not available (we're offline)")),
+            Response::NotFound => Err(Cow::Borrowed(&"Not found")),
+            Response::Err(err) => Err(Cow::Owned(err)),
+        }
+    }
+
     pub fn map<U, F>(self, f: F) -> Response<U>
     where
         F: FnOnce(T) -> U,

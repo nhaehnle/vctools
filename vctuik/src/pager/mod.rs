@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod rich_source;
 mod cursor;
 mod string_source;
 mod widget;
 
+pub use rich_source::RichPagerSource;
 pub use cursor::{Anchor, PersistentCursor};
 pub use string_source::StringPagerSource;
 pub use widget::{Pager, PagerState};

@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::cell::RefCell;
-
 use super::*;
 
 pub struct StringPagerSource<'text> {
-    text: &'text str,
+    text: Cow<'text, str>,
 
     /// ((line number, column number), byte offset into text)
     /// Last entry is at end of text
     anchors: Vec<((usize, usize), usize)>,
 }
 impl<'text> StringPagerSource<'text> {
-    pub fn new(text: &'text str) -> Self {
+    pub fn new(text: impl Into<Cow<'text, str>>) -> Self {
+        Self::do_new(text.into())
+    }
+
+    fn do_new(text: Cow<'text, str>) -> Self {
         let mut pos = (0, 0);
         let mut anchors: Vec<_> = text
             .row_col_scan_mut(&mut pos)
