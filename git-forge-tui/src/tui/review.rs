@@ -66,6 +66,7 @@ impl ReviewState {
         let most_recent_review = reviews
             .into_iter()
             .rev()
+            .filter(|review| review.commit_id.is_some())
             .find(|review| review.user.login == user);
 
         let header = || -> Result<_> {
@@ -76,7 +77,7 @@ impl ReviewState {
                 pr.api.owner, pr.api.name, pr.id
             )?;
             if let Some(review) = &most_recent_review {
-                writeln!(&mut header, "  Most recent review: {}", review.commit_id)?;
+                writeln!(&mut header, "  Most recent review: {}", review.commit_id.as_ref().unwrap())?;
             }
             writeln!(&mut header, "  Current head:       {}", pull.head.sha)?;
             writeln!(&mut header, "  Target branch:      {}", pull.base.ref_)?;
@@ -87,13 +88,13 @@ impl ReviewState {
         let result = || -> Result<_> {
             let refs: Vec<_> = [&pull.head.sha, &pull.base.sha]
                 .into_iter()
-                .chain(most_recent_review.iter().map(|review| &review.commit_id))
+                .chain(most_recent_review.iter().map(|review| review.commit_id.as_ref().unwrap()))
                 .map(|sha| Ref::new(sha))
                 .collect();
             pr.git.repository.fetch_missing(ep, &pr.git.remote, &refs)?;
 
             let old = if let Some(review) = most_recent_review {
-                review.commit_id
+                review.commit_id.unwrap()
             } else {
                 pr.git
                     .repository

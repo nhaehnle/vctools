@@ -64,7 +64,9 @@ pub enum ReviewState {
 #[derive(Deserialize, Debug, Clone)]
 pub struct Review {
     pub user: User,
-    pub commit_id: String,
+
+    // The Copilot pull request reviewer bot creates reviews without a commit ID.
+    pub commit_id: Option<String>,
     pub submitted_at: String,
     pub body: String,
     pub state: ReviewState,
