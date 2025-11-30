@@ -60,3 +60,11 @@ pub struct NotificationThread {
     pub unread: bool,
     pub updated_at: String,
 }
+impl NotificationThread {
+    pub fn updated_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        match chrono::DateTime::parse_from_rfc3339(&self.updated_at) {
+            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+            Err(_) => None,
+        }
+    }
+}

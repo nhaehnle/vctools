@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 
 use vctuik::{
-    prelude::*,
-    state::Builder,
-    table::{self, simple_table},
+    layout::Constraint1D, prelude::*, state::Builder, table::{self, simple_table::{self, StyleId}}
 };
 
 use crate::github;
@@ -40,6 +38,8 @@ impl Inbox {
 
         let host_style =
             table_builder.add_style(builder.theme().text(builder.theme_context()).header1);
+        let read_style =
+            table_builder.add_style(builder.theme().text(builder.theme_context()).inactive);
         let mut threads: HashMap<u64, (&_, github::api::NotificationThread)> = HashMap::new();
 
         for (host, client) in connections.all_clients() {
@@ -50,14 +50,38 @@ impl Inbox {
 
             let response =
                 client.and_then(|client| Ok(client.borrow_mut().access().notifications().ok()?));
+
             match response {
                 Ok(notifications) => {
+                    let mut repo_ids: HashMap<u64, u64> = HashMap::new();
+
                     for notification in notifications.into_iter() {
-                        let id = table_builder
-                            .add(top_level, notification.id.clone())
-                            .raw(0, notification.subject.title.clone())
-                            .id();
-                        threads.insert(id, (host, notification));
+                        let repo_id = repo_ids
+                            .entry(notification.repository.id)
+                            .or_insert_with(|| {
+                                table_builder
+                                    .add(top_level, notification.repository.node_id.clone())
+                                    .raw(
+                                        0,
+                                        format!(
+                                            "{} / {}",
+                                            &notification.repository.owner.login,
+                                            &notification.repository.name
+                                        ),
+                                    )
+                                    .id()
+                            });
+                        let style = if notification.unread {
+                            StyleId::default()
+                        } else {
+                            read_style
+                        };
+                        let item =
+                            table_builder
+                            .add(*repo_id, notification.id.clone())
+                            .styled(0, notification.subject.title.clone(), style)
+                            .styled(1, notification.updated_at.clone(), style);
+                        threads.insert(item.id(), (host, notification));
                     }
                 }
                 Err(err) => {
@@ -68,12 +92,17 @@ impl Inbox {
             }
         }
 
+        let columns = vec![
+            table::Column::new(0, "", Constraint1D::unconstrained()),
+            table::Column::new(1, "Last Update", Constraint1D::new(5, 20)),
+        ];
         let selection = builder
             .nest()
             .id(state_id)
             .build(|builder| {
                 table::Table::new(&table_builder.finish())
                     .id("tree")
+                    .columns(columns)
                     .build(builder)
             })
             .selection;

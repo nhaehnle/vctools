@@ -20,7 +20,7 @@ use ratatui::{style::Style, text::Span};
 
 use super::TableSource;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StyleId(u32);
 
 /// Persistent state for a table source that uses the given key type to identify

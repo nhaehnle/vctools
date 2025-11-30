@@ -366,7 +366,7 @@ impl<'frame> ClientRef<'frame> {
     }
 
     pub fn notifications<'a>(&self) -> Response<Vec<api::NotificationThread>> {
-        self.get("notifications")
+        self.get("notifications?all=true")
     }
 }
 
