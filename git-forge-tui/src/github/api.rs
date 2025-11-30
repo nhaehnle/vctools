@@ -10,9 +10,38 @@ pub struct Branch {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+pub struct Label {
+    pub name: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub enum PullState {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "closed")]
+    Closed,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Pull {
+    pub number: u64,
+    pub state: String,
+    pub draft: bool,
+    pub merged: bool,
+    pub user: User,
     pub head: Branch,
     pub base: Branch,
+    pub title: String,
+    pub body: Option<String>,
+    pub labels: Vec<Label>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub closed_at: Option<String>,
+    pub merged_at: Option<String>,
+    pub assignees: Vec<User>,
+    pub requested_reviewers: Vec<User>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -21,9 +50,24 @@ pub struct User {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+pub enum ReviewState {
+    #[serde(rename = "APPROVED")]
+    Approved,
+    #[serde(rename = "CHANGES_REQUESTED")]
+    ChangesRequested,
+    #[serde(rename = "COMMENTED")]
+    Commented,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Review {
     pub user: User,
     pub commit_id: String,
+    pub submitted_at: String,
+    pub body: String,
+    pub state: ReviewState,
 }
 
 #[derive(Deserialize, Debug, Clone)]
