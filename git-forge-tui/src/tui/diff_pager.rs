@@ -71,9 +71,6 @@ pub struct DiffPagerSource {
 
     /// Column widths for range diff matches
     rdm_column_widths: git_core::RangeDiffMatchColumnWidths,
-
-    /// Persistent cursors
-    cursors: std::cell::RefCell<pager::PersistentCursors<(usize, usize, bool)>>,
 }
 impl std::fmt::Debug for DiffPagerSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -238,17 +235,15 @@ impl PagerSource for DiffPagerSource {
         Some((self.global_lines[header_idx]..end_line, depth))
     }
 
-    fn persist_cursor(
-        &self,
-        line: usize,
-        col: usize,
-        _gravity: pager::Gravity,
-    ) -> pager::PersistentCursor {
-        self.cursors.borrow_mut().add((line, col, false))
+    fn persist_line_number(&self, line: usize) -> (Vec<pager::Anchor>, usize) {
+        (vec![], line)
     }
 
-    fn retrieve_cursor(&self, cursor: pager::PersistentCursor) -> ((usize, usize), bool) {
-        let (line, col, removed) = self.cursors.borrow_mut().take(cursor);
-        ((line, col), removed)
+    fn retrieve_line_number(&self, anchor: &[pager::Anchor], line_offset: usize) -> (usize, bool) {
+        if !anchor.is_empty() {
+            (0, false)
+        } else {
+            (line_offset, true)
+        }
     }
 }

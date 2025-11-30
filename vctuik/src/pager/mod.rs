@@ -1,103 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::{
-    event::{KeyCode, KeyModifiers, MouseButton, WithModifiers},
-    layout::{Constraint1D, LayoutItem1D},
-    prelude::*,
-    state::{Builder, StateId},
-    theme,
-};
-use itertools::Itertools;
-use ratatui::{prelude::*, text::Line, widgets::Block};
-use regex::Regex;
-use std::borrow::Cow;
-use std::cmp::Ordering;
-use std::ops::Range;
-
-use crate::command;
-use crate::stringtools::StrScan;
-
+mod cursor;
 mod string_source;
 mod widget;
 
+pub use cursor::{Anchor, PersistentCursor};
 pub use string_source::StringPagerSource;
 pub use widget::{Pager, PagerState};
 
-/// A persistent cursor into a `PagerSource`.
-///
-/// This is used to remember a position in the pager source across frames even for pager sources
-/// whose contents may change.
-#[derive(Debug)]
-pub struct PersistentCursor {
-    id: usize,
-}
+use std::borrow::Cow;
+use std::ops::Range;
+use itertools::Itertools;
+use ratatui::prelude::*;
+use regex::Regex;
 
-/// Gravity of a persistent cursor.
-///
-/// Whether a cursor is anchored to the character to the left or to the right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Gravity {
-    Left,
-    Right,
-}
-
-/// Data backing for persistent cursors.
-///
-/// Stores a value of type `T` for each persistent cursor.
-///
-/// Implementations of `PagerSource` must use an instance of this type to manage persistent cursors.
-#[derive(Debug, Default)]
-pub struct PersistentCursors<T> {
-    cursors: Vec<Option<T>>,
-}
-impl<T> PersistentCursors<T> {
-    pub fn new() -> Self {
-        PersistentCursors {
-            cursors: Vec::new(),
-        }
-    }
-
-    /// Update all persistent cursor backing data.
-    ///
-    /// Implementations may use this to update cursors when the underlying data changes if there
-    /// is no other way to recover cursors' locations.
-    pub fn update<F>(&mut self, f: F)
-    where
-        F: Fn(&mut T),
-    {
-        self.cursors.iter_mut().for_each(|cursor| {
-            if let Some(ref mut c) = cursor {
-                f(c);
-            }
-        });
-    }
-
-    /// Add a new persistent cursor and register its data.
-    pub fn add(&mut self, data: T) -> PersistentCursor {
-        for id in 0..self.cursors.len() {
-            if self.cursors[id].is_none() {
-                // Reuse an existing slot.
-                self.cursors[id] = Some(data);
-                return PersistentCursor { id };
-            }
-        }
-
-        // No free slot found, allocate a new one.
-        self.cursors.push(Some(data));
-        PersistentCursor {
-            id: self.cursors.len() - 1,
-        }
-    }
-
-    /// Take and unregister the data for a persistent cursor.
-    pub fn take(&mut self, cursor: PersistentCursor) -> T {
-        // This may panic if a cursor is used with the incorrect `PersistentCursors` instance.
-        //
-        // If there is no confusion of `PersistentCursors` instances, this never panics because
-        // cursors cannot be cloned or otherwise created outside of this module.
-        self.cursors[cursor.id].take().unwrap()
-    }
-}
+use crate::{command, event::KeyCode, prelude::*, theme};
+use crate::stringtools::StrScan;
 
 /// A source of data for the `Pager` widget.
 ///
@@ -135,17 +53,17 @@ pub trait PagerSource {
         None
     }
 
-    /// Return a persistent cursor for the given line and column.
+    /// Return (anchor, line_offset) for the given line.
     ///
-    /// This must accept column numbers beyond the end of the line. Such cursors should be treated
-    /// as if the line had extra whitespace at the end.
-    fn persist_cursor(&self, line: usize, col: usize, gravity: Gravity) -> PersistentCursor;
+    /// This is used to persist cursors across frames. The intention is that the
+    /// anchor is reasonably stable even when the contents of the pager source change.
+    fn persist_line_number(&self, line: usize) -> (Vec<Anchor>, usize);
 
-    /// Retrieve the current position of a persistent cursor.
+    /// Retrieve the line number for the given anchor and line offset.
     ///
-    /// Returns ((line, column), anchor-removed), where `anchor-removed` indicates whether the
-    /// character that the cursor was anchored to (based on gravity) was removed.
-    fn retrieve_cursor(&self, cursor: PersistentCursor) -> ((usize, usize), bool);
+    /// Return (line, success), where `success` is false if the anchor (or parts of it)
+    /// was removed.
+    fn retrieve_line_number(&self, anchor: &[Anchor], line_offset: usize) -> (usize, bool);
 }
 
 pub fn run(text: String) -> Result<()> {

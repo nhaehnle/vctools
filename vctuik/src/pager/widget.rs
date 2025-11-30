@@ -2,6 +2,21 @@
 
 use super::*;
 
+use crate::{
+    event::{KeyCode, KeyModifiers, MouseButton, WithModifiers},
+    layout::{Constraint1D, LayoutItem1D},
+    prelude::*,
+    state::{Builder, StateId},
+};
+use itertools::Itertools;
+use ratatui::{prelude::*, widgets::Block};
+use regex::Regex;
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::ops::Range;
+
+use crate::stringtools::StrScan;
+
 #[derive(Debug, Default)]
 pub struct PagerState {
     /// The top left corner of the view maps to this scroll position.
@@ -38,18 +53,22 @@ pub struct PagerResult<'result> {
 impl<'result> Drop for PagerResult<'result> {
     fn drop(&mut self) {
         // Save the scroll position.
-        self.state.scroll = Some(self.source.persist_cursor(
+        self.state.scroll = Some(PersistentCursor::persist(
+            self.source,
             self.scroll.0,
             self.scroll.1,
-            Gravity::Left,
         ));
-        self.state.select = Some(self.source.persist_cursor(self.select, 0, Gravity::Left));
+        self.state.select = Some(PersistentCursor::persist(
+            self.source,
+            self.select,
+            0,
+        ));
 
         // Save the collapse state.
         self.state.collapse = self
             .collapse
             .iter()
-            .map(|range| self.source.persist_cursor(range.start, 0, Gravity::Left))
+            .map(|range| PersistentCursor::persist(self.source, range.start, 0))
             .collect();
     }
 }
@@ -58,8 +77,8 @@ impl<'result> PagerResult<'result> {
         let mut collapse = Vec::new();
 
         for cursor in std::mem::take(&mut state.collapse) {
-            let (pos, removed) = source.retrieve_cursor(cursor);
-            if removed {
+            let (pos, success) = cursor.retrieve(source);
+            if !success {
                 continue;
             }
 
@@ -77,8 +96,8 @@ impl<'result> PagerResult<'result> {
         collapse.sort_by_key(|range| range.start);
 
         let scroll = state.scroll.take().map_or((0, 0), |cursor| {
-            let (mut pos, removed) = source.retrieve_cursor(cursor);
-            if removed {
+            let (mut pos, success) = cursor.retrieve(source);
+            if !success {
                 // Reset horizontal scroll if the containing line was removed.
                 pos.1 = 0;
             }
@@ -88,7 +107,7 @@ impl<'result> PagerResult<'result> {
         let select = state
             .select
             .take()
-            .map_or((0, 0), |cursor| source.retrieve_cursor(cursor).0);
+            .map_or((0, 0), |cursor| cursor.retrieve(source).0);
 
         let mut result = PagerResult {
             source,

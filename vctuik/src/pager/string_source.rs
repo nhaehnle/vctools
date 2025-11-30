@@ -10,8 +10,6 @@ pub struct StringPagerSource<'text> {
     /// ((line number, column number), byte offset into text)
     /// Last entry is at end of text
     anchors: Vec<((usize, usize), usize)>,
-
-    cursors: RefCell<PersistentCursors<(usize, usize)>>,
 }
 impl<'text> StringPagerSource<'text> {
     pub fn new(text: &'text str) -> Self {
@@ -27,7 +25,6 @@ impl<'text> StringPagerSource<'text> {
         StringPagerSource {
             text,
             anchors,
-            cursors: RefCell::new(PersistentCursors::new()),
         }
     }
 
@@ -78,13 +75,21 @@ impl<'text> PagerSource for StringPagerSource<'text> {
         Line::from(self.text[start..].get_first_line(max_cols)).style(theme.normal)
     }
 
-    fn persist_cursor(&self, line: usize, col: usize, _gravity: Gravity) -> PersistentCursor {
-        self.cursors.borrow_mut().add((line, col))
+    fn get_raw_line(&self, line: usize, col_no: usize, max_cols: usize) -> Cow<'_, str> {
+        let start = self.get_index(line, col_no);
+        Cow::Borrowed(self.text[start..].get_first_line(max_cols))
     }
 
-    fn retrieve_cursor(&self, cursor: PersistentCursor) -> ((usize, usize), bool) {
-        let pos = self.cursors.borrow_mut().take(cursor);
-        (pos, false)
+    fn persist_line_number(&self, line: usize) -> (Vec<Anchor>, usize) {
+        (vec![], line)
+    }
+
+    fn retrieve_line_number(&self, anchor: &[Anchor], line_offset: usize) -> (usize, bool) {
+        if !anchor.is_empty() {
+            (0, false)
+        } else {
+            (line_offset, true)
+        }
     }
 }
 
