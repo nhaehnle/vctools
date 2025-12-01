@@ -31,7 +31,8 @@ merges.
 cargo install --path .
 ```
 
-Or build from source:
+Or just build from source without installing:
+
 ```bash
 cargo build --release
 ```

@@ -9,6 +9,7 @@ pub enum Anchor {
     String(String),
     Str(&'static str),
     USize(usize),
+    USize2(usize, usize),
     Any(Box<dyn Any + 'static>),
 }
 impl Anchor {
@@ -27,6 +28,25 @@ impl Anchor {
         match self {
             Anchor::Any(boxed) => boxed.downcast::<T>().ok().map(|b| *b),
             _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cursor {
+    pub line: usize,
+    pub col: usize,
+}
+impl std::cmp::PartialOrd for Cursor {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl std::cmp::Ord for Cursor {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.line.cmp(&other.line) {
+            std::cmp::Ordering::Equal => self.col.cmp(&other.col),
+            ord => ord,
         }
     }
 }
@@ -63,15 +83,6 @@ impl PersistentCursor {
         let max_line = source.num_lines().saturating_sub(1);
         if line > max_line {
             line = max_line;
-            success = false;
-        }
-
-        let raw_line = source.get_raw_line(line, 0, self.col);
-        let max_col = raw_line.len().saturating_sub(1);
-
-        let mut col = self.col;
-        if col > max_col {
-            col = max_col;
             success = false;
         }
         

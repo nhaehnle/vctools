@@ -5,8 +5,8 @@ mod cursor;
 mod string_source;
 mod widget;
 
-pub use rich_source::RichPagerSource;
-pub use cursor::{Anchor, PersistentCursor};
+pub use rich_source::{RichPagerSource, RichPagerSourceBuilder};
+pub use cursor::{Anchor, Cursor, PersistentCursor};
 pub use string_source::StringPagerSource;
 pub use widget::{Pager, PagerState};
 

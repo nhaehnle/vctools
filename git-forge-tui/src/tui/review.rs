@@ -6,9 +6,10 @@ use std::fmt::Write;
 use diff_modulo_base::git_core::{self, Ref};
 use diff_modulo_base::tool::{self, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions};
 use regex::Regex;
+use vctuik::pager::RichPagerSourceBuilder;
 use vctuik::{
     event::KeyCode,
-    pager::{Pager, PagerState, RichPagerSource, StringPagerSource},
+    pager::{Pager, PagerState, RichPagerSource},
     prelude::*,
     state::Builder,
 };
@@ -108,28 +109,30 @@ impl ReviewState {
             self.pr = Some(pr.into_owned());
         }
 
-        self.head_pager = RichPagerSource::new();
         self.diff_pager = DiffPagerSource::new();
         if !keep_pager_state {
             self.pager_state = PagerState::default();
         }
         self.need_rebuild = false;
 
-        if let Err(err) = self.build(connections, ep) {
-            let mut text = String::new();
+        let mut pager = RichPagerSourceBuilder::new();
+
+        if let Err(err) = self.build(&mut pager, connections, ep) {
             if ep.timed_out() {
-                writeln!(&mut text, "Generating diff... {err}").unwrap();
+                writeln!(&mut pager, "Generating diff... {err}").unwrap();
                 self.need_rebuild = true;
             } else {
-                writeln!(&mut text, "Error loading review: {err}").unwrap();
+                writeln!(&mut pager, "Error loading review: {err}").unwrap();
                 self.need_rebuild = false;
             }
-            self.head_pager.add_child(StringPagerSource::new(text));
         }
+
+        self.head_pager = pager.build();
     }
 
     fn build(
         &mut self,
+        pager: &mut RichPagerSourceBuilder,
         connections: &mut Connections,
         ep: &dyn git_core::ExecutionProvider,
     ) -> Result<()> {
@@ -142,15 +145,12 @@ impl ReviewState {
         let comments = client_ref.issue_comments(&pr.api.owner, &pr.api.name, pr.id);
 
         let Some(pull) = pull.ok_or_pending()? else {
-            self.head_pager.add_child(StringPagerSource::new(
-                "Loading pull request...",
-            ));
+            writeln!(pager, "Loading pull request...")?;
             self.need_rebuild = true;
             return Ok(());
         };
 
         {
-            let mut header = String::new();
             let state = match pull.state {
                 api::PullState::Open => {
                     if pull.draft {
@@ -169,14 +169,13 @@ impl ReviewState {
                 api::PullState::Other => "❓ Unknown",
             };
             writeln!(
-                &mut header,
+                pager,
                 "Pull Request {}/{}#{} ({})",
                 pr.api.owner, pr.api.name, pr.id, pull.html_url,
             )?;
-            writeln!(&mut header, "Title:   {}", pull.title)?;
-            writeln!(&mut header, "Author:  @{}", pull.user.login)?;
-            writeln!(&mut header, "State:   {}", state)?;
-            self.head_pager.add_child(StringPagerSource::new(header));
+            writeln!(pager, "Title:   {}", pull.title)?;
+            writeln!(pager, "Author:  @{}", pull.user.login)?;
+            writeln!(pager, "State:   {}", state)?;
         }
 
         let reviews = reviews.ok_or_pending()?;
@@ -185,10 +184,8 @@ impl ReviewState {
         let main_comments = reviews.zip(comments).map(|(r, c)| normalize_comments_and_reviews(r, c));
 
         if let Some(main_comments) = &main_comments {
-            let mut header = String::new();
-
             if main_comments.is_empty() {
-                writeln!(&mut header, "No reviews or comments yet")?;
+                writeln!(pager, "No reviews or comments yet")?;
             } else {
                 // Keep only the most recent review or comment by each user,
                 // except we also keep the most significant reviews
@@ -205,7 +202,7 @@ impl ReviewState {
                     }
                 }
 
-                writeln!(&mut header, "Most recent reviews and comments by user:")?;
+                writeln!(pager, "Most recent reviews and comments by user:")?;
                 for c in filtered.into_iter().rev() {
                     let state = match c.review_state {
                         Some(api::ReviewState::Approved) => "✅",
@@ -214,7 +211,7 @@ impl ReviewState {
                         Some(api::ReviewState::Other) => "❓",
                     };
                     writeln!(
-                        &mut header,
+                        pager,
                         "  @{:<max_user_len$} {} {}{}",
                         c.user,
                         state,
@@ -227,18 +224,14 @@ impl ReviewState {
                     )?;
                 }
             }
-
-            self.head_pager.add_child(StringPagerSource::new(header));
         } else {
-            self.head_pager.add_child(StringPagerSource::new("Loading reviews and comments..."));
+            writeln!(pager, "Loading reviews and comments...")?;
             self.need_rebuild = true;
         }
 
         {
-            let mut header = String::new();
-            writeln!(&mut header, "Current head:       {} ({})", pull.head.ref_, pull.head.sha)?;
-            writeln!(&mut header, "Target branch:      {} ({})", pull.base.ref_, pull.base.sha)?;
-            self.head_pager.add_child(StringPagerSource::new(header));
+            writeln!(pager, "Current head:       {} ({})", pull.head.ref_, pull.head.sha)?;
+            writeln!(pager, "Target branch:      {} ({})", pull.base.ref_, pull.base.sha)?;
         }
 
         let most_recent_review = main_comments
@@ -345,9 +338,10 @@ impl<'build> Review<'build> {
 
                 state.update(connections, self.ep, self.pr);
 
-                let mut pager = RichPagerSource::new();
+                let mut pager = RichPagerSourceBuilder::new();
                 pager.add_child_ref(&state.head_pager);
                 pager.add_child_ref(&state.diff_pager);
+                let pager = pager.build();
 
                 let mut pager = Pager::new(&pager);
                 if let Some(regex) = self.search {
