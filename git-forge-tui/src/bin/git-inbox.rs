@@ -37,7 +37,11 @@ struct Cli {
 }
 
 fn do_main() -> Result<()> {
-    let mut args = Cli::parse();
+    let args = Cli::parse();
+    let mut dmb_options = tool::GitDiffModuloBaseOptions {
+        combined: true,
+        ..Default::default()
+    };
 
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::builder()
@@ -160,7 +164,7 @@ fn do_main() -> Result<()> {
             };
             Review::new(&git_service, &pr)
                 .maybe_search(search.as_ref())
-                //.options(&mut args.dmb_options)
+                .options(&mut dmb_options)
                 .build(builder, &mut connections);
         });
 
