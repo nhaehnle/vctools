@@ -29,6 +29,8 @@ pub struct Host {
     pub api: String,
     pub user: String,
     pub token: String,
+    #[serde(default)]
+    pub alias: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

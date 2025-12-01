@@ -47,12 +47,15 @@ host="github.com"
 api="https://api.github.com"
 user="<your-github-username>"
 token="ghp_<your-github-token>"
+
+# Optional aliases for the host name.
+alias=["gh"]
 ```
 
 Multiple hosts can be specified, which is useful if you are working with GitHub Enterprise
 or multiple GitHub usernames.
 
-The `host` field must match the host that is used in the remotes set up for your
+The `host` field (or the aliases) must match the host that is used in the remotes set up for your
 Git working directories.
 
 For GitHub Enterprise installations, the API URL is typically of the form

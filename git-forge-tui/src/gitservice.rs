@@ -74,7 +74,7 @@ struct Job {
 #[derive(Debug)]
 struct ServiceInner {
     repositories: Vec<git_core::Repository>,
-    api_hosts: HashSet<String>,
+    api_hosts: HashMap<String, String>,
     remotes: OnceLock<Vec<Remote>>,
     job: Mutex<Option<Job>>,
     job_available: Condvar,
@@ -101,7 +101,10 @@ impl GitService {
             .iter()
             .map(|repo| git_core::Repository::new(repo.path.clone()))
             .collect();
-        let api_hosts = api_hosts.iter().map(|host| host.host.clone()).collect();
+        let api_hosts = api_hosts.iter().map(|host| {
+            std::iter::once((host.host.clone(), host.host.clone()))
+                .chain(host.alias.iter().map(|alias| (alias.clone(), host.host.clone())))
+        }).flatten().collect();
         let inner = Arc::new(ServiceInner {
             repositories,
             api_hosts,
@@ -268,12 +271,15 @@ impl ServiceInner {
                     continue;
                 };
 
-                if !self.api_hosts.contains(hostname) {
+                let Some(canonical_host) = self.api_hosts.get(hostname) else {
                     continue;
-                }
+                };
                 let api =
-                    ApiRepository::new(hostname.to_string(), owner.to_string(), name.to_string());
+                    ApiRepository::new(canonical_host.to_string(), owner.to_string(), name.to_string());
                 let git = GitRepository::new(repo.path.clone(), remote);
+
+                debug!("Found remote {:?} for API {:?}", git, api);
+
                 remotes.push(Remote {
                     git,
                     api,
