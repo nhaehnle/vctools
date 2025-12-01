@@ -7,7 +7,7 @@ use clap::Parser;
 use diff_modulo_base::*;
 use log::{debug, error, info, trace, warn, LevelFilter};
 use ratatui::{prelude::*, widgets::Block};
-use utils::{try_forward, Result};
+use utils::Result;
 use vctuik::{
     command,
     event::{Event, KeyCode, KeyEventKind, MouseEventKind},
@@ -18,7 +18,7 @@ use vctuik::{
 };
 
 use git_forge_tui::{
-    get_project_dirs, github::{self, api::NotificationSubject},
+    get_project_dirs, github,
     gitservice::GitService,
     load_config,
     logview::add_log_view,

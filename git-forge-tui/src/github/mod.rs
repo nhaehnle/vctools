@@ -156,7 +156,7 @@ impl Client {
         }
     }
 
-    pub fn access(&mut self) -> ClientRef {
+    pub fn access(&mut self) -> ClientRef<'_> {
         let wait_policy = self.frame.unwrap();
         ClientRef {
             client: self,
@@ -164,7 +164,7 @@ impl Client {
         }
     }
 
-    pub fn prefetch(&mut self) -> ClientRef {
+    pub fn prefetch(&mut self) -> ClientRef<'_> {
         assert!(self.frame.is_some());
         ClientRef {
             client: self,

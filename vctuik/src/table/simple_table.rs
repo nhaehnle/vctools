@@ -303,7 +303,7 @@ impl TableSource for Source<'_> {
         self.items.get(&item_id).unwrap().child_idx
     }
 
-    fn get_data(&self, item_id: u64, column_idx: usize) -> Vec<Span> {
+    fn get_data(&self, item_id: u64, column_idx: usize) -> Vec<Span<'_>> {
         let item = self.items.get(&item_id).unwrap();
         let (style_id, text) = item
             .data

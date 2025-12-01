@@ -31,7 +31,7 @@ pub trait TableSource {
     fn child_idx(&self, item_id: u64) -> usize;
 
     /// Return the data for the given item in the column with the given index.
-    fn get_data(&self, item_id: u64, column_idx: usize) -> Vec<Span>;
+    fn get_data(&self, item_id: u64, column_idx: usize) -> Vec<Span<'_>>;
 }
 
 pub use widget::{Column, Table};

@@ -418,7 +418,7 @@ impl<'text> PagerSource for RichPagerSource<'text> {
         self.landmarks.last().unwrap().pos.line
     }
 
-    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line {
+    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line<'_> {
         let idx = self.idx_from_pos(Cursor { line, col: col_no });
         match self.content.get(idx.element).map(Element::as_ref) {
             Some(ElementRef::Pager(pager)) => {

@@ -72,7 +72,7 @@ impl<'text> PagerSource for StringPagerSource<'text> {
         }
     }
 
-    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line {
+    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line<'_> {
         let start = self.get_index(line, col_no);
         Line::from(self.text[start..].get_first_line(max_cols)).style(theme.normal)
     }

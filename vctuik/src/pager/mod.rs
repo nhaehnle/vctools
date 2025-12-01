@@ -32,7 +32,7 @@ pub trait PagerSource {
     ///
     /// As a hint, `max_cols` indicates a maximum number of characters that the caller is interested
     /// in. Implementations are encouraged not to return more data, even if the line is longer.
-    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line;
+    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line<'_>;
 
     /// Returns the given line starting at the given column.
     ///
