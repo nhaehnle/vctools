@@ -64,6 +64,8 @@ pub enum ReviewState {
     ChangesRequested,
     #[serde(rename = "COMMENTED")]
     Commented,
+    #[serde(rename = "DISMISSED")]
+    Dismissed,
     #[serde(other)]
     Other,
 }

@@ -207,7 +207,8 @@ impl ReviewState {
                     let state = match c.review_state {
                         Some(api::ReviewState::Approved) => "✅",
                         Some(api::ReviewState::ChangesRequested) => "❌",
-                        Some(api::ReviewState::Commented) | None => "💬",
+                        Some(api::ReviewState::Commented) |
+                        Some(api::ReviewState::Dismissed) | None => "💬",
                         Some(api::ReviewState::Other) => "❓",
                     };
                     writeln!(
