@@ -112,32 +112,8 @@ fn do_main() -> Result<()> {
             }
         });
 
-        if inbox.has_focus {
-            let mark_done = builder.on_key_press(KeyCode::Char('e'));
-            let unsubscribe = builder.on_key_press(KeyCode::Char('M'));
-            if mark_done || unsubscribe {
-                if let Some((host, notification)) = inbox.selection.take() {
-                    let (edit, action) = if mark_done {
-                        (github::edit::Edit::MarkNotificationDone(notification.id), "mark as done")
-                    } else {
-                        (github::edit::Edit::Unsubscribe(notification.id), "unsubscribe")
-                    };
-                    if let Err(err) =
-                        connections.client(host)
-                            .unwrap()
-                            .borrow_mut()
-                            .edit(edit) {
-                        error = Some(format!("Failed to {}: {}", action, err));
-                    }
-                    builder.need_refresh();
-                } else {
-                    error = Some("No notification selected".into());
-                }
-            }
-        }
-
         with_section(builder, "Notification", |builder| {
-            let Some((host, thread)) = inbox.selection else {
+            let Some((host, thread)) = inbox.selection.clone() else {
                 add_label(builder, "(no notification selected)");
                 builder.add_slack();
                 return;
@@ -174,8 +150,29 @@ fn do_main() -> Result<()> {
             });
         }
 
-        connections.end_frame(Some(&refresh_signal));
-        git_service.end_frame();
+        {
+            let mark_done = builder.on_key_press(KeyCode::Char('e'));
+            let unsubscribe = builder.on_key_press(KeyCode::Char('M'));
+            if mark_done || unsubscribe {
+                if let Some((host, notification)) = inbox.selection.take() {
+                    let (edit, action) = if mark_done {
+                        (github::edit::Edit::MarkNotificationDone(notification.id), "mark as done")
+                    } else {
+                        (github::edit::Edit::Unsubscribe(notification.id), "unsubscribe")
+                    };
+                    if let Err(err) =
+                        connections.client(host)
+                            .unwrap()
+                            .borrow_mut()
+                            .edit(edit) {
+                        error = Some(format!("Failed to {}: {}", action, err));
+                    }
+                    builder.need_refresh();
+                } else {
+                    error = Some("No notification selected".into());
+                }
+            }
+        }
 
         let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
 
@@ -253,6 +250,9 @@ fn do_main() -> Result<()> {
         } else if builder.on_key_press(KeyCode::Char('q')) {
             running = false;
         }
+
+        connections.end_frame(Some(&refresh_signal));
+        git_service.end_frame();
 
         Ok(running)
     })?;
