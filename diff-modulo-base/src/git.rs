@@ -42,8 +42,9 @@ fn diff_ranges_full_impl(
                 }
             }
 
-            let paths: Vec<&[u8]> = paths.into_iter().collect();
-
+            // Sort paths to ensure cacheability and a deterministic diff result.
+            let mut paths: Vec<&[u8]> = paths.into_iter().collect();
+            paths.sort();
             let target = buffer.insert(&repo.diff(ep, old.end..new.end, Some(&paths))?)?;
             diff::Diff::parse(&buffer, target)?
         }

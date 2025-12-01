@@ -207,6 +207,7 @@ impl Client {
         if let Some((helper, notify)) = self.helper.as_ref().zip(notify) {
             let mut state = helper.state.lock().unwrap();
             if state.response_signal == ResponseSignal::Pending {
+                debug!("Signaling callback from end of frame");
                 notify.signal();
                 state.response_signal = ResponseSignal::Signaled;
             } else if state.response_signal == ResponseSignal::Requested {
@@ -291,7 +292,14 @@ impl<'frame> ClientRef<'frame> {
             helper.helper_wakeup.notify_all();
         }
 
-        if is_prefetch || (!request_now && !request_pending) {
+        if !request_now && !request_pending {
+            return response;
+        }
+
+        if is_prefetch {
+            if state.response_signal == ResponseSignal::Disabled {
+                state.response_signal = ResponseSignal::Requested;
+            }
             return response;
         }
 
@@ -713,6 +721,7 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
 
             if !is_backlog && state.response_signal == ResponseSignal::Requested {
                 if let Some(callback) = &state.response_callback {
+                    debug!("Signaling callback from response");
                     callback.signal();
                     state.response_signal = ResponseSignal::Signaled;
                 } else {
