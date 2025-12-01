@@ -37,6 +37,11 @@ pub struct Cursor {
     pub line: usize,
     pub col: usize,
 }
+impl Cursor {
+    pub fn new(line: usize, col: usize) -> Self {
+        Cursor { line, col }
+    }
+}
 impl std::cmp::PartialOrd for Cursor {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -62,19 +67,19 @@ pub struct PersistentCursor {
     col: usize,
 }
 impl PersistentCursor {
-    pub fn persist<S>(source: &S, line: usize, col: usize) -> Self
+    pub fn persist<S>(source: &S, pos: Cursor) -> Self
     where
         S: PagerSource + ?Sized,
     {
-        let (anchor, line_offset) = source.persist_line_number(line);
+        let (anchor, line_offset) = source.persist_line_number(pos.line);
         PersistentCursor {
             anchor,
             line_offset,
-            col,
+            col: pos.col,
         }
     }
 
-    pub fn retrieve<S>(&self, source: &S) -> ((usize, usize), bool)
+    pub fn retrieve<S>(&self, source: &S) -> (Cursor, bool)
     where
         S: PagerSource + ?Sized,
     {
@@ -86,6 +91,6 @@ impl PersistentCursor {
             success = false;
         }
         
-        ((line, col), success)
+        (Cursor::new(line, self.col), success)
     }
 }
