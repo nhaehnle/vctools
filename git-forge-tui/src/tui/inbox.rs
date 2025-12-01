@@ -83,11 +83,45 @@ impl Inbox {
                     })
                     .collect::<Vec<_>>();
 
-            // We create table entries for repositories on-demand based on
-            // notifications for them.
+            // We create table entries for repositories that have notifications
+            // in alphabetical order.
             //
             // Map API repo IDs to repo table item IDs.
-            let mut repo_ids: HashMap<u64, u64> = HashMap::new();
+            let repo_ids = {
+                let mut repo_ids: HashMap<u64, u64> = HashMap::new();
+                let mut repos = Vec::new();
+                for (n, _) in &notifications {
+                    repo_ids.entry(n.repository.id)
+                        .or_insert_with(|| {
+                            repos.push(&n.repository);
+                            0
+                        });
+                }
+                repos.sort_by(|a, b| {
+                    let ord = a.owner.login.cmp(&b.owner.login);
+                    if ord == std::cmp::Ordering::Equal {
+                        a.name.cmp(&b.name)
+                    } else {
+                        ord
+                    }
+                });
+                for repo in repos {
+                    let id = table_builder
+                        .add(top_level, repo.node_id.clone())
+                            .styled(
+                                0,
+                                format!(
+                                    "{} / {}",
+                                    &repo.owner.login,
+                                    &repo.name
+                                ),
+                                repo_style,
+                            )
+                            .id();
+                    *repo_ids.get_mut(&repo.id).unwrap() = id;
+                }
+                repo_ids
+            };
 
             // We determine parent-child relationships between notifications
             // for stacked pull requests.
@@ -141,23 +175,7 @@ impl Inbox {
                     let is_top_level_in_repo = parent_id.is_none();
                     let parent_id =
                         parent_id.unwrap_or_else(|| {
-                            // Create the repository table item.
-                            *repo_ids
-                                .entry(notification.repository.id)
-                                .or_insert_with(|| {
-                                    table_builder
-                                        .add(top_level, notification.repository.node_id.clone())
-                                        .styled(
-                                            0,
-                                            format!(
-                                                "{} / {}",
-                                                &notification.repository.owner.login,
-                                                &notification.repository.name
-                                            ),
-                                            repo_style,
-                                        )
-                                        .id()
-                                })
+                            *repo_ids.get(&notification.repository.id).unwrap()
                         });
 
                     // Create the table item for this notification.
