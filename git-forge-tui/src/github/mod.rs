@@ -118,10 +118,12 @@ impl Client {
             helper_wakeup: Condvar::new(),
             state: Mutex::new(HelperState {
                 running: true,
+                frame_number: 0,
+                frame_response_past_timeout: 0,
+                frame_timed_out: false,
                 frame_requests: Vec::new(),
                 backlog_requests: Vec::new(),
                 edit_requests: Vec::new(),
-                response_signal: ResponseSignal::Disabled,
                 response_callback: None,
             }),
         });
@@ -150,8 +152,9 @@ impl Client {
         if let Some(helper) = &self.helper {
             let mut state = helper.state.lock().unwrap();
             let state = state.deref_mut();
+            state.frame_number += 1;
+            state.frame_timed_out = false;
             state.backlog_requests.append(&mut state.frame_requests);
-            state.response_signal = ResponseSignal::Disabled;
             state.response_callback = None;
         }
     }
@@ -208,11 +211,9 @@ impl Client {
 
         if let Some((helper, notify)) = self.helper.as_ref().zip(notify) {
             let mut state = helper.state.lock().unwrap();
-            if state.response_signal == ResponseSignal::Pending {
-                debug!("Signaling callback from end of frame");
+            if state.frame_response_past_timeout == state.frame_number {
                 notify.signal();
-                state.response_signal = ResponseSignal::Signaled;
-            } else if state.response_signal == ResponseSignal::Requested {
+            } else if state.frame_timed_out {
                 state.response_callback = Some(notify.clone());
             }
         }
@@ -254,11 +255,18 @@ pub struct ClientRef<'frame> {
 }
 impl<'frame> ClientRef<'frame> {
     fn get_impl(&self, url: &str, parser: Box<dyn DynParser>) -> Response<()> {
+        let frame_number = self.client.helper.as_ref().map(|helper| {
+            helper.state.lock().unwrap().frame_number
+        });
+
         let (request_now, request_pending, response) = {
             let mut cache = self.client.cache.cache.lock().unwrap();
             match cache.entry(url.into()) {
-                hash_map::Entry::Occupied(entry) => {
-                    let entry = entry.get();
+                hash_map::Entry::Occupied(mut entry) => {
+                    let entry = entry.get_mut();
+                    if let Some(frame_number) = frame_number {
+                        entry.request_frame = frame_number;
+                    }
                     (false, entry.fetched.is_none(), entry.response.clone())
                 }
                 hash_map::Entry::Vacant(entry) => {
@@ -273,6 +281,7 @@ impl<'frame> ClientRef<'frame> {
                         fetched: None,
                         response: response.clone(),
                         parsed,
+                        request_frame: frame_number.unwrap_or(0),
                     });
 
                     (true, false, response)
@@ -299,8 +308,8 @@ impl<'frame> ClientRef<'frame> {
         }
 
         if is_prefetch {
-            if state.response_signal == ResponseSignal::Disabled {
-                state.response_signal = ResponseSignal::Requested;
+            if response.is_pending() {
+                state.frame_timed_out = true;
             }
             return response;
         }
@@ -321,9 +330,7 @@ impl<'frame> ClientRef<'frame> {
                         .wait_timeout(state, deadline - Instant::now())
                         .unwrap();
                     if timed_out.timed_out() {
-                        if state.response_signal == ResponseSignal::Disabled {
-                            state.response_signal = ResponseSignal::Requested;
-                        }
+                        state.frame_timed_out = true;
                         return response;
                     }
                 }
@@ -462,6 +469,10 @@ impl<T> Response<T> {
         }
     }
 
+    pub fn is_pending(&self) -> bool {
+        matches!(self, Response::Pending)
+    }
+
     pub fn map<U, F>(self, f: F) -> Response<U>
     where
         F: FnOnce(T) -> U,
@@ -497,6 +508,7 @@ struct CacheEntry {
     response: Response<()>,
     fetched: Option<Instant>,
     parsed: Option<Box<dyn Any + Send + Sync>>,
+    request_frame: u64,
 }
 impl Default for CacheEntry {
     fn default() -> Self {
@@ -504,6 +516,7 @@ impl Default for CacheEntry {
             response: Response::Pending,
             fetched: None,
             parsed: None,
+            request_frame: 0,
         }
     }
 }
@@ -543,21 +556,34 @@ enum ResponseSignal {
 }
 
 struct HelperState {
+    /// Whether the helper thread is running.
     running: bool,
+
+    /// Current frame number.
+    frame_number: u64,
+
+    /// Latest frame number during which we received a relevant response past the frame timeout.
+    frame_response_past_timeout: u64,
+
+    /// Whether any request of the current frame timed out.
+    frame_timed_out: bool,
+
+    /// Requests from the current frame.
     frame_requests: Vec<Request>,
     backlog_requests: Vec<Request>,
     edit_requests: Vec<Edit>,
-    response_signal: ResponseSignal,
     response_callback: Option<MergeWakeupSignal>,
 }
 impl std::fmt::Debug for HelperState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HelperState")
             .field("running", &self.running)
+            .field("frame_number", &self.frame_number)
+            .field("frame_response_past_timeout", &self.frame_response_past_timeout)
+            .field("frame_timed_out", &self.frame_timed_out)
             .field("frame_requests", &self.frame_requests.len())
             .field("backlog_requests", &self.backlog_requests.len())
             .field("edit_requests", &self.edit_requests.len())
-            .field("response_signal", &self.response_signal)
             .field(
                 "response_callback",
                 if self.response_callback.is_some() {
@@ -686,7 +712,7 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
             //
             // This ensures that response notifications aren't lost.
             state = ctrl.state.lock().unwrap();
-            {
+            let is_current_frame = {
                 let mut cache = cache.cache.lock().unwrap();
                 let entry = cache.entry(request.url.clone()).or_default();
 
@@ -719,15 +745,15 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
 
                 entry.fetched = Some(Instant::now());
                 entry.response = response;
-            }
 
-            if !is_backlog && state.response_signal == ResponseSignal::Requested {
-                if let Some(callback) = &state.response_callback {
-                    debug!("Signaling callback from response");
+                entry.request_frame == state.frame_number
+            };
+
+            if is_current_frame && state.frame_timed_out {
+                state.frame_response_past_timeout = state.frame_number;
+
+                if let Some(callback) = state.response_callback.take() {
                     callback.signal();
-                    state.response_signal = ResponseSignal::Signaled;
-                } else {
-                    state.response_signal = ResponseSignal::Pending;
                 }
             }
 
