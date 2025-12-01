@@ -208,38 +208,35 @@ impl<'a> LiveState<'a> {
         // Preserve collapsed state and selection.
         live.state.collapsed.retain(|id, _| source.exists(*id));
 
-        if let Some(selection_id) = live.state.selection {
-            if !source.exists(selection_id) {
-                // Try to preserve a selection near to where we were last frame
-                if let Some(y) = live.screen_pos(selection_id) {
-                    let depth = live.state.screen[y].0;
-                    live.state.selection =
-                        live.state.screen[(y+1)..].iter()
-                            // Prefer to select a later item, but only at the same depth
-                            .map_while(|&(d, id)| if d == depth { Some(id) } else { None })
-                            .find(|id| source.exists(*id))
-                            .or_else(|| {
-                                // Fall back to an earlier item at equal or lesser depth
-                                live.state.screen[..y].iter()
-                                    .rev()
-                                    .scan(depth, |depth, &(d, id)| {
-                                        if d <= *depth {
-                                            *depth = d;
-                                            Some(Some(id))
-                                        } else {
-                                            Some(None)
-                                        }
-                                    })
-                                    .flatten()
-                                    .find(|id| source.exists(*id))
-                            });
+        let initial_selection_y =
+            live.state.selection.and_then(|selection_id| {
+                if source.exists(selection_id) {
+                    live.screen_pos(selection_id)
                 } else {
-                    live.state.selection = None;
+                    // Try to preserve a selection near to where we were last frame
+                    if let Some(y) = live.screen_pos(selection_id) {
+                        let new_selection =
+                            live.state.screen[(y+1)..].iter()
+                                // Prefer to select a later item, but only at the same depth
+                                .find(|(_, id)| source.exists(*id))
+                                .map(|(_, id)| (y, id))
+                                .or_else(|| {
+                                    // Fall back to an earlier item at equal or lesser depth
+                                    live.state.screen[..y].iter()
+                                        .enumerate()
+                                        .rev()
+                                        .find(|(_, (_, id))| source.exists(*id))
+                                        .map(|(y, (_, id))| (y, id))
+                                });
+                        live.state.selection = new_selection.map(|(_, id)| *id);
+                        new_selection.map(|(y, _)| y)
+                    } else {
+                        live.state.selection = None;
+                        None
+                    }
                 }
-            }
-        }
+            });
 
-        let initial_selection_y = live.state.selection.and_then(|id| live.screen_pos(id));
         let mut selection_y = initial_selection_y;
 
         if let Some(selection) = live.state.selection {
