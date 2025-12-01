@@ -108,18 +108,27 @@ fn do_main() -> Result<()> {
             }
         });
 
-        if inbox.has_focus && builder.on_key_press(KeyCode::Char('e')) {
-            if let Some((host, notification)) = inbox.selection.take() {
-                let edit = github::edit::Edit::MarkNotificationDone(notification.id);
-                if let Err(err) =
-                    connections.client(host)
-                        .unwrap()
-                        .borrow_mut()
-                        .edit(edit) {
-                    error = Some(format!("Failed to mark notification done: {}", err));
+        if inbox.has_focus {
+            let mark_done = builder.on_key_press(KeyCode::Char('e'));
+            let unsubscribe = builder.on_key_press(KeyCode::Char('M'));
+            if mark_done || unsubscribe {
+                if let Some((host, notification)) = inbox.selection.take() {
+                    let (edit, action) = if mark_done {
+                        (github::edit::Edit::MarkNotificationDone(notification.id), "mark as done")
+                    } else {
+                        (github::edit::Edit::Unsubscribe(notification.id), "unsubscribe")
+                    };
+                    if let Err(err) =
+                        connections.client(host)
+                            .unwrap()
+                            .borrow_mut()
+                            .edit(edit) {
+                        error = Some(format!("Failed to {}: {}", action, err));
+                    }
+                    builder.need_refresh();
+                } else {
+                    error = Some("No notification selected".into());
                 }
-            } else {
-                error = Some("No notification selected".into());
             }
         }
 
