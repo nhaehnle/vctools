@@ -91,10 +91,13 @@ git-review <remote> <pull-request-number> [OPTIONS]
 * `N`: find previous
 * Up / down / page up / page down: navigate vertically
 * Alt+Up / down / page up / page down: scroll vertically
+* Left / right: navigate horizontally / fold and unfold
 * `g`: go to top
 * `G`: go to bottom
 * `C`: toggle combined diff vs. range diff
 * `d`: cycle through diff styles (unified / only old / only new)
+* `e`: mark a notification as "done"
+* `M`: unsubscribe from a thread
 
 ## How It Works
 

@@ -4,9 +4,13 @@
 
 * Drag to resize columns / be smarter about column sizes
 
+## GitHub API service refactor
+
+* Support paged requests (notifications, issue timeline)
+* Be smarter about re-using what's cached on disk
+
 ## Inbox
 
-* Display notifications with extra columns (repository, author)
 * Load more pages of notifications
 * Prefetch thread / PR data
 * Show stacked pull requests even when they're read
@@ -17,6 +21,8 @@
   * Only new / only old / both
 * Expand / shrink context
 * Bookmarks for navigation
+* Show comments and reviews (expand on RichPagerSource)
+* Show most recent push / commit (requires database refactor)
 
 ## Review edit
 

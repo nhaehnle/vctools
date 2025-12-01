@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::ops::Range;
+use std::{fmt::Write, ops::Range};
 
 use diff_modulo_base::{diff, git_core};
 use ratatui::text::{Line, Span};
@@ -10,42 +10,66 @@ use vctuik::{
     theme,
 };
 
-#[derive(Debug)]
-enum Element {
-    ReviewHeader(String),
-    Chunk(diff::Chunk),
-    Commit(git_core::RangeDiffMatch),
-}
-impl Element {
-    fn num_lines(&self) -> usize {
-        match self {
-            Element::ReviewHeader(text) => text.lines().count(),
-            Element::Chunk(chunk) => match &chunk.contents {
-                diff::ChunkContents::FileHeader { .. } => 2,
-                _ => 1,
-            },
-            Element::Commit(_) => 1,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DiffDisplayMode {
-    Unified,
+    All,
     OnlyOld,
     OnlyNew,
 }
 impl Default for DiffDisplayMode {
     fn default() -> Self {
-        DiffDisplayMode::Unified
+        DiffDisplayMode::All
     }
 }
 impl DiffDisplayMode {
     fn toggled(self) -> Self {
         match self {
-            DiffDisplayMode::Unified => DiffDisplayMode::OnlyOld,
+            DiffDisplayMode::All => DiffDisplayMode::OnlyOld,
             DiffDisplayMode::OnlyOld => DiffDisplayMode::OnlyNew,
-            DiffDisplayMode::OnlyNew => DiffDisplayMode::Unified,
+            DiffDisplayMode::OnlyNew => DiffDisplayMode::All,
+        }
+    }
+
+    fn is_covered(&self, status: diff::HunkLineStatus) -> bool {
+        match self {
+            DiffDisplayMode::All => true,
+            DiffDisplayMode::OnlyOld => status.covers_old(),
+            DiffDisplayMode::OnlyNew => status.covers_new(),
+        }
+    }
+
+    fn show_old(&self) -> bool {
+        matches!(self, DiffDisplayMode::All | DiffDisplayMode::OnlyOld)
+    }
+
+    fn show_new(&self) -> bool {
+        matches!(self, DiffDisplayMode::All | DiffDisplayMode::OnlyNew)
+    }
+}
+
+#[derive(Debug)]
+enum Element {
+    Chunk(diff::Chunk),
+    Commit(git_core::RangeDiffMatch),
+}
+impl Element {
+    fn num_lines(&self, mode: DiffDisplayMode) -> usize {
+        match self {
+            Element::Chunk(chunk) => match &chunk.contents {
+                diff::ChunkContents::FileHeader { .. } => 2,
+                diff::ChunkContents::HunkHeader { .. } => 1,
+                diff::ChunkContents::Line { line } =>
+                    if mode.is_covered(line.status) {
+                        if line.no_newline {
+                            2
+                        } else {
+                            1
+                        }
+                    } else {
+                        0
+                    },
+            },
+            Element::Commit(_) => 1,
         }
     }
 }
@@ -55,7 +79,8 @@ pub struct DiffPagerSource {
     /// Flat list of all elements of the diff
     elements: Vec<Element>,
 
-    /// Global (uncollapsed) line number for every element in `elements`
+    /// Global (uncollapsed) line number for every element in `elements`,
+    /// filtered according to `mode`.
     global_lines: Vec<usize>,
 
     /// Indices into `elements` of commit headers
@@ -85,18 +110,17 @@ impl DiffPagerSource {
     fn num_global_lines(&self) -> usize {
         self.global_lines
             .last()
-            .map_or(0, |&l| l + self.elements.last().unwrap().num_lines())
-    }
-
-    pub fn push_header(&mut self, text: String) {
-        assert!(self.elements.is_empty());
-        self.global_lines.push(self.num_global_lines());
-        self.elements.push(Element::ReviewHeader(text));
+            .map_or(0, |&l| l + self.elements.last().unwrap().num_lines(self.mode))
     }
 
     pub fn toggle_mode(&mut self) {
         self.mode = self.mode.toggled();
-        todo!()
+
+        let mut line = 0;
+        for (global_line, element) in self.global_lines.iter_mut().zip(self.elements.iter()) {
+            *global_line = line;
+            line += element.num_lines(self.mode);
+        }
     }
 
     /// Find the nearest folding header at or below the given depth.
@@ -173,23 +197,36 @@ impl PagerSource for DiffPagerSource {
         let line = line - self.global_lines[idx];
 
         let (text, style) = match &self.elements[idx] {
-            Element::ReviewHeader(text) => (text.clone(), theme.highlight),
-            Element::Chunk(chunk) => {
-                let style = match &chunk.contents {
-                    diff::ChunkContents::FileHeader { .. } => theme.header1,
-                    diff::ChunkContents::HunkHeader { .. } => theme.header2,
-                    diff::ChunkContents::Line { line } => match line.status {
-                        diff::HunkLineStatus::Unchanged => theme.normal,
-                        diff::HunkLineStatus::Old(_) => theme.removed,
-                        diff::HunkLineStatus::New(_) => theme.added,
+            Element::Chunk(chunk) =>
+                match &chunk.contents {
+                    diff::ChunkContents::HunkHeader { old_begin, old_count, new_begin, new_count } => {
+                        let mut text = String::from_utf8_lossy(chunk.context.prefix_bytes()).to_string();
+                        write!(&mut text, "@@").unwrap();
+                        if self.mode.show_old() {
+                            write!(&mut text, " -{},{}", old_begin, old_count).unwrap();
+                        }
+                        if self.mode.show_new() {
+                            write!(&mut text, " +{},{}", new_begin, new_count).unwrap();
+                        }
+                        write!(&mut text, " @@").unwrap();
+                        (text, theme.header2)
                     },
-                };
+                    _ => {
+                        let style = match &chunk.contents {
+                            diff::ChunkContents::FileHeader { .. } => theme.header1,
+                            diff::ChunkContents::Line { line } => match line.status {
+                                diff::HunkLineStatus::Unchanged => theme.normal,
+                                diff::HunkLineStatus::Old(_) => theme.removed,
+                                diff::HunkLineStatus::New(_) => theme.added,
+                            },
+                            _ => unreachable!(),
+                        };
 
-                let mut text = Vec::new();
-                chunk.render_text(&mut text);
-
-                (String::from_utf8_lossy(&text).into(), style)
-            }
+                        let mut text = Vec::new();
+                        chunk.render_text(&mut text);
+                        (String::from_utf8_lossy(&text).into(), style)
+                    }
+                }
             Element::Commit(rdm) => (rdm.format(self.rdm_column_widths), theme.header0),
         };
 
@@ -236,14 +273,16 @@ impl PagerSource for DiffPagerSource {
     }
 
     fn persist_line_number(&self, line: usize) -> (Vec<pager::Anchor>, usize) {
-        (vec![], line)
+        let idx = self.global_lines.partition_point(|&l| l <= line) - 1;
+        (vec![pager::Anchor::USize(idx)], line - self.global_lines[idx])
     }
 
     fn retrieve_line_number(&self, anchor: &[pager::Anchor], line_offset: usize) -> (usize, bool) {
-        if !anchor.is_empty() {
-            (0, false)
-        } else {
-            (line_offset, true)
+        if anchor.len() != 1 {
+            return (0, false);
         }
+        let pager::Anchor::USize(idx) = anchor[0] else { return (0, false); };
+        let Some(line) = self.global_lines.get(idx) else { return (self.num_global_lines(), false); };
+        (*line + line_offset, true)
     }
 }

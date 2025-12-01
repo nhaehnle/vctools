@@ -9,8 +9,6 @@ pub enum Anchor {
     String(String),
     Str(&'static str),
     USize(usize),
-    U64(u64),
-    USize2(usize, usize),
     Any(Box<dyn Any + 'static>),
 }
 impl Anchor {
