@@ -33,37 +33,46 @@ impl Edit {
     pub fn commit(&self, client: &reqwest::blocking::Client, url_api: &Url) -> Result<()> {
         match self {
             Edit::MarkNotificationDone(id) => {
-                let url = url_api.join(&format!("notifications/threads/{id}")).unwrap();
-                info!("DELETE {}", url);
-
-                let response = client.delete(url).send()?;
-                debug!("Response: {:?}", &response);
-
-                if response.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "Failed to mark notification thread {id} as done: HTTP {}",
-                        response.status()
-                    ))?
-                }
+                mark_notification_done(client, url_api, id)
             }
             Edit::Unsubscribe(id) => {
-                let url = url_api.join(&format!("notifications/threads/{id}/subscription")).unwrap();
-                info!("PUT {}", url);
-
-                let response = client.put(url).body("{\"ignored\":true}").send()?;
-                debug!("Response: {:?}", &response);
-
-                if response.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "Failed to unsubscribe from notification thread {id}: HTTP {}",
-                        response.status()
-                    ))?
-                }
+                unsubscribe(client, url_api, id)?;
+                mark_notification_done(client, url_api, id)
             }
         }
+    }
+}
+
+fn mark_notification_done(client: &reqwest::blocking::Client, url_api: &Url, id: &str) -> Result<()> {
+    let url = url_api.join(&format!("notifications/threads/{id}")).unwrap();
+    info!("DELETE {}", url);
+
+    let response = client.delete(url).send()?;
+    debug!("Response: {:?}", &response);
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to mark notification thread {id} as done: HTTP {}",
+            response.status()
+        ))?
+    }
+}
+
+fn unsubscribe(client: &reqwest::blocking::Client, url_api: &Url, id: &str) -> Result<()> {
+    let url = url_api.join(&format!("notifications/threads/{id}/subscription")).unwrap();
+    info!("PUT {}", url);
+
+    let response = client.put(url).body("{\"ignored\":true}").send()?;
+    debug!("Response: {:?}", &response);
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to unsubscribe from notification thread {id}: HTTP {}",
+            response.status()
+        ))?
     }
 }
