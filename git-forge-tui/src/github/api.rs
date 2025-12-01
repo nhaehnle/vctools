@@ -147,7 +147,7 @@ impl Default for SubjectType {
 #[derive(Deserialize, Default, Debug, Clone)]
 pub struct NotificationSubject {
     pub title: String,
-    pub url: String,
+    pub url: Option<String>,
     #[serde(rename = "type")]
     pub subject_type: SubjectType,
 }
@@ -176,8 +176,8 @@ impl NotificationThread {
         self
             .subject
             .url
-            .split('/')
-            .last()
+            .as_ref()
+            .and_then(|url| url.split('/').last())
             .and_then(|id_str| id_str.parse::<u64>().ok())
     }
 }

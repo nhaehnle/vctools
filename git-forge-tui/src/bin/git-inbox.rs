@@ -119,9 +119,10 @@ fn do_main() -> Result<()> {
                 return;
             };
 
+            let url = thread.subject.url.as_ref().map(String::as_str).unwrap_or("<unknown>");
             let id = thread.pull_number();
             if id.is_none() {
-                add_label(builder, format!("Notification: {}", &thread.subject.url));
+                add_label(builder, format!("Notification: {}", url));
                 add_label(builder, "(unsupported)");
                 builder.add_slack();
                 return;
@@ -131,7 +132,7 @@ fn do_main() -> Result<()> {
                 ApiRepository::new(host, thread.repository.owner.login, thread.repository.name);
             let pr = match CompletePullRequest::from_api(api_repo, id.unwrap(), &git_service) {
                 Err(err) => {
-                    add_label(builder, format!("Notification: {}", &thread.subject.url));
+                    add_label(builder, format!("Notification: {}", url));
                     add_label(builder, format!("{}", err));
                     builder.add_slack();
                     return;
