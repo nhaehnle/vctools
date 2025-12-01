@@ -61,11 +61,11 @@ https://ghe.example/api/v3.
 Register repositories (only required for `git-inbox`) at `~/.config/vctools/repositories.toml`:
 
 ```toml
-[[repositories]]
-path=/path/to/first/repository
+[[repository]]
+path="/path/to/first/repository"
 
-[[repositories]]
-path=/path/to/second/repository
+[[repository]]
+path="/path/to/second/repository"
 ```
 
 ### GitHub Token Setup
