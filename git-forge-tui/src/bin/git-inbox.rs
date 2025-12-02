@@ -151,30 +151,6 @@ fn do_main() -> Result<()> {
             });
         }
 
-        {
-            let mark_done = builder.on_key_press(KeyCode::Char('e'));
-            let unsubscribe = builder.on_key_press(KeyCode::Char('M'));
-            if mark_done || unsubscribe {
-                if let Some((host, notification)) = inbox.selection.take() {
-                    let (edit, action) = if mark_done {
-                        (github::edit::Edit::MarkNotificationDone(notification.id), "mark as done")
-                    } else {
-                        (github::edit::Edit::Unsubscribe(notification.id), "unsubscribe")
-                    };
-                    if let Err(err) =
-                        connections.client(host)
-                            .unwrap()
-                            .borrow_mut()
-                            .edit(edit) {
-                        error = Some(format!("Failed to {}: {}", action, err));
-                    }
-                    builder.need_refresh();
-                } else {
-                    error = Some("No notification selected".into());
-                }
-            }
-        }
-
         let was_search = command.as_ref().is_some_and(|cmd| cmd.starts_with('/'));
 
         let action = command::CommandLine::new("command", &mut command)
@@ -241,6 +217,30 @@ fn do_main() -> Result<()> {
         }
 
         // Global key bindings
+        {
+            let mark_done = builder.on_key_press(KeyCode::Char('e'));
+            let unsubscribe = builder.on_key_press(KeyCode::Char('M'));
+            if mark_done || unsubscribe {
+                if let Some((host, notification)) = inbox.selection.take() {
+                    let (edit, action) = if mark_done {
+                        (github::edit::Edit::MarkNotificationDone(notification.id), "mark as done")
+                    } else {
+                        (github::edit::Edit::Unsubscribe(notification.id), "unsubscribe")
+                    };
+                    if let Err(err) =
+                        connections.client(host)
+                            .unwrap()
+                            .borrow_mut()
+                            .edit(edit) {
+                        error = Some(format!("Failed to {}: {}", action, err));
+                    }
+                    builder.need_refresh();
+                } else {
+                    error = Some("No notification selected".into());
+                }
+            }
+        }
+
         if builder.on_key_press(KeyCode::Char('/')) {
             command = Some("/".into());
             search = None;
