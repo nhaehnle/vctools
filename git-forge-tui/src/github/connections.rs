@@ -42,7 +42,7 @@ impl Clients {
         self.clients
             .entry(hostname)
             .or_insert_with_key(|hostname: &String| -> Result<RefCell<github::Client>> {
-                let Some(host) = config.hosts.iter().find(|h| h.host == *hostname) else {
+                let Some(host) = config.hosts.iter().find(|h| h.matches_host(hostname)) else {
                     Err(format!(
                         "Host not configured; add it to your github.toml: {hostname}"
                     ))?

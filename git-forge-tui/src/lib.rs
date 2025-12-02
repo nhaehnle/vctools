@@ -97,13 +97,13 @@ impl CompletePullRequest {
             Err(format!("cannot parse {url} as a GitHub repository"))?
         };
 
-        if !hosts.iter().any(|host| host.host == hostname) {
+        let Some(host) = hosts.iter().find(|host| host.matches_host(hostname)) else {
             Err(format!(
                 "Host not configured; add it to your github.toml: {hostname}"
             ))?
-        }
+        };
 
-        let api = ApiRepository::new(hostname.to_string(), owner.to_string(), name.to_string());
+        let api = ApiRepository::new(host.host.to_string(), owner.to_string(), name.to_string());
         Ok(CompletePullRequest { git, api, id })
     }
 

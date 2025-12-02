@@ -32,6 +32,11 @@ pub struct Host {
     #[serde(default)]
     pub alias: Vec<String>,
 }
+impl Host {
+    pub fn matches_host(&self, host: &str) -> bool {
+        self.host == host || self.alias.iter().any(|a| a == host)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
