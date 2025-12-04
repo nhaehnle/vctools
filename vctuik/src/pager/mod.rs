@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-mod rich_source;
+pub mod rich_source;
 mod cursor;
 mod string_source;
 mod widget;

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::borrow::Cow;
-use std::fmt::Write;
+use std::fmt::{Display, Write};
 
 use diff_modulo_base::git_core::{self, Ref};
 use diff_modulo_base::tool::{self, GitDiffModuloBaseArgs, GitDiffModuloBaseOptions};
 use regex::Regex;
 use vctuik::pager::RichPagerSourceBuilder;
+use vctuik::theme::TextStyle;
 use vctuik::{
     event::KeyCode,
     pager::{Pager, PagerState, RichPagerSource},
@@ -119,9 +120,11 @@ impl ReviewState {
 
         if let Err(err) = self.build(&mut pager, connections, ep) {
             if ep.timed_out() {
+                pager.set_theme_style(TextStyle::Header2);
                 writeln!(&mut pager, "Generating diff... {err}").unwrap();
                 self.need_rebuild = true;
             } else {
+                pager.set_theme_style(TextStyle::Error);
                 writeln!(&mut pager, "Error loading review: {err}").unwrap();
                 self.need_rebuild = false;
             }
@@ -145,10 +148,31 @@ impl ReviewState {
         let comments = client_ref.issue_comments(&pr.api.owner, &pr.api.name, pr.id);
 
         let Some(pull) = pull.ok_or_pending()? else {
+            pager.set_theme_style(TextStyle::Header0);
             writeln!(pager, "Loading pull request...")?;
             self.need_rebuild = true;
             return Ok(());
         };
+
+        fn coln<'pager, 'text>(
+            pager: &'pager mut RichPagerSourceBuilder<'text>,
+            label: &str,
+        ) -> &'pager mut RichPagerSourceBuilder<'text> {
+            pager.set_theme_style(TextStyle::Header2);
+            pager.write_str(label).unwrap();
+            pager.set_theme_style(TextStyle::Normal);
+            pager
+        }
+
+        fn colh<'pager, 'text>(
+            pager: &'pager mut RichPagerSourceBuilder<'text>,
+            label: &str,
+        ) -> &'pager mut RichPagerSourceBuilder<'text> {
+            pager.set_theme_style(TextStyle::Header2);
+            pager.write_str(label).unwrap();
+            pager.set_theme_style(TextStyle::Highlight);
+            pager
+        }
 
         {
             let state = match pull.state {
@@ -168,14 +192,15 @@ impl ReviewState {
                 }
                 api::PullState::Other => "❓ Unknown",
             };
+            pager.set_theme_style(TextStyle::Header0);
             writeln!(
                 pager,
                 "Pull Request {}/{}#{} ({})",
                 pr.api.owner, pr.api.name, pr.id, pull.html_url,
             )?;
-            writeln!(pager, "Title:   {}", pull.title)?;
-            writeln!(pager, "Author:  @{}", pull.user.login)?;
-            writeln!(pager, "State:   {}", state)?;
+            writeln!(colh(pager, "Title:   "), "{}", pull.title)?;
+            writeln!(colh(pager, "Author:  "), "@{}", pull.user.login)?;
+            writeln!(coln(pager, "State:   "), "{}", state)?;
         }
 
         let reviews = reviews.ok_or_pending()?;
@@ -183,6 +208,7 @@ impl ReviewState {
 
         let main_comments = reviews.zip(comments).map(|(r, c)| normalize_comments_and_reviews(r, c));
 
+        pager.set_theme_style(TextStyle::Header2);
         if let Some(main_comments) = &main_comments {
             if main_comments.is_empty() {
                 writeln!(pager, "No reviews or comments yet")?;
@@ -211,10 +237,13 @@ impl ReviewState {
                         Some(api::ReviewState::Dismissed) | None => "💬",
                         Some(api::ReviewState::Other) => "❓",
                     };
+
+                    pager.set_theme_style(TextStyle::Highlight);
+                    write!(pager, "  @{:<max_user_len$}", c.user)?;
+                    pager.set_theme_style(TextStyle::Normal);
                     writeln!(
                         pager,
-                        "  @{:<max_user_len$} {} {}{}",
-                        c.user,
+                        " {} {}{}",
                         state,
                         c.submitted_at,
                         if let Some(commit_id) = c.commit_id.as_ref() {
@@ -231,8 +260,39 @@ impl ReviewState {
         }
 
         {
-            writeln!(pager, "Current head:       {} ({})", pull.head.ref_, pull.head.sha)?;
-            writeln!(pager, "Target branch:      {} ({})", pull.base.ref_, pull.base.sha)?;
+            writeln!(coln(pager, "Current head:       "), "{} ({})", pull.head.ref_, pull.head.sha)?;
+            writeln!(coln(pager, "Target branch:      "), "{} ({})", pull.base.ref_, pull.base.sha)?;
+            writeln!(pager)?;
+        }
+
+        if let Some(comments) = main_comments.as_ref().filter(|c| !c.is_empty()) {
+            for c in comments {
+                let state_str = match c.review_state {
+                    Some(api::ReviewState::Approved) => "approved",
+                    Some(api::ReviewState::ChangesRequested) => "requested changes",
+                    Some(api::ReviewState::Dismissed) => "dismissed an earlier review",
+                    Some(_) => "reviewed",
+                    _ => "commented",
+                };
+                pager.set_theme_style(TextStyle::Highlight);
+                write!(pager, "    @{} ", c.user)?;
+                pager.set_theme_style(TextStyle::Header1);
+                write!(
+                    pager,
+                    " {} at {}{}",
+                    state_str,
+                    c.submitted_at,
+                    if let Some(commit_id) = c.commit_id.as_ref() {
+                        format!(" (at {})", commit_id)
+                    } else {
+                        String::new()
+                    },
+                )?;
+
+                pager.clear_style();
+                writeln!(pager, "{}", c.body)?;
+                writeln!(pager)?;
+            }
         }
 
         let most_recent_review = main_comments
@@ -241,6 +301,17 @@ impl ReviewState {
             .rev()
             .filter(|review| review.commit_id.is_some())
             .find(|review| review.user == client.host().user);
+
+        pager.set_theme_style(TextStyle::Header0);
+        if let Some(most_recent_review) = &most_recent_review {
+            writeln!(
+                pager,
+                "Diff against most recent review at commit {}:",
+                most_recent_review.commit_id.as_ref().unwrap()
+            )?;
+        } else {
+            writeln!(pager, "Diff against the target branch:")?;
+        }
 
         let refs: Vec<_> = [&pull.head.sha, &pull.base.sha]
             .into_iter()

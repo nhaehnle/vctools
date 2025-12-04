@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{cell::RefCell, fmt::{Debug, Write}};
+use std::{cell::RefCell, collections::HashMap, fmt::{Debug, Write}};
 
 use super::*;
 
 use ratatui::text::Line;
+use vctools_utils::prelude::*;
 
 enum Element<'a> {
     PagerRef(&'a dyn PagerSource),
@@ -53,9 +54,42 @@ impl<'a> Debug for ElementRef<'a> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CustomStyleId(u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Style {
+    Themed(theme::TextStyle),
+    Custom(CustomStyleId),
+}
+impl Default for Style {
+    fn default() -> Self {
+        Style::Themed(theme::TextStyle::Normal)
+    }
+}
+
+#[derive(Debug)]
 pub struct RichPagerSourceBuilder<'text> {
     content: Vec<Element<'text>>,
+
+    custom_styles: Vec<style::Style>,
+
+    custom_style_map: HashMap<style::Style, CustomStyleId>,
+
+    style: Vec<(Index, Style)>,
+}
+impl<'text> Default for RichPagerSourceBuilder<'text> {
+    fn default() -> Self {
+        RichPagerSourceBuilder {
+            content: Vec::new(),
+            custom_styles: Vec::new(),
+            custom_style_map: HashMap::new(),
+            style: vec![(
+                Index { element: 0, offset: 0 },
+                Style::default(),
+            )],
+        }
+    }
 }
 impl<'text> RichPagerSourceBuilder<'text> {
     pub fn new() -> Self {
@@ -84,7 +118,47 @@ impl<'text> RichPagerSourceBuilder<'text> {
         self.add_impl(Element::Str(text));
     }
 
-    pub fn build(self) -> RichPagerSource<'text> {
+    pub fn register_style(&mut self, style: style::Style) -> Style {
+        if let Some(id) = self.custom_style_map.get(&style) {
+            return Style::Custom(*id);
+        }
+
+        let id = CustomStyleId(self.custom_styles.len() as u32);
+        self.custom_styles.push(style);
+        self.custom_style_map.insert(style, id);
+        Style::Custom(id)
+    }
+
+    pub fn set_style(&mut self, style: Style) {
+        let idx = if let Some(Element::String(s)) = self.content.last() {
+            Index {
+                element: self.content.len() - 1,
+                offset: s.len(),
+            }
+        } else {
+            Index {
+                element: self.content.len(),
+                offset: 0,
+            }
+        };
+        if let Some(last) = self.style.last_mut() {
+            if last.0 == idx {
+                last.1 = style;
+                return;
+            }
+        }
+        self.style.push((idx, style));
+    }
+
+    pub fn set_theme_style(&mut self, style: theme::TextStyle) {
+        self.set_style(Style::Themed(style))
+    }
+
+    pub fn clear_style(&mut self) {
+        self.set_style(Style::default())
+    }
+
+    pub fn build(mut self) -> RichPagerSource<'text> {
         // Compute landmarks. We introduce one landmark at the beginning of
         // each element. Additionally, each string element gets an anchor every
         // N bytes.
@@ -136,9 +210,19 @@ impl<'text> RichPagerSourceBuilder<'text> {
             },
         });
 
+        self.style.push((
+            Index {
+                element: self.content.len(),
+                offset: 0,
+            },
+            Style::default(),
+        ));
+
         RichPagerSource {
             content: self.content,
             landmarks,
+            custom_styles: self.custom_styles,
+            style: self.style,
             ..Default::default()
         }
     }
@@ -197,7 +281,11 @@ pub struct RichPagerSource<'text> {
     ///
     /// Contains (index, cache point). `index` is the index of the largest landmark
     /// (in the landmarks vector) that is before or equal to the cache point.
-    lookup_cache: RefCell<(usize, Landmark)>,
+    lm_lookup_cache: RefCell<(usize, Landmark)>,
+
+    custom_styles: Vec<style::Style>,
+    style: Vec<(Index, Style)>,
+    style_lookup_cache: RefCell<usize>,
 }
 impl Default for RichPagerSource<'_> {
     fn default() -> Self {
@@ -215,7 +303,7 @@ impl Default for RichPagerSource<'_> {
                     },
                 },
             ],
-            lookup_cache: RefCell::new((0, Landmark {
+            lm_lookup_cache: RefCell::new((0, Landmark {
                 pos: Cursor {
                     line: 0,
                     col: 0,
@@ -225,6 +313,9 @@ impl Default for RichPagerSource<'_> {
                     offset: 0,
                 },
             })),
+            custom_styles: Vec::new(),
+            style: Vec::new(),
+            style_lookup_cache: RefCell::new(0),
         }
     }
 }
@@ -233,65 +324,23 @@ impl RichPagerSource<'_> {
         RichPagerSource::default()
     }
 
-    /// Return the first landmark index for which `pred` is false (or the length of the landmarks vector).
-    ///
-    /// `pred` must be true for a (possibly empty) prefix of landmarks and false for the remainder.
-    ///
-    /// If `forward` is true, we assume that the predicate is true for `initial_lm_idx`.
-    /// If `forward` is false, we assume that the predicate is false for `initial_lm_idx + 1`.
-    fn landmark_partition_point<P>(&self, mut initial_lm_idx: usize, forward: bool, pred: P) -> usize
-    where
-        P: Fn(&Landmark) -> bool,
-    {
-        // Invariant: left of `begin` is known true, `end` is known false.
-        let (mut begin, mut end) = 'pre: {
-            // Exponential search from the initial ("hint") index in the given direction.
-            if forward {
-                // Invariant for forward search: initial_lm_idx is known true.
-                let mut step = 1;
-                while initial_lm_idx + step < self.landmarks.len() {
-                    if !pred(&self.landmarks[initial_lm_idx + step]) {
-                        break 'pre (initial_lm_idx + 1, initial_lm_idx + step);
-                    }
-
-                    initial_lm_idx += step;
-                    step *= 2;
-                }
-                (initial_lm_idx + 1, self.landmarks.len())
-            } else {
-                // Invariant for backward search: initial_lm_idx + 1 is known false.
-                let mut step = 1;
-                while step <= initial_lm_idx + 1 {
-                    if pred(&self.landmarks[initial_lm_idx + 1 - step]) {
-                        break 'pre (initial_lm_idx + 2 - step, initial_lm_idx + 1);
-                    }
-
-                    initial_lm_idx -= step;
-                    step *= 2;
-                }
-                (0, initial_lm_idx + 1)
-            }
-        };
-
-        // Binary search within the found range.
-        while begin < end {
-            let mid = (begin + end) / 2;
-            if pred(&self.landmarks[mid]) {
-                begin = mid + 1;
-            } else {
-                end = mid;
-            }
-        }
-
-        begin
+    /// Return the index into the `style` vector that determines the styole at the given index.
+    fn style_idx_from_idx(&self, idx: Index) -> usize {
+        let lookup_cache = &mut *self.style_lookup_cache.borrow_mut();
+        let forward = self.style[*lookup_cache].0 <= idx;
+        self.style.partition_point_with_hint(*lookup_cache, forward, |s| s.0 <= idx) - 1
     }
 
     /// Return the (element index, offset) of the first character past the given line and column.
     fn idx_from_pos(&self, pos: Cursor) -> Index {
-        let lookup_cache = &mut *self.lookup_cache.borrow_mut();
+        let lookup_cache = &mut *self.lm_lookup_cache.borrow_mut();
 
-        let forward = lookup_cache.1.pos <= pos;
-        let lm_next_idx = self.landmark_partition_point(lookup_cache.0, forward, |lm| lm.pos <= pos);
+        let (hint_idx, forward) = if lookup_cache.1.pos <= pos {
+            (lookup_cache.0, true)
+        } else {
+            (lookup_cache.0 + 1, false)
+        };
+        let lm_next_idx = self.landmarks.partition_point_with_hint(hint_idx, forward, |lm| lm.pos <= pos);
         let lm_idx = lm_next_idx - 1;
         let lm = &self.landmarks[lm_idx];
 
@@ -361,10 +410,14 @@ impl RichPagerSource<'_> {
     }
 
     fn pos_from_idx(&self, idx: Index) -> Cursor {
-        let lookup_cache = &mut *self.lookup_cache.borrow_mut();
+        let lookup_cache = &mut *self.lm_lookup_cache.borrow_mut();
 
-        let forward = lookup_cache.1.idx <= idx;
-        let lm_next_idx = self.landmark_partition_point(lookup_cache.0, forward, |lm| lm.idx <= idx);
+        let (hint_idx, forward) = if lookup_cache.1.idx <= idx {
+            (lookup_cache.0, true)
+        } else {
+            (lookup_cache.0 + 1, false)
+        };
+        let lm_next_idx = self.landmarks.partition_point_with_hint(hint_idx, forward, |lm| lm.idx <= idx);
         let lm_idx = lm_next_idx - 1;
         let lm = &self.landmarks[lm_idx];
         assert!(lm.idx.element == idx.element);
@@ -425,7 +478,28 @@ impl<'text> PagerSource for RichPagerSource<'text> {
                 pager.get_line(theme, idx.offset, col_no, max_cols)
             }
             Some(ElementRef::Str(s)) => {
-                Line::from(s[idx.offset..].get_first_line(max_cols)).style(theme.normal)
+                let text = s[idx.offset..].get_first_line(max_cols);
+                let style_idx = self.style_idx_from_idx(idx);
+                self.style[style_idx..].iter()
+                    .zip(self.style[style_idx+1..].iter())
+                    .map_while(|(style, next_style)| {
+                        let start = if style.0.element == idx.element { style.0.offset } else { 0 };
+                        let end = if next_style.0.element == idx.element { next_style.0.offset } else { usize::MAX };
+                        let start = start.saturating_sub(idx.offset);
+                        let end = (end - idx.offset).min(text.len());
+                        if start >= end {
+                            return None;
+                        }
+                        let span_text = &text[start..end];
+                        let span_style = match style.1 {
+                            Style::Themed(ts) => theme[ts],
+                            Style::Custom(id) => {
+                                self.custom_styles[id.0 as usize]
+                            }
+                        };
+                        Some(ratatui::text::Span::styled(span_text, span_style))
+                    })
+                    .collect()
             }
             None => Line::default(),
         }

@@ -40,6 +40,40 @@ impl Text {
         }
     }
 }
+impl std::ops::Index<TextStyle> for Text {
+    type Output = Style;
+
+    fn index(&self, index: TextStyle) -> &Self::Output {
+        match index {
+            TextStyle::Normal => &self.normal,
+            TextStyle::Highlight => &self.highlight,
+            TextStyle::Inactive => &self.inactive,
+            TextStyle::Selected => &self.selected,
+            TextStyle::Search => &self.search,
+            TextStyle::Header0 => &self.header0,
+            TextStyle::Header1 => &self.header1,
+            TextStyle::Header2 => &self.header2,
+            TextStyle::Added => &self.added,
+            TextStyle::Removed => &self.removed,
+            TextStyle::Error => &self.error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextStyle {
+    Normal,
+    Highlight,
+    Inactive,
+    Selected,
+    Search,
+    Header0,
+    Header1,
+    Header2,
+    Added,
+    Removed,
+    Error,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Context {

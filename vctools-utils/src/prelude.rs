@@ -87,3 +87,5 @@ impl<'a, T> From<T> for GCow<'a, T> {
         GCow::Owned(value)
     }
 }
+
+pub use crate::partition_point::PartitionPointExt;
