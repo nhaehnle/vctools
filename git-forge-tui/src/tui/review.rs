@@ -266,7 +266,23 @@ impl ReviewState {
         }
 
         if let Some(comments) = main_comments.as_ref().filter(|c| !c.is_empty()) {
+            pager.set_theme_style(TextStyle::Header0);
+            pager.begin_folding_range();
+            writeln!(pager, "Comment Thread")?;
+            writeln!(pager)?;
+
+            let mut have_body = false;
             for c in comments {
+                if have_body {
+                    writeln!(pager)?;
+                    pager.end_folding_range(); // end previous comment
+                }
+
+                have_body = !c.body.trim().is_empty();
+                if have_body {
+                    pager.begin_folding_range();
+                }
+
                 let state_str = match c.review_state {
                     Some(api::ReviewState::Approved) => "approved",
                     Some(api::ReviewState::ChangesRequested) => "requested changes",
@@ -277,9 +293,9 @@ impl ReviewState {
                 pager.set_theme_style(TextStyle::Highlight);
                 write!(pager, "    @{}", c.user)?;
                 pager.set_theme_style(TextStyle::Header1);
-                write!(
+                writeln!(
                     pager,
-                    " {} at {}{}",
+                    " {} at {}{}{}",
                     state_str,
                     c.submitted_at,
                     if let Some(commit_id) = c.commit_id.as_ref() {
@@ -287,14 +303,22 @@ impl ReviewState {
                     } else {
                         String::new()
                     },
+                    if have_body { ":" } else { "" }
                 )?;
 
-                pager.set_indent(8);
-                pager.clear_style();
-                writeln!(pager, "{}", c.body)?;
-                pager.set_indent(0);
-                writeln!(pager)?;
+                if have_body {
+                    pager.set_indent(8);
+                    pager.clear_style();
+                    writeln!(pager, "{}", c.body)?;
+                    pager.set_indent(0);
+                }
             }
+            if have_body {            
+                pager.end_folding_range(); // end last comment (if it has a body)
+            }
+
+            pager.end_folding_range(); // end comment thread
+            writeln!(pager)?;
         }
 
         let most_recent_review = main_comments

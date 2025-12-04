@@ -21,9 +21,8 @@
   * Only new / only old / both
 * Expand / shrink context
 * Bookmarks for navigation
-* Add text styles to the review header (add styling to RichPagerSource)
-* Show comments and reviews (add folding to RichPagerSource)
 * Show most recent push / commit (requires database refactor)
+* Word wrap / nicer formatting for comments
 
 ## Review edit
 
