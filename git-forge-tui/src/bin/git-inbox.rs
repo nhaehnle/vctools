@@ -82,8 +82,12 @@ fn do_main() -> Result<()> {
     let mut search: Option<regex::Regex> = None;
     let mut error: Option<String> = None;
     let mut command: Option<String> = None;
+    let mut trace_next_frame = false;
 
     terminal.run(|builder| {
+        builder.set_trace_frame(trace_next_frame);
+        trace_next_frame = false;
+
         debug!("Start Frame");
         connections.start_frame(Some(builder.start_frame() + Duration::from_millis(50)));
         git_service.start_frame(Duration::from_millis(100));
@@ -174,6 +178,8 @@ fn do_main() -> Result<()> {
                 } else if let Some(cmd) = cmd.strip_prefix(':') {
                     if cmd == "log" {
                         show_debug_log = !show_debug_log;
+                    } else if cmd == "trace" {
+                        trace_next_frame = true;
                     } else if cmd == "q" || cmd == "quit" {
                         running = false;
                     } else {
