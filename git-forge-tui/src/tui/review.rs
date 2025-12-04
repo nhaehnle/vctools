@@ -309,7 +309,9 @@ impl ReviewState {
                 if have_body {
                     pager.set_indent(8);
                     pager.clear_style();
-                    writeln!(pager, "{}", c.body)?;
+                    let body = &c.body;
+                    let body: String = body.chars().filter(|c| c.is_ascii()).collect();
+                    writeln!(pager, "{}", body)?;
                     pager.set_indent(0);
                 }
             }

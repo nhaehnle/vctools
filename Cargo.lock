@@ -2062,6 +2062,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "itertools 0.14.0",
+ "log",
  "rand",
  "ratatui",
  "regex",

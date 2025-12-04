@@ -9,6 +9,7 @@ use crate::{
     state::{Builder, StateId},
 };
 use itertools::Itertools;
+use log::debug;
 use ratatui::{prelude::*, widgets::Block};
 use regex::Regex;
 use std::borrow::Cow;
@@ -838,6 +839,8 @@ impl<'build, 'result> Pager<'build, 'result> {
 
         let text_width = area.width.saturating_sub(1);
 
+        let trace_frame = builder.trace_frame();
+
         for (ry, line_no) in result
             .screen_forward(result.scroll.line)
             .enumerate()
@@ -847,7 +850,15 @@ impl<'build, 'result> Pager<'build, 'result> {
             let y = area.y + (ry as u16);
             assert!(line_no < num_lines);
 
+            if trace_frame {
+                debug!("ry: {ry}, line_no: {line_no} y: {y} num_lines: {num_lines}");
+            }
+
             if selection.contains(&line_no) {
+                if trace_frame {
+                    debug!("  selection highlight");
+                }
+
                 let block =
                     Block::default().style(builder.theme().text(builder.theme_context()).selected);
                 builder.frame().render_widget(
@@ -861,6 +872,10 @@ impl<'build, 'result> Pager<'build, 'result> {
             }
 
             if let Some((range, _)) = self.source.get_folding_range(line_no, false) {
+                if trace_frame {
+                    debug!("  folding range: {:?} collapsed: {}", range, result.is_collapsed(line_no));
+                }
+
                 if range.start == line_no {
                     // Render the folding range marker.
                     let marker = match result.is_collapsed(line_no) {
@@ -1002,6 +1017,11 @@ impl<'build, 'result> Pager<'build, 'result> {
                         text_width as usize,
                     )
                     .style(builder.theme().text.normal);
+
+                if trace_frame {
+                    debug!("  line: {line}");
+                    debug!("        {line:?}");
+                }
 
                 builder.frame().render_widget(
                     line,
