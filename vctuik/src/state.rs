@@ -174,6 +174,7 @@ pub(crate) struct BuildStore<'store, 'frame> {
     pub(crate) need_refresh: bool,
     focus_action: FocusAction,
     start_frame: Instant,
+    pub(crate) trace_frame: bool,
 }
 impl<'store, 'frame> BuildStore<'store, 'frame> {
     pub(crate) fn new(
@@ -199,6 +200,7 @@ impl<'store, 'frame> BuildStore<'store, 'frame> {
             need_refresh: false,
             focus_action: FocusAction::None,
             start_frame,
+            trace_frame: false,
         }
     }
 
@@ -793,6 +795,14 @@ impl<'builder, 'store, 'frame> Builder<'builder, 'store, 'frame> {
             modal: false,
             popup: None,
         }
+    }
+
+    pub fn set_trace_frame(&mut self, trace: bool) {
+        self.store.trace_frame = trace;
+    }
+
+    pub fn trace_frame(&self) -> bool {
+        self.store.trace_frame
     }
 }
 

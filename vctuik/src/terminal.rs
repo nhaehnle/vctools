@@ -2,6 +2,7 @@
 
 use std::{any::Any, time::Instant};
 
+use log::debug;
 use ratatui::{
     crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
@@ -171,6 +172,20 @@ impl Terminal {
                         build_store.end_frame();
                         self.events.injected.append(&mut build_store.injected);
                         self.need_refresh = build_store.need_refresh;
+
+                        if build_store.trace_frame {
+                            let buffer = frame.buffer_mut();
+                            debug!("Frame: {}x{}", buffer.area.width, buffer.area.height);
+                            for y in 0..buffer.area.height {
+                                let begin = y as usize * buffer.area.width as usize;
+                                let end = (y as usize + 1) * buffer.area.width as usize;
+                                let mut line = String::new();
+                                for (x, cell) in buffer.content[begin..end].iter().enumerate() {
+                                    line.push_str(cell.symbol());
+                                }
+                                debug!("{:3}: {}", y, line);
+                            }
+                        }
 
                         // If the UI hasn't settled, just re-process it immediately
                         // without an event (since the settling could affect how
