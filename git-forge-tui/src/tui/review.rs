@@ -275,7 +275,7 @@ impl ReviewState {
                     _ => "commented",
                 };
                 pager.set_theme_style(TextStyle::Highlight);
-                write!(pager, "    @{} ", c.user)?;
+                write!(pager, "    @{}", c.user)?;
                 pager.set_theme_style(TextStyle::Header1);
                 write!(
                     pager,
@@ -289,8 +289,10 @@ impl ReviewState {
                     },
                 )?;
 
+                pager.set_indent(8);
                 pager.clear_style();
                 writeln!(pager, "{}", c.body)?;
+                pager.set_indent(0);
                 writeln!(pager)?;
             }
         }

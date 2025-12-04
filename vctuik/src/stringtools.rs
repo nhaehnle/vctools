@@ -109,6 +109,7 @@ impl StrScan for str {
     fn get_first_line(&self, max_chars: usize) -> &str {
         let bytes = self
             .char_indices()
+            .chain(std::iter::once((self.len(), '\0')))
             .take_while_inclusive(|&(_, ch)| ch != '\n')
             .take(max_chars.saturating_add(1))
             .last()
@@ -132,5 +133,19 @@ impl StrScan for str {
         }
 
         &self[start_byte..end_byte]
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn get_first_line() -> Result<(), ()> {
+        assert_eq!("Hello, world!", "Hello, world!\nThis is a test.".get_first_line(100));
+        assert_eq!("Hello", "Hello, world!\nThis is a test.".get_first_line(5));
+        assert_eq!("Hello", "Hello".get_first_line(100));
+        assert_eq!("", "".get_first_line(100));
+        Ok(())
     }
 }

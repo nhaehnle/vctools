@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{cell::RefCell, collections::HashMap, fmt::{Debug, Write}};
+use std::{cell::RefCell, cmp::Ordering, collections::HashMap, fmt::{Debug, Write}};
 
 use super::*;
 
-use ratatui::text::Line;
+use ratatui::{symbols::line, text::Line};
 use vctools_utils::prelude::*;
 
 enum Element<'a> {
@@ -72,6 +72,9 @@ impl Default for Style {
 pub struct RichPagerSourceBuilder<'text> {
     content: Vec<Element<'text>>,
 
+    /// (content index, indent) pairs
+    element_indent: Vec<(usize, usize)>,
+
     custom_styles: Vec<style::Style>,
 
     custom_style_map: HashMap<style::Style, CustomStyleId>,
@@ -82,6 +85,7 @@ impl<'text> Default for RichPagerSourceBuilder<'text> {
     fn default() -> Self {
         RichPagerSourceBuilder {
             content: Vec::new(),
+            element_indent: Vec::new(),
             custom_styles: Vec::new(),
             custom_style_map: HashMap::new(),
             style: vec![(
@@ -158,26 +162,54 @@ impl<'text> RichPagerSourceBuilder<'text> {
         self.set_style(Style::default())
     }
 
+    pub fn set_indent(&mut self, indent: usize) {
+        if let Some(last) = self.element_indent.last_mut() {
+            if last.0 == self.content.len() {
+                last.1 = indent;
+                return;
+            }
+        }
+        self.element_indent.push((self.content.len(), indent));
+    }
+
     pub fn build(mut self) -> RichPagerSource<'text> {
         // Compute landmarks. We introduce one landmark at the beginning of
         // each element. Additionally, each string element gets an anchor every
         // N bytes.
-        let mut pos = Cursor { line: 0, col: 0 };
+        let mut line_indent = Vec::new();
+        let mut indent_iter = self.element_indent.into_iter().peekable();
+
+        if let Some((_, indent)) = indent_iter.peek().filter(|(idx, _)| *idx == 0) {
+            line_indent.push((0, *indent));
+            indent_iter.next();
+        } else {
+            line_indent.push((0, 0));
+        }
+
+        let mut line = 0;
         let mut landmarks = Vec::new();
         for (idx, element) in self.content.iter().enumerate() {
+            if let Some((_, indent)) = indent_iter.peek().filter(|(i, _)| *i == idx) {
+                line_indent.push((line, *indent));
+                indent_iter.next();
+            }
+
             match element.as_ref() {
                 ElementRef::Pager(pager) => {
                     landmarks.push(Landmark {
-                        pos,
+                        pos: Cursor {
+                            line: line,
+                            col: 0,
+                        },
                         idx: Index {
                             element: idx,
                             offset: 0,
                         },
                     });
-                    pos.line += pager.num_lines();
+                    line += pager.num_lines();
                 }
                 ElementRef::Str(s) => {
-                    let mut tup_pos = (pos.line, pos.col);
+                    let mut tup_pos = (line, 0);
                     for chunk in s.row_col_scan_mut(&mut tup_pos).chunks(512).into_iter() {
                         let first = chunk.into_iter().next().unwrap();
                         landmarks.push(Landmark {
@@ -191,19 +223,19 @@ impl<'text> RichPagerSourceBuilder<'text> {
                             },
                         });
                     }
-                    pos = Cursor {
-                        line: tup_pos.0,
-                        col: tup_pos.1,
-                    };
-                    if pos.col > 0 {
-                        pos.line += 1;
-                        pos.col = 0;
+                    if tup_pos.1 == 0 {
+                        line = tup_pos.0;
+                    } else {
+                        line = tup_pos.0 + 1;
                     }
                 }
             }
         }
         landmarks.push(Landmark {
-            pos,
+            pos: Cursor {
+                line,
+                col: 0,
+            },
             idx: Index {
                 element: self.content.len(),
                 offset: 0,
@@ -220,6 +252,7 @@ impl<'text> RichPagerSourceBuilder<'text> {
 
         RichPagerSource {
             content: self.content,
+            line_indent,
             landmarks,
             custom_styles: self.custom_styles,
             style: self.style,
@@ -230,10 +263,12 @@ impl<'text> RichPagerSourceBuilder<'text> {
 impl Write for RichPagerSourceBuilder<'_> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         let string = 'str: {
-            if let Some(Element::String(string)) = self.content.last_mut() {
-                break 'str string;
+            if self.element_indent.last().is_none_or(|(idx, _)| *idx < self.content.len()) {
+                if let Some(Element::String(string)) = self.content.last_mut() {
+                    break 'str string;
+                }
             }
-            self.content.push(Element::String(String::new()));
+            self.add_impl(Element::String(String::new()));
             self.content.last_mut().unwrap().as_string_mut().unwrap()
         };
         string.write_str(s)
@@ -286,6 +321,10 @@ pub struct RichPagerSource<'text> {
     custom_styles: Vec<style::Style>,
     style: Vec<(Index, Style)>,
     style_lookup_cache: RefCell<usize>,
+
+    /// Line number -> indent
+    line_indent: Vec<(usize, usize)>,
+    line_indent_lookup_cache: RefCell<usize>,
 }
 impl Default for RichPagerSource<'_> {
     fn default() -> Self {
@@ -313,9 +352,13 @@ impl Default for RichPagerSource<'_> {
                     offset: 0,
                 },
             })),
+
             custom_styles: Vec::new(),
             style: Vec::new(),
             style_lookup_cache: RefCell::new(0),
+
+            line_indent: Vec::new(),
+            line_indent_lookup_cache: RefCell::new(0),
         }
     }
 }
@@ -328,10 +371,21 @@ impl RichPagerSource<'_> {
     fn style_idx_from_idx(&self, idx: Index) -> usize {
         let lookup_cache = &mut *self.style_lookup_cache.borrow_mut();
         let forward = self.style[*lookup_cache].0 <= idx;
-        self.style.partition_point_with_hint(*lookup_cache, forward, |s| s.0 <= idx) - 1
+        let style_idx = self.style.partition_point_with_hint(*lookup_cache, forward, |s| s.0 <= idx) - 1;
+        *lookup_cache = style_idx;
+        style_idx
     }
 
-    /// Return the (element index, offset) of the first character past the given line and column.
+    fn line_indent(&self, line: usize) -> usize {
+        let lookup_cache = &mut *self.line_indent_lookup_cache.borrow_mut();
+        let forward = self.line_indent[*lookup_cache].0 <= line;
+        let indent_idx = self.line_indent.partition_point_with_hint(*lookup_cache, forward, |&(l, _)| l <= line) - 1;
+        *lookup_cache = indent_idx;
+        self.line_indent[indent_idx].1
+    }
+
+    /// Return the (element index, offset) of the first character past the given line and
+    /// (unindented!) column.
     fn idx_from_pos(&self, pos: Cursor) -> Index {
         let lookup_cache = &mut *self.lm_lookup_cache.borrow_mut();
 
@@ -409,6 +463,7 @@ impl RichPagerSource<'_> {
         }
     }
 
+    /// Return the (unindented!) line and column for the given index.
     fn pos_from_idx(&self, idx: Index) -> Cursor {
         let lookup_cache = &mut *self.lm_lookup_cache.borrow_mut();
 
@@ -472,21 +527,38 @@ impl<'text> PagerSource for RichPagerSource<'text> {
     }
 
     fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line<'_> {
+        let line_indent = self.line_indent(line);
+        let indent = line_indent.saturating_sub(col_no);
+        let col_no = col_no.saturating_sub(line_indent);
+
         let idx = self.idx_from_pos(Cursor { line, col: col_no });
+
         match self.content.get(idx.element).map(Element::as_ref) {
             Some(ElementRef::Pager(pager)) => {
-                pager.get_line(theme, idx.offset, col_no, max_cols)
+                let mut line = pager.get_line(theme, idx.offset, col_no, max_cols);
+                if indent != 0 {
+                    line.spans.insert(0, Span::styled(" ".repeat(indent), theme.normal));
+                }
+                line
             }
             Some(ElementRef::Str(s)) => {
                 let text = s[idx.offset..].get_first_line(max_cols);
                 let style_idx = self.style_idx_from_idx(idx);
-                self.style[style_idx..].iter()
+                let spans_iter = self.style[style_idx..].iter()
                     .zip(self.style[style_idx+1..].iter())
                     .map_while(|(style, next_style)| {
-                        let start = if style.0.element == idx.element { style.0.offset } else { 0 };
-                        let end = if next_style.0.element == idx.element { next_style.0.offset } else { usize::MAX };
+                        let start = match style.0.element.cmp(&idx.element) {
+                            Ordering::Less => 0,
+                            Ordering::Equal => style.0.offset,
+                            Ordering::Greater => usize::MAX,
+                        };
+                        let end = match next_style.0.element.cmp(&idx.element) {
+                            Ordering::Less => 0,
+                            Ordering::Equal => next_style.0.offset,
+                            Ordering::Greater => usize::MAX,
+                        };
                         let start = start.saturating_sub(idx.offset);
-                        let end = (end - idx.offset).min(text.len());
+                        let end = end.saturating_sub(idx.offset).min(text.len());
                         if start >= end {
                             return None;
                         }
@@ -497,8 +569,11 @@ impl<'text> PagerSource for RichPagerSource<'text> {
                                 self.custom_styles[id.0 as usize]
                             }
                         };
-                        Some(ratatui::text::Span::styled(span_text, span_style))
-                    })
+                        Some(Span::styled(span_text, span_style))
+                    });
+                (indent != 0).then(|| Span::styled(" ".repeat(indent), theme.normal))
+                    .into_iter()
+                    .chain(spans_iter)
                     .collect()
             }
             None => Line::default(),
@@ -506,8 +581,13 @@ impl<'text> PagerSource for RichPagerSource<'text> {
     }
 
     fn get_raw_line(&self, line: usize, col_no: usize, max_cols: usize) -> Cow<'_, str> {
+        let line_indent = self.line_indent(line);
+        let indent = line_indent.saturating_sub(col_no);
+        let col_no = col_no.saturating_sub(line_indent);
+
         let idx = self.idx_from_pos(Cursor { line, col: col_no });
-        match self.content.get(idx.element).map(Element::as_ref) {
+
+        let raw =  match self.content.get(idx.element).map(Element::as_ref) {
             Some(ElementRef::Pager(pager)) => {
                 pager.get_raw_line(idx.offset, col_no, max_cols)
             }
@@ -515,6 +595,13 @@ impl<'text> PagerSource for RichPagerSource<'text> {
                 Cow::Borrowed(s[idx.offset..].get_first_line(max_cols))
             }
             None => Cow::Owned(String::new()),
+        };
+        if indent == 0 {
+            raw
+        } else {
+            let mut owned = raw.into_owned();
+            owned.insert_str(0, &" ".repeat(indent));
+            Cow::Owned(owned)
         }
     }
 
