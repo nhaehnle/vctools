@@ -4,7 +4,7 @@ use std::{cell::RefCell, cmp::Ordering, collections::HashMap, fmt::{Debug, Write
 
 use super::*;
 
-use ratatui::{symbols::line, text::Line};
+use ratatui::text::Line;
 use vctools_utils::prelude::*;
 
 enum Element<'a> {
@@ -69,11 +69,20 @@ impl Default for Style {
 }
 
 #[derive(Debug)]
+struct FoldingRange {
+    range: Range<usize>,
+    parent: usize,
+    depth: usize,
+}
+
+#[derive(Debug)]
 pub struct RichPagerSourceBuilder<'text> {
     content: Vec<Element<'text>>,
 
     /// (content index, indent) pairs
-    element_indent: Vec<(usize, usize)>,
+    indent: Vec<(usize, usize)>,
+    folding_ranges: Vec<FoldingRange>,
+    current_folding: usize,
 
     custom_styles: Vec<style::Style>,
 
@@ -85,7 +94,15 @@ impl<'text> Default for RichPagerSourceBuilder<'text> {
     fn default() -> Self {
         RichPagerSourceBuilder {
             content: Vec::new(),
-            element_indent: Vec::new(),
+            indent: vec![(0, 0)],
+            folding_ranges: vec![
+                FoldingRange {
+                    range: 0..usize::MAX,
+                    parent: 0,
+                    depth: 0,
+                }
+            ],
+            current_folding: 0,
             custom_styles: Vec::new(),
             custom_style_map: HashMap::new(),
             style: vec![(
@@ -101,6 +118,14 @@ impl<'text> RichPagerSourceBuilder<'text> {
     }
 
     fn add_impl(&mut self, element: Element<'text>) {
+        if let ElementRef::Pager(pager) = element.as_ref() {
+            if self.current_folding != 0 && self.folding_ranges[self.current_folding].range.start == self.content.len() {
+                assert!(
+                    pager.get_folding_range(0, false).is_none(),
+                    "outer and inner folding range cannot start on the same line",
+                );
+            }
+        }
         self.content.push(element);
     }
 
@@ -163,35 +188,60 @@ impl<'text> RichPagerSourceBuilder<'text> {
     }
 
     pub fn set_indent(&mut self, indent: usize) {
-        if let Some(last) = self.element_indent.last_mut() {
+        if let Some(last) = self.indent.last_mut() {
             if last.0 == self.content.len() {
                 last.1 = indent;
                 return;
             }
         }
-        self.element_indent.push((self.content.len(), indent));
+        self.indent.push((self.content.len(), indent));
+    }
+
+    pub fn begin_folding_range(&mut self) {
+        assert!(
+            self.current_folding == 0 ||
+            self.folding_ranges[self.current_folding].range.start != self.content.len(),
+            "cannot begin a folding range inside an empty folding range"
+        );
+        self.folding_ranges.push(FoldingRange {
+            range: self.content.len()..usize::MAX,
+            parent: self.current_folding,
+            depth: self.folding_ranges[self.current_folding].depth + 1,
+        });
+        self.current_folding = self.folding_ranges.len() - 1;
+    }
+
+    pub fn end_folding_range(&mut self) {
+        assert!(self.current_folding != 0, "no folding range to end");
+
+        let fr = &mut self.folding_ranges[self.current_folding];
+        assert!(fr.range.start != self.content.len(), "folding range is empty");
+        fr.range.end = self.content.len();
+        self.current_folding = fr.parent;
     }
 
     pub fn build(mut self) -> RichPagerSource<'text> {
+        assert!(self.current_folding == 0, "unclosed folding range(s) remain(s)");
+
         // Compute landmarks. We introduce one landmark at the beginning of
         // each element. Additionally, each string element gets an anchor every
         // N bytes.
-        let mut line_indent = Vec::new();
-        let mut indent_iter = self.element_indent.into_iter().peekable();
-
-        if let Some((_, indent)) = indent_iter.peek().filter(|(idx, _)| *idx == 0) {
-            line_indent.push((0, *indent));
-            indent_iter.next();
-        } else {
-            line_indent.push((0, 0));
-        }
-
         let mut line = 0;
         let mut landmarks = Vec::new();
+        let mut indent_iter = self.indent.iter_mut().peekable();
+        let mut next_fr_idx = 0;
+
         for (idx, element) in self.content.iter().enumerate() {
-            if let Some((_, indent)) = indent_iter.peek().filter(|(i, _)| *i == idx) {
-                line_indent.push((line, *indent));
-                indent_iter.next();
+            if indent_iter.peek().is_some_and(|(i, _)| *i == idx) {
+                indent_iter.next().unwrap().0 = line;
+            }
+
+            if let Some(next_fr) = self.folding_ranges.get_mut(next_fr_idx) {
+                if next_fr.range.start == idx {
+                    next_fr.range.start = line;
+                    self.current_folding = next_fr_idx;
+                    next_fr_idx += 1;
+                }
             }
 
             match element.as_ref() {
@@ -230,7 +280,19 @@ impl<'text> RichPagerSourceBuilder<'text> {
                     }
                 }
             }
+
+            while self.current_folding != 0 {
+                let fr = &mut self.folding_ranges[self.current_folding];
+                if fr.range.end > idx + 1 {
+                    break;
+                }
+                fr.range.end = line;
+                self.current_folding = fr.parent;
+            }
         }
+
+        assert!(self.current_folding == 0);
+
         landmarks.push(Landmark {
             pos: Cursor {
                 line,
@@ -252,7 +314,8 @@ impl<'text> RichPagerSourceBuilder<'text> {
 
         RichPagerSource {
             content: self.content,
-            line_indent,
+            indent: self.indent,
+            folding_ranges: self.folding_ranges,
             landmarks,
             custom_styles: self.custom_styles,
             style: self.style,
@@ -263,7 +326,12 @@ impl<'text> RichPagerSourceBuilder<'text> {
 impl Write for RichPagerSourceBuilder<'_> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         let string = 'str: {
-            if self.element_indent.last().is_none_or(|(idx, _)| *idx < self.content.len()) {
+            if self.indent.last().is_none_or(|(idx, _)| *idx < self.content.len()) &&
+               self.folding_ranges.last().is_none_or(
+                |fr| {
+                    fr.range.start < self.content.len() &&
+                    fr.range.end != self.content.len()
+                }) {
                 if let Some(Element::String(string)) = self.content.last_mut() {
                     break 'str string;
                 }
@@ -276,7 +344,7 @@ impl Write for RichPagerSourceBuilder<'_> {
 }
 
 /// Reference an index in the rich source by element and offset within the element.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct Index {
     /// Index in the `elements` vector.
     element: usize,
@@ -301,13 +369,13 @@ impl std::cmp::Ord for Index {
 /// Landmarks are used to quickly:
 ///  * find the element containing a given line, and the offset within the element
 ///  * given an element and offset, find the corresponding line number
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Landmark {
     pos: Cursor,
     idx: Index,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RichPagerSource<'text> {
     content: Vec<Element<'text>>,
     landmarks: Vec<Landmark>,
@@ -323,44 +391,11 @@ pub struct RichPagerSource<'text> {
     style_lookup_cache: RefCell<usize>,
 
     /// Line number -> indent
-    line_indent: Vec<(usize, usize)>,
-    line_indent_lookup_cache: RefCell<usize>,
-}
-impl Default for RichPagerSource<'_> {
-    fn default() -> Self {
-        RichPagerSource {
-            content: Vec::new(),
-            landmarks: vec![
-                Landmark {
-                    pos: Cursor {
-                        line: 0,
-                        col: 0,
-                    },
-                    idx: Index {
-                        element: 0,
-                        offset: 0,
-                    },
-                },
-            ],
-            lm_lookup_cache: RefCell::new((0, Landmark {
-                pos: Cursor {
-                    line: 0,
-                    col: 0,
-                },
-                idx: Index {
-                    element: 0,
-                    offset: 0,
-                },
-            })),
+    indent: Vec<(usize, usize)>,
+    indent_lookup_cache: RefCell<usize>,
 
-            custom_styles: Vec::new(),
-            style: Vec::new(),
-            style_lookup_cache: RefCell::new(0),
-
-            line_indent: Vec::new(),
-            line_indent_lookup_cache: RefCell::new(0),
-        }
-    }
+    folding_ranges: Vec<FoldingRange>,
+    folding_range_lookup_cache: RefCell<usize>,
 }
 impl RichPagerSource<'_> {
     pub fn new() -> Self {
@@ -377,11 +412,11 @@ impl RichPagerSource<'_> {
     }
 
     fn line_indent(&self, line: usize) -> usize {
-        let lookup_cache = &mut *self.line_indent_lookup_cache.borrow_mut();
-        let forward = self.line_indent[*lookup_cache].0 <= line;
-        let indent_idx = self.line_indent.partition_point_with_hint(*lookup_cache, forward, |&(l, _)| l <= line) - 1;
+        let lookup_cache = &mut *self.indent_lookup_cache.borrow_mut();
+        let forward = self.indent[*lookup_cache].0 <= line;
+        let indent_idx = self.indent.partition_point_with_hint(*lookup_cache, forward, |&(l, _)| l <= line) - 1;
         *lookup_cache = indent_idx;
-        self.line_indent[indent_idx].1
+        self.indent[indent_idx].1
     }
 
     /// Return the (element index, offset) of the first character past the given line and
@@ -606,15 +641,55 @@ impl<'text> PagerSource for RichPagerSource<'text> {
     }
 
     fn get_folding_range(&self, line: usize, parent: bool) -> Option<(Range<usize>, usize)> {
-        let idx = self.idx_from_pos(Cursor { line, col: 0 });
-        match self.content.get(idx.element)?.as_ref() {
-            ElementRef::Pager(pager) => {
-                let base_line = line - idx.offset;
-                pager.get_folding_range(idx.offset, parent)
-                    .map(|(range, level)| (range.start + base_line..range.end + base_line, level))
+        let mut lookup_cache = self.folding_range_lookup_cache.borrow_mut();
+        let forward = self.folding_ranges[*lookup_cache].range.start <= line;
+        let mut fr_idx = self.folding_ranges.partition_point_with_hint(
+            *lookup_cache,
+            forward,
+            |fr| fr.range.start <= line
+        ) - 1;
+        *lookup_cache = fr_idx;
+
+        let outer_fr = loop {
+            if fr_idx == 0 {
+                break None;
             }
-            ElementRef::Str(_) => None,
-        }
+            let mut fr = &self.folding_ranges[fr_idx];
+            assert!(fr.range.start <= line);
+            if line < fr.range.end {
+                // If we're on the starting line we directly know the folding range
+                // without querying a child.
+                if line == fr.range.start {
+                    if parent {
+                        if fr.parent == 0 {
+                            return None;
+                        }
+                        fr = &self.folding_ranges[fr.parent];
+                    }
+                    return Some((fr.range.clone(), fr.depth));
+                }
+                break Some((fr.range.clone(), fr.depth));
+            }
+            fr_idx = fr.parent;
+        };
+
+        // Found the outer folding range, now check whether a child pager has a folding range.
+        let idx = self.idx_from_pos(Cursor { line, col: 0 });
+        let inner_fr =
+            match self.content.get(idx.element)?.as_ref() {
+                ElementRef::Pager(pager) => {
+                    let base_line = line - idx.offset;
+                    pager.get_folding_range(idx.offset, parent)
+                        .map(|(range, level)| (range.start + base_line..range.end + base_line, level))
+                }
+                ElementRef::Str(_) => None,
+            };
+
+        inner_fr
+            .map(|(range, depth)| {
+                (range, depth + 1 + outer_fr.as_ref().map(|(_, depth)| depth).copied().unwrap_or(0))
+            })
+            .or(outer_fr)
     }
 
     fn persist_line_number(&self, line: usize) -> (Vec<Anchor>, usize) {

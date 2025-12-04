@@ -32,7 +32,7 @@ impl Anchor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
     pub line: usize,
     pub col: usize,
