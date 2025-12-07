@@ -263,12 +263,26 @@ impl ReviewState {
             writeln!(coln(pager, "Current head:       "), "{} ({})", pull.head.ref_, pull.head.sha)?;
             writeln!(coln(pager, "Target branch:      "), "{} ({})", pull.base.ref_, pull.base.sha)?;
             writeln!(pager)?;
+
+            pager.set_theme_style(TextStyle::Header0);
+            if let Some(body) = pull.body.filter(|b| !b.trim().is_empty()) {
+                pager.begin_folding_range();
+                writeln!(pager, "Description:")?;
+                pager.set_theme_style(TextStyle::Normal);
+                pager.set_indent(4);
+                writeln!(pager, "{}", body)?;
+                pager.set_indent(0);
+                pager.end_folding_range();
+            } else {
+                writeln!(pager, "No description provided.")?;
+            }
+            writeln!(pager)?;
         }
 
         if let Some(comments) = main_comments.as_ref().filter(|c| !c.is_empty()) {
             pager.set_theme_style(TextStyle::Header0);
             pager.begin_folding_range();
-            writeln!(pager, "Comment Thread")?;
+            writeln!(pager, "Comment Thread:")?;
             writeln!(pager)?;
 
             let mut have_body = false;

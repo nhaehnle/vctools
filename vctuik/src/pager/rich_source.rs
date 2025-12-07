@@ -83,6 +83,7 @@ pub struct RichPagerSourceBuilder<'text> {
     indent: Vec<(usize, usize)>,
     folding_ranges: Vec<FoldingRange>,
     current_folding: usize,
+    last_end_folding_range: usize,
 
     custom_styles: Vec<style::Style>,
 
@@ -103,6 +104,7 @@ impl<'text> Default for RichPagerSourceBuilder<'text> {
                 }
             ],
             current_folding: 0,
+            last_end_folding_range: 0,
             custom_styles: Vec::new(),
             custom_style_map: HashMap::new(),
             style: vec![(
@@ -218,6 +220,7 @@ impl<'text> RichPagerSourceBuilder<'text> {
         assert!(fr.range.start != self.content.len(), "folding range is empty");
         fr.range.end = self.content.len();
         self.current_folding = fr.parent;
+        self.last_end_folding_range = self.content.len();
     }
 
     pub fn build(mut self) -> RichPagerSource<'text> {
@@ -326,12 +329,9 @@ impl<'text> RichPagerSourceBuilder<'text> {
 impl Write for RichPagerSourceBuilder<'_> {
     fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
         let string = 'str: {
-            if self.indent.last().is_none_or(|(idx, _)| *idx < self.content.len()) &&
-               self.folding_ranges.last().is_none_or(
-                |fr| {
-                    fr.range.start < self.content.len() &&
-                    fr.range.end != self.content.len()
-                }) {
+            if self.indent.last().unwrap().0 < self.content.len() &&
+               self.folding_ranges.last().unwrap().range.start < self.content.len() &&
+               self.last_end_folding_range < self.content.len() {
                 if let Some(Element::String(string)) = self.content.last_mut() {
                     break 'str string;
                 }
