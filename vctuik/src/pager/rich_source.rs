@@ -324,7 +324,7 @@ impl<'text> RichPagerSourceBuilder<'text> {
     }
 }
 impl Write for RichPagerSourceBuilder<'_> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+    fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
         let string = 'str: {
             if self.indent.last().is_none_or(|(idx, _)| *idx < self.content.len()) &&
                self.folding_ranges.last().is_none_or(
@@ -339,6 +339,20 @@ impl Write for RichPagerSourceBuilder<'_> {
             self.add_impl(Element::String(String::new()));
             self.content.last_mut().unwrap().as_string_mut().unwrap()
         };
+
+        // Filter out control characters to avoid terminal corruption.
+        fn filter(ch: char) -> bool {
+            ch.is_ascii_control() && ch != '\n'
+        }
+
+        while let Some(idx) = s.find(filter) {
+            string.write_str(&s[..idx])?;
+            match s.as_bytes()[idx] {
+                b'\t' => string.push_str("    "),
+                _ => {},
+            }
+            s = &s[idx + 1..];
+        }
         string.write_str(s)
     }
 }
