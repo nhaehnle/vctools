@@ -13,6 +13,7 @@ debug-diff = []
 
 [dependencies]
 clap = { version = "3.2", features = ["derive"] }
+itertools = "0.14"
 lazy_static = { version = "1.4" }
 regex = { version = "1.7", default-features = false, features = ["std", "perf"] }
 reqwest = { version = "0.12" }
