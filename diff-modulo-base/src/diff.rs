@@ -10,61 +10,12 @@ use regex::bytes::Regex;
 use crate::utils::*;
 
 mod buffer;
+mod file;
 mod reduce_changed;
-pub use reduce_changed::{reduce_changed_diff, reduce_changed_file, DiffAlgorithm};
 
 pub use buffer::{Buffer, BufferRef};
-
-/// Represent an effective filename in a diff (without any prefix path
-/// components). Missing means that the file is missing on the corresponding
-/// side of the diff.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FileName {
-    Missing,
-    Name(Vec<u8>),
-}
-impl Default for FileName {
-    fn default() -> Self {
-        FileName::Missing
-    }
-}
-impl FileName {
-    fn extract(path: &[u8], strip_path_components: usize) -> Result<FileName> {
-        if path == b"/dev/null" {
-            return Ok(Self::Missing);
-        }
-
-        if path.is_empty() {
-            return Err("empty diff file path".into());
-        }
-
-        try_forward(
-            || -> Result<_> {
-                let mut path = path;
-                if path[0] == b'/' {
-                    path = &path[1..];
-                }
-
-                for _ in 0..strip_path_components {
-                    path = match path
-                        .iter()
-                        .enumerate()
-                        .find(|(_, &b)| b == b'/')
-                        .map(|(idx, _)| idx)
-                    {
-                        Some(idx) => &path[idx + 1..],
-                        None => {
-                            return Err("path does not have enough components".into());
-                        }
-                    };
-                }
-
-                Ok(Self::Name(path.into()))
-            },
-            || String::from_utf8_lossy(path),
-        )
-    }
-}
+pub use file::FileName;
+pub use reduce_changed::{reduce_changed_diff, reduce_changed_file, DiffAlgorithm};
 
 #[derive(Debug, Clone, Copy)]
 pub enum HunkLineStatus {
@@ -1100,7 +1051,7 @@ impl Diff {
                         }
 
                         file.old_path = Some(lineref.slice(4..));
-                        file.old_name = Some(FileName::extract(
+                        file.old_name = Some(FileName::from_bytes(
                             &line[4..],
                             diff_options.strip_path_components,
                         )?);
@@ -1116,7 +1067,7 @@ impl Diff {
                         }
 
                         file.new_path = Some(lineref.slice(4..));
-                        file.new_name = Some(FileName::extract(
+                        file.new_name = Some(FileName::from_bytes(
                             &line[4..],
                             diff_options.strip_path_components,
                         )?);
@@ -1828,9 +1779,9 @@ pub fn diff_file(
 
     let file = DiffFile {
         old_path: buffer[old_path].to_owned(),
-        old_name: FileName::extract(&buffer[old_path], options.strip_path_components)?,
+        old_name: FileName::from_bytes(&buffer[old_path], options.strip_path_components)?,
         new_path: buffer[new_path].to_owned(),
-        new_name: FileName::extract(&buffer[new_path], options.strip_path_components)?,
+        new_name: FileName::from_bytes(&buffer[new_path], options.strip_path_components)?,
         blocks: [
             Block {
                 old_begin: 1,
