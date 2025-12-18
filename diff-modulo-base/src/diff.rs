@@ -9,51 +9,11 @@ use regex::bytes::Regex;
 
 use crate::utils::*;
 
+mod buffer;
 mod reduce_changed;
 pub use reduce_changed::{reduce_changed_diff, reduce_changed_file, DiffAlgorithm};
 
-/// A reference to a span of bytes in a [`Buffer`].
-#[derive(Clone, Copy, Debug)]
-pub struct DiffRef {
-    begin: u32,
-    end: u32,
-}
-
-/// Owner of diff contents.
-#[derive(Debug)]
-pub struct Buffer {
-    buf: Vec<u8>,
-}
-
-impl Buffer {
-    pub fn new() -> Self {
-        Buffer { buf: Vec::new() }
-    }
-
-    pub fn insert(&mut self, data: &[u8]) -> Result<DiffRef> {
-        if data.len() >= u32::MAX as usize - self.buf.len() {
-            return Err("Diffs larger than 4GB are not supported".into());
-        }
-
-        let begin = self.buf.len();
-        self.buf.extend(data);
-        Ok(DiffRef {
-            begin: begin as u32,
-            end: self.buf.len() as u32,
-        })
-    }
-
-    /// Iterate over the lines of the buffer as [`DiffRef`]s spanning the line
-    /// contents but not the new line character.
-    fn lines(&self, range: DiffRef) -> LineIterator<'_> {
-        assert!(range.begin <= range.end);
-        assert!(range.end as usize <= self.buf.len());
-        LineIterator {
-            buffer: &self,
-            range,
-        }
-    }
-}
+pub use buffer::{Buffer, BufferRef};
 
 /// Represent an effective filename in a diff (without any prefix path
 /// components). Missing means that the file is missing on the corresponding
@@ -172,7 +132,7 @@ impl HunkLine {
     fn from_range<'a>(
         buffer: &'a Buffer,
         status: HunkLineStatus,
-        lines: &'a [DiffRef],
+        lines: &'a [BufferRef],
     ) -> impl IntoIterator<Item = HunkLine> + 'a {
         lines.iter().map(move |&line| HunkLine {
             status,
@@ -321,97 +281,13 @@ impl ChunkWriter for ChunkByteBufferWriter {
     }
 }
 
-struct LineIterator<'a> {
-    buffer: &'a Buffer,
-    range: DiffRef,
-}
-
-impl<'a> Iterator for LineIterator<'a> {
-    type Item = DiffRef;
-
-    fn next(&mut self) -> Option<DiffRef> {
-        if self.range.begin >= self.range.end {
-            None
-        } else {
-            let (line_end, next_begin) = match self.buffer[self.range]
-                .iter()
-                .enumerate()
-                .find(|(_, &b)| b == b'\n')
-            {
-                Some((idx, _)) => (
-                    self.range.begin + idx as u32,
-                    self.range.begin + idx as u32 + 1,
-                ),
-                None => (self.range.end, self.range.end),
-            };
-
-            let result = DiffRef {
-                begin: self.range.begin,
-                end: line_end,
-            };
-            self.range.begin = next_begin;
-            Some(result)
-        }
-    }
-}
-
-impl std::ops::Index<DiffRef> for Buffer {
-    type Output = [u8];
-
-    fn index(&self, index: DiffRef) -> &[u8] {
-        &self.buf[(index.begin as usize)..(index.end as usize)]
-    }
-}
-
-impl DiffRef {
-    pub fn is_empty(&self) -> bool {
-        self.begin >= self.end
-    }
-
-    pub fn len(&self) -> usize {
-        if self.end > self.begin {
-            (self.end - self.begin) as usize
-        } else {
-            0
-        }
-    }
-
-    pub fn slice<R>(&self, range: R) -> DiffRef
-    where
-        R: std::ops::RangeBounds<usize>,
-    {
-        use std::ops::Bound::*;
-
-        let begin = match range.start_bound() {
-            Included(&x) => x,
-            Excluded(&x) => x.checked_add(1).unwrap_or(self.len()),
-            Unbounded => 0,
-        };
-        let end = match range.end_bound() {
-            Included(&x) => x.checked_add(1).unwrap_or(self.len()),
-            Excluded(&x) => x,
-            Unbounded => self.len(),
-        };
-        DiffRef {
-            begin: self.begin + std::cmp::min(begin, self.len()) as u32,
-            end: self.begin + std::cmp::min(end, self.len()) as u32,
-        }
-    }
-}
-
-impl Default for DiffRef {
-    fn default() -> Self {
-        DiffRef { begin: 0, end: 0 }
-    }
-}
-
 #[derive(Debug, Clone)]
 enum BlockContents {
     UnchangedUnknown(u32),
-    UnchangedKnown(Vec<DiffRef>),
+    UnchangedKnown(Vec<BufferRef>),
     Changed {
-        old: Vec<DiffRef>,
-        new: Vec<DiffRef>,
+        old: Vec<BufferRef>,
+        new: Vec<BufferRef>,
         unimportant: bool,
     },
     EndOfDiff {
@@ -542,7 +418,7 @@ impl<'a> Hunkify<'a> {
         }
     }
 
-    fn add_unimportant(&mut self, status: HunkLineStatus, lines: &[DiffRef]) -> Option<Hunk> {
+    fn add_unimportant(&mut self, status: HunkLineStatus, lines: &[BufferRef]) -> Option<Hunk> {
         if self.num_context_lines.is_none() {
             self.hunk
                 .lines
@@ -607,18 +483,18 @@ impl<'a> Hunkify<'a> {
         result
     }
 
-    fn add_important(&mut self, status: HunkLineStatus, lines: &[DiffRef]) {
+    fn add_important(&mut self, status: HunkLineStatus, lines: &[BufferRef]) {
         self.hunk
             .lines
             .extend(HunkLine::from_range(self.buffer, status, lines));
         self.important_end = self.hunk.lines.len();
     }
 
-    fn add_unchanged(&mut self, lines: &[DiffRef]) -> Option<Hunk> {
+    fn add_unchanged(&mut self, lines: &[BufferRef]) -> Option<Hunk> {
         self.add_unimportant(HunkLineStatus::Unchanged, lines)
     }
 
-    fn add_old(&mut self, old: &[DiffRef], unimportant: bool) -> Option<Hunk> {
+    fn add_old(&mut self, old: &[BufferRef], unimportant: bool) -> Option<Hunk> {
         if unimportant {
             self.add_unimportant(HunkLineStatus::Old(true), old)
         } else {
@@ -627,7 +503,7 @@ impl<'a> Hunkify<'a> {
         }
     }
 
-    fn add_new(&mut self, new: &[DiffRef], unimportant: bool) -> Option<Hunk> {
+    fn add_new(&mut self, new: &[BufferRef], unimportant: bool) -> Option<Hunk> {
         if unimportant {
             self.add_unimportant(HunkLineStatus::New(true), new)
         } else {
@@ -884,12 +760,12 @@ impl Diff {
         self.files.iter()
     }
 
-    pub fn parse(buffer: &Buffer, range: DiffRef) -> Result<Diff> {
+    pub fn parse(buffer: &Buffer, range: BufferRef) -> Result<Diff> {
         #[derive(Default, Debug)]
         struct CurrentFile {
-            old_path: Option<DiffRef>,
+            old_path: Option<BufferRef>,
             old_name: Option<FileName>,
-            new_path: Option<DiffRef>,
+            new_path: Option<BufferRef>,
             new_name: Option<FileName>,
             blocks: Vec<Block>,
         }
@@ -916,7 +792,7 @@ impl Diff {
             diff_files: Vec<DiffFile>,
             file: Option<CurrentFile>,
             hunk: Option<CurrentHunk>,
-            hunk_line: Option<DiffRef>,
+            hunk_line: Option<BufferRef>,
         }
         impl DiffParser {
             fn ensure_file(&mut self) -> &mut CurrentFile {
@@ -937,7 +813,7 @@ impl Diff {
             fn process_hunk_line(
                 &mut self,
                 buffer: &Buffer,
-                lineref: DiffRef,
+                lineref: BufferRef,
                 no_newline_at_eof: bool,
             ) -> Result<()> {
                 if lineref.len() < 1 {
@@ -1089,7 +965,7 @@ impl Diff {
             hunk_line: None,
         };
 
-        let guard = [DiffRef::default()].into_iter();
+        let guard = [BufferRef::default()].into_iter();
         for (lineidx, lineref) in buffer.lines(range).chain(guard).enumerate() {
             try_forward(
                 || -> Result<()> {
@@ -1428,7 +1304,7 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
             #[derive(Debug, Clone, Copy)]
             enum SplitContents<'a> {
                 Unknown(u32),
-                Known(&'a [DiffRef]),
+                Known(&'a [BufferRef]),
             }
             impl<'a> SplitContents<'a> {
                 fn len(&self) -> u32 {
@@ -1438,7 +1314,7 @@ pub fn compose(first: &Diff, second: &Diff) -> Result<Diff> {
                     }
                 }
 
-                fn lines(&self) -> &'a [DiffRef] {
+                fn lines(&self) -> &'a [BufferRef] {
                     match self {
                         SplitContents::Known(lines) => lines,
                         SplitContents::Unknown(_) => panic!(),
@@ -1925,15 +1801,15 @@ pub fn diff_modulo_base(
 
 pub fn diff_file(
     buffer: &Buffer,
-    old_path: DiffRef,
-    new_path: DiffRef,
-    old_body: DiffRef,
-    new_body: DiffRef,
+    old_path: BufferRef,
+    new_path: BufferRef,
+    old_body: BufferRef,
+    new_body: BufferRef,
     options: &DiffOptions,
     algorithm: DiffAlgorithm,
 ) -> Result<DiffFile> {
-    let old_lines: Vec<DiffRef> = buffer.lines(old_body).collect();
-    let new_lines: Vec<DiffRef> = buffer.lines(new_body).collect();
+    let old_lines: Vec<BufferRef> = buffer.lines(old_body).collect();
+    let new_lines: Vec<BufferRef> = buffer.lines(new_body).collect();
     let mut old_has_newline_at_eof = true;
     let mut new_has_newline_at_eof = true;
     if let Some(line) = old_lines.last() {

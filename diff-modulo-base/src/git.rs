@@ -114,7 +114,7 @@ fn diff_optional_commits_impl(
         ep: &dyn ExecutionProvider,
         commit: Option<&Ref>,
         name: &[u8],
-    ) -> Result<(diff::DiffRef, diff::DiffRef)> {
+    ) -> Result<(diff::BufferRef, diff::BufferRef)> {
         if let Some(commit) = commit {
             let show_options = git_core::ShowOptions {
                 show_patch: false,
@@ -127,7 +127,7 @@ fn diff_optional_commits_impl(
                 buffer.insert(name)?,
             ))
         } else {
-            Ok((diff::DiffRef::default(), buffer.insert(b"/dev/null")?))
+            Ok((diff::BufferRef::default(), buffer.insert(b"/dev/null")?))
         }
     }
 

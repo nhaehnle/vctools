@@ -80,8 +80,8 @@ impl DiffAlgorithm {
         buffer: &Buffer,
         old_begin: u32,
         new_begin: u32,
-        old: &[DiffRef],
-        new: &[DiffRef],
+        old: &[BufferRef],
+        new: &[BufferRef],
         unimportant: bool,
     ) -> Vec<Block> {
         match self {
@@ -100,8 +100,8 @@ impl DiffAlgorithm {
 struct ReverseBlockCollector<'a> {
     old_begin: u32,
     new_begin: u32,
-    old: &'a [DiffRef],
-    new: &'a [DiffRef],
+    old: &'a [BufferRef],
+    new: &'a [BufferRef],
     unimportant: bool,
     blocks: Vec<Block>,
     unchanged_old_offset: u32,
@@ -112,8 +112,8 @@ impl<'a> ReverseBlockCollector<'a> {
     fn new(
         old_begin: u32,
         new_begin: u32,
-        old: &'a [DiffRef],
-        new: &'a [DiffRef],
+        old: &'a [BufferRef],
+        new: &'a [BufferRef],
         unimportant: bool,
     ) -> Self {
         Self {
@@ -201,8 +201,8 @@ fn diff_graph_search(
     buffer: &Buffer,
     old_begin: u32,
     new_begin: u32,
-    old: &[DiffRef],
-    new: &[DiffRef],
+    old: &[BufferRef],
+    new: &[BufferRef],
     unimportant: bool,
 ) -> Vec<Block> {
     /// A node in the graph of the dynamic program, using 1-based indices into
@@ -491,7 +491,7 @@ struct DiffProblem {
     cutoff: usize,
 }
 impl DiffProblem {
-    fn new(buffer: &Buffer, old: &[DiffRef], new: &[DiffRef], cutoff: usize) -> Self {
+    fn new(buffer: &Buffer, old: &[BufferRef], new: &[BufferRef], cutoff: usize) -> Self {
         /// Positions (i.e. lines) where line contents can be found.
         ///
         /// We expect the common case to be that most lines are only found once
@@ -1220,8 +1220,8 @@ fn diff_sweep_line_exact(
     buffer: &Buffer,
     old_begin: u32,
     new_begin: u32,
-    old: &[DiffRef],
-    new: &[DiffRef],
+    old: &[BufferRef],
+    new: &[BufferRef],
     unimportant: bool,
 ) -> Vec<Block> {
     let problem = DiffProblem::new(buffer, old, new, usize::MAX);
@@ -1252,8 +1252,8 @@ fn diff_sweep_line(
     buffer: &Buffer,
     old_begin: u32,
     new_begin: u32,
-    old: &[DiffRef],
-    new: &[DiffRef],
+    old: &[BufferRef],
+    new: &[BufferRef],
     unimportant: bool,
 ) -> Vec<Block> {
     let problem = DiffProblem::new(buffer, old, new, 3);
