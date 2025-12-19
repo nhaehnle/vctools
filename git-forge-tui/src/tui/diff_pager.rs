@@ -49,18 +49,18 @@ impl DiffDisplayMode {
 
 #[derive(Debug)]
 enum Element {
-    Chunk(diff::Chunk),
+    Chunk(diff::render::Chunk),
     Commit(git_core::RangeDiffMatch),
 }
 impl Element {
     fn num_lines(&self, mode: DiffDisplayMode) -> usize {
         match self {
             Element::Chunk(chunk) => match &chunk.contents {
-                diff::ChunkContents::FileHeader { .. } => 2,
-                diff::ChunkContents::HunkHeader { .. } => 1,
-                diff::ChunkContents::Line { line } =>
+                diff::render::ChunkContents::FileHeader { .. } => 2,
+                diff::render::ChunkContents::HunkHeader { .. } => 1,
+                diff::render::ChunkContents::Line { line } =>
                     if mode.is_covered(line.status) {
-                        if line.no_newline {
+                        if line.contents.last().is_none_or(|ch| *ch != b'\n') {
                             2
                         } else {
                             1
@@ -165,13 +165,13 @@ impl DiffPagerSource {
             })
     }
 }
-impl diff::ChunkWriter for DiffPagerSource {
-    fn push_chunk(&mut self, chunk: diff::Chunk) {
+impl diff::render::ChunkWriter for DiffPagerSource {
+    fn push_chunk(&mut self, chunk: diff::render::Chunk) {
         self.global_lines.push(self.num_global_lines());
 
-        if matches!(chunk.contents, diff::ChunkContents::FileHeader { .. }) {
+        if matches!(chunk.contents, diff::render::ChunkContents::FileHeader { .. }) {
             self.files.push(self.elements.len());
-        } else if matches!(chunk.contents, diff::ChunkContents::HunkHeader { .. }) {
+        } else if matches!(chunk.contents, diff::render::ChunkContents::HunkHeader { .. }) {
             self.hunks.push(self.elements.len());
         }
 
@@ -192,14 +192,14 @@ impl PagerSource for DiffPagerSource {
         self.num_global_lines()
     }
 
-    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line {
+    fn get_line(&self, theme: &theme::Text, line: usize, col_no: usize, max_cols: usize) -> Line<'_> {
         let idx = self.global_lines.partition_point(|&l| l <= line) - 1;
         let line = line - self.global_lines[idx];
 
         let (text, style) = match &self.elements[idx] {
             Element::Chunk(chunk) =>
                 match &chunk.contents {
-                    diff::ChunkContents::HunkHeader { old_begin, old_count, new_begin, new_count } => {
+                    diff::render::ChunkContents::HunkHeader { old_begin, old_count, new_begin, new_count } => {
                         let mut text = String::from_utf8_lossy(chunk.context.prefix_bytes()).to_string();
                         write!(&mut text, "@@").unwrap();
                         if self.mode.show_old() {
@@ -213,8 +213,8 @@ impl PagerSource for DiffPagerSource {
                     },
                     _ => {
                         let style = match &chunk.contents {
-                            diff::ChunkContents::FileHeader { .. } => theme.header1,
-                            diff::ChunkContents::Line { line } => match line.status {
+                            diff::render::ChunkContents::FileHeader { .. } => theme.header1,
+                            diff::render::ChunkContents::Line { line } => match line.status {
                                 diff::HunkLineStatus::Unchanged => theme.normal,
                                 diff::HunkLineStatus::Old(_) => theme.removed,
                                 diff::HunkLineStatus::New(_) => theme.added,

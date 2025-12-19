@@ -64,7 +64,7 @@ fn do_main() -> Result<()> {
             let first_diff = utils::read_diff(&mut buffer, &first)?;
             let second_diff = utils::read_diff(&mut buffer, &second)?;
 
-            let result_diff = diff::compose(&first_diff, &second_diff)?;
+            let result_diff = diff::compose(&first_diff, &second_diff, &buffer)?;
             print!("{}", result_diff.display_lossy(&buffer));
         }
         Command::Diff {

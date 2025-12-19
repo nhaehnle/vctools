@@ -24,7 +24,7 @@ fn dmb_test() -> Result<()> {
         let target_diff = utils::read_diff(&mut buffer, path.join("target.diff"))?;
         let expected = utils::read_bytes(path.join("expected.diff"))?;
 
-        let mut writer = diff::ChunkByteBufferWriter::new();
+        let mut writer = diff::render::ChunkByteBufferWriter::new();
         diff::diff_modulo_base(
             &buffer,
             target_diff,

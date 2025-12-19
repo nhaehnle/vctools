@@ -3,8 +3,10 @@
 ///! File representation.
 ///!
 ///! Provides a representation of diff [`FileName`] and of file contents via [`File`]`
-
-use std::{cell::RefCell, ops::Range};
+use std::{
+    cell::RefCell,
+    ops::{Bound, Range, RangeBounds},
+};
 
 use itertools::Itertools;
 use vctools_utils::prelude::*;
@@ -24,42 +26,41 @@ impl Default for FileName {
         FileName::Missing
     }
 }
-impl FileName {
-    pub fn from_bytes(path: &[u8], strip_path_components: usize) -> Result<FileName> {
-        if path == b"/dev/null" {
-            return Ok(Self::Missing);
-        }
 
-        if path.is_empty() {
-            return Err("empty diff file path".into());
-        }
-
-        try_forward(
-            || -> Result<_> {
-                let mut path = path;
-                if path[0] == b'/' {
-                    path = &path[1..];
-                }
-
-                for _ in 0..strip_path_components {
-                    path = match path
-                        .iter()
-                        .enumerate()
-                        .find(|(_, &b)| b == b'/')
-                        .map(|(idx, _)| idx)
-                    {
-                        Some(idx) => &path[idx + 1..],
-                        None => {
-                            return Err("path does not have enough components".into());
-                        }
-                    };
-                }
-
-                Ok(Self::Name(path.into()))
-            },
-            || String::from_utf8_lossy(path),
-        )
+pub fn parse_diff_path(
+    path: BufferRef,
+    strip_path_components: usize,
+    buffer: &Buffer,
+) -> Result<Option<BufferRef>> {
+    if &buffer[path] == b"/dev/null" {
+        return Ok(None);
     }
+
+    if path.is_empty() {
+        Err("empty diff file path")?;
+    }
+
+    try_forward(
+        || -> Result<_> {
+            let mut path_ref = path;
+            let mut path = &buffer[path];
+            if path[0] == b'/' {
+                path = &path[1..];
+                path_ref = path_ref.slice(1..);
+            }
+
+            for _ in 0..strip_path_components {
+                let Some((idx, _)) = path.iter().find_position(|&b| *b == b'/') else {
+                    return Err("path does not have enough components")?;
+                };
+                path = &path[idx + 1..];
+                path_ref = path_ref.slice(idx + 1..);
+            }
+
+            Ok(Some(path_ref))
+        },
+        || String::from_utf8_lossy(&buffer[path]),
+    )
 }
 
 /// Part of a file covering a range of lines.
@@ -101,6 +102,14 @@ pub struct File {
     landmark_lookup_cache: RefCell<(usize, Landmark)>,
 }
 impl File {
+    pub fn name_ref(&self) -> BufferRef {
+        self.name
+    }
+
+    pub fn name<'slf, 'buf>(&'slf self, buffer: &'buf Buffer) -> &'buf [u8] {
+        &buffer[self.name]
+    }
+
     /// Return the number of lines in the file, if known.
     pub fn num_lines(&self) -> Option<u32> {
         if self.have_end_of_file {
@@ -110,12 +119,101 @@ impl File {
         }
     }
 
-    /// Return the line with the given (0-based) number, or None if the line
-    /// is not known.
-    ///
-    /// The returned range includes the final newline character, except for
-    /// the last line of the file if the file does not end with a newline.
-    pub fn line_ref(&self, line: u32, buffer: &Buffer) -> Option<BufferRef> {
+    fn lines_impl<'a>(
+        &'a self,
+        range: Range<u32>,
+        buffer: &'a Buffer,
+    ) -> impl ExactSizeIterator<Item = Option<BufferRef>> + 'a {
+        struct LineIterator<'it> {
+            buffer: &'it Buffer,
+            file: &'it File,
+            next: Landmark,
+            end_line: u32,
+        }
+        impl<'it> Iterator for LineIterator<'it> {
+            type Item = Option<BufferRef>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.next.line >= self.end_line {
+                    None
+                } else {
+                    if let Some(part) = self.file.parts.get(self.next.part as usize) {
+                        if self.next.line >= part.lines.start {
+                            if self.next.line + 1 < part.lines.end {
+                                let text_ref = part.text.slice(self.next.offset as usize..);
+                                let text = &self.buffer[text_ref];
+                                let offset_nl =
+                                    text.iter().find_position(|ch| **ch == b'\n').unwrap().0;
+                                let line = text_ref.slice(..offset_nl + 1);
+                                self.next.line += 1;
+                                self.next.offset += (offset_nl + 1) as u32;
+                                Some(Some(line))
+                            } else {
+                                // We're producing the last line of this part.
+                                let line = part.text.slice(self.next.offset as usize..);
+                                self.next.line += 1;
+                                self.next.part += 1;
+                                self.next.offset = 0;
+                                Some(Some(line))
+                            }
+                        } else {
+                            // We're in the unknown gap before the current part.
+                            self.next.line += 1;
+                            Some(None)
+                        }
+                    } else {
+                        // We're past the end of the known lines.
+                        self.next.line += 1;
+                        Some(None)
+                    }
+                }
+            }
+
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                let len = (self.end_line - self.next.line) as usize;
+                (len, Some(len))
+            }
+        }
+        impl<'it> ExactSizeIterator for LineIterator<'it> {
+            fn len(&self) -> usize {
+                (self.end_line - self.next.line) as usize
+            }
+        }
+
+        let (next, _) = self.find_line(range.start, buffer);
+
+        LineIterator {
+            buffer,
+            file: self,
+            next,
+            end_line: range.end,
+        }
+    }
+
+    pub fn lines<'a>(
+        &'a self,
+        range: impl RangeBounds<u32>,
+        buffer: &'a Buffer,
+    ) -> impl ExactSizeIterator<Item = Option<BufferRef>> + 'a {
+        let start = match range.start_bound() {
+            Bound::Unbounded => 0,
+            Bound::Included(x) => *x,
+            Bound::Excluded(x) => *x + 1,
+        };
+        let end = match range.end_bound() {
+            Bound::Excluded(x) => *x,
+            Bound::Included(x) => *x + 1,
+            // Unbounded end may only be used with fully known files.
+            Bound::Unbounded => self.num_lines().unwrap(),
+        };
+
+        self.lines_impl(start..end, buffer)
+    }
+
+    /// Returns the earliest possible landmark after or equal to the given line
+    /// and, if the line is found and known and its end is trivial to determine,
+    /// the end offset within the found part.
+    fn find_line(&self, line: u32, buffer: &Buffer) -> (Landmark, Option<u32>) {
         // Find the neighboring landmarks that frame the searched-for line.
         let mut cache = self.landmark_lookup_cache.borrow_mut();
         let forward = cache.1.line <= line;
@@ -124,8 +222,25 @@ impl File {
             forward,
             |lm| lm.line <= line,
         );
-        if lm_idx_post == 0 || lm_idx_post >= self.landmarks.len() {
-            return None;
+        if lm_idx_post == 0 {
+            return (
+                Landmark {
+                    line,
+                    part: 0,
+                    offset: 0,
+                },
+                None,
+            );
+        }
+        if lm_idx_post >= self.landmarks.len() {
+            return (
+                Landmark {
+                    line,
+                    part: self.parts.len() as u32,
+                    offset: 0,
+                },
+                None,
+            );
         }
         let lm_idx_pre = lm_idx_post - 1;
 
@@ -136,7 +251,12 @@ impl File {
             lm_post = self.landmarks[lm_idx_post];
             if lm_idx_pre == cache.0 {
                 lm_pre = cache.1;
-                if lm_post.part - lm_pre.part >= 2 && lm_pre.offset != 0 {
+                let pre_part = &self.parts[lm_pre.part as usize];
+                if line < pre_part.lines.end {
+                    lm_post.part = lm_pre.part;
+                    lm_post.line = pre_part.lines.end;
+                    lm_post.offset = pre_part.text.len() as u32;
+                } else if lm_post.part - lm_pre.part >= 2 && lm_pre.offset != 0 {
                     lm_pre.part += 1;
                     lm_pre.line = self.parts[lm_pre.part as usize].lines.start;
                     lm_pre.offset = 0;
@@ -148,7 +268,15 @@ impl File {
             lm_pre = self.landmarks[lm_idx_pre];
             if lm_idx_pre == cache.0 {
                 lm_post = cache.1;
-                if lm_post.part - lm_pre.part >= 2 && lm_post.offset != 0 {
+                if let Some(post_part) = self
+                    .parts
+                    .get(lm_post.part as usize)
+                    .filter(|p| p.lines.start <= line)
+                {
+                    lm_pre.part = lm_post.part;
+                    lm_pre.line = post_part.lines.start;
+                    lm_pre.offset = 0;
+                } else if lm_post.part - lm_pre.part >= 2 && lm_post.offset != 0 {
                     lm_post.line = self.parts[lm_post.part as usize].lines.start;
                     lm_post.offset = 0;
                 }
@@ -200,7 +328,7 @@ impl File {
             let end_line = self.parts[(lm_post.part - 1) as usize].lines.end;
             if end_line <= line {
                 *cache = (lm_idx_pre, lm_post);
-                return None;
+                return (lm_post, None);
             }
 
             assert!(end_line - lm_pre.line >= lm_post.part - lm_pre.part);
@@ -213,7 +341,7 @@ impl File {
 
                 let part = &self.parts[lm_pre.part as usize];
                 *cache = (lm_idx_pre, lm_pre);
-                return Some(part.text);
+                return (lm_pre, Some(part.text.len() as u32));
             }
 
             let mid = lm_pre.part + (lm_post.part - lm_pre.part) / 2;
@@ -226,47 +354,81 @@ impl File {
             }
         }
 
-        // Normalize to a single part.
+        // Detect when the line is in the unknown gap between parts.
         let part = &self.parts[lm_pre.part as usize];
+        if part.lines.end <= line {
+            assert!(lm_pre.part + 1 == lm_post.part);
+
+            *cache = (lm_idx_pre, lm_post);
+
+            lm_post.line = line;
+            return (lm_post, None);
+        }
+
+        // Find the target line using a linear scan.
+        assert!(lm_pre.line <= line);
+
+        while lm_pre.line != line {
+            let text = &buffer[part.text.slice(lm_pre.offset as usize..)];
+            let next_line_offset = text
+                .iter()
+                .enumerate()
+                .find(|(_, ch)| **ch == b'\n')
+                .unwrap()
+                .0 as u32
+                + 1;
+            lm_pre.line += 1;
+            lm_pre.offset += next_line_offset;
+        }
+
+        *cache = (lm_idx_pre, lm_pre);
+
         if lm_pre.part < lm_post.part {
             lm_post.part = lm_pre.part;
             lm_post.line = part.lines.end;
             lm_post.offset = part.text.len() as u32;
-
-            if lm_post.line <= line {
-                *cache = (lm_idx_pre, lm_pre);
-                return None;
-            }
         }
 
-        // Find the target line using a linear scan.
-        assert!(lm_pre.line < lm_post.line);
+        let end_offset = (line + 1 == lm_post.line).then_some(lm_post.offset);
 
-        if lm_post.line - lm_pre.line > 1 {
-            loop {
-                let text = &buffer[part
-                    .text
-                    .slice(lm_pre.offset as usize..lm_post.offset as usize)];
-                let next_line_offset = text
-                    .iter()
-                    .enumerate()
-                    .find(|(_, ch)| **ch == b'\n')
-                    .unwrap()
-                    .0 as u32 + 1;
-                if line == lm_pre.line {
-                    lm_post.line = lm_pre.line + 1;
-                    lm_post.offset = lm_pre.offset + next_line_offset;
-                    break;
-                }
-                lm_pre.line += 1;
-                lm_pre.offset += next_line_offset;
-            }
+        (lm_pre, end_offset)
+    }
+
+    /// Return the line with the given (0-based) number, or None if the line
+    /// is not known.
+    ///
+    /// The returned range includes the final newline character, except for
+    /// the last line of the file if the file does not end with a newline.
+    pub fn line_ref(&self, line: u32, buffer: &Buffer) -> Option<BufferRef> {
+        let (lm, end_offset) = self.find_line(line, buffer);
+        if self
+            .parts
+            .get(lm.part as usize)
+            .is_none_or(|part| lm.line < part.lines.start)
+        {
+            return None;
         }
 
-        *cache = (lm_idx_pre, lm_pre);
+        assert!(self.parts[lm.part as usize].lines.start <= line);
+        assert!(line < self.parts[lm.part as usize].lines.end);
+
+        let end_offset = end_offset.unwrap_or_else(|| {
+            let part = &self.parts[lm.part as usize];
+            let text = &buffer[part.text.slice(lm.offset as usize..)];
+            let next_line_offset = text
+                .iter()
+                .enumerate()
+                .find(|(_, ch)| **ch == b'\n')
+                .unwrap()
+                .0 as u32
+                + 1;
+            lm.offset + next_line_offset
+        });
+
         return Some(
-            part.text
-                .slice(lm_pre.offset as usize..lm_post.offset as usize),
+            self.parts[lm.part as usize]
+                .text
+                .slice(lm.offset as usize..end_offset as usize),
         );
     }
 
@@ -374,12 +536,7 @@ impl FileBuilder {
             .is_some_and(|p| !buffer[p.text].ends_with(b"\n"))
     }
 
-    fn push_text_impl(
-        &mut self,
-        buffer: &Buffer,
-        lines: Range<u32>,
-        text: BufferRef,
-    ) -> Result<()> {
+    fn push_text_impl(&mut self, buffer: &Buffer, lines: Range<u32>, text: BufferRef) {
         assert!(
             lines.start >= self.num_lines(),
             "lines must be inserted in order"
@@ -387,8 +544,17 @@ impl FileBuilder {
         assert!(lines.start < lines.end);
         assert!(!self.must_be_eof(buffer));
 
-        self.parts.push(Part { lines, text });
-        Ok(())
+        if let Some(last_part) = self
+            .parts
+            .last_mut()
+            .filter(|p| p.lines.end == lines.start && p.text.end == text.begin)
+        {
+            // Extend the last part.
+            last_part.lines.end = lines.end;
+            last_part.text.end = text.end;
+        } else {
+            self.parts.push(Part { lines, text });
+        }
     }
 
     pub fn push_text(&mut self, line: u32, text: BufferRef, buffer: &Buffer) -> Result<()> {
@@ -405,7 +571,9 @@ impl FileBuilder {
             .checked_add(num_lines)
             .ok_or("Files with more than 2**32 - 1 lines are unsupported")?;
 
-        self.push_text_impl(buffer, line..line_end, text)
+        self.push_text_impl(buffer, line..line_end, text);
+
+        Ok(())
     }
 
     pub fn push_line(&mut self, line: u32, text: BufferRef, buffer: &Buffer) -> Result<()> {
@@ -418,7 +586,70 @@ impl FileBuilder {
             .enumerate()
             .find(|(_, ch)| **ch == b'\n')
             .is_none_or(|(idx, _)| idx == text.len() - 1));
-        self.push_text_impl(buffer, line..line + 1, text)
+        self.push_text_impl(buffer, line..line + 1, text);
+        Ok(())
+    }
+
+    /// Copy a contiguous range of known lines from `src_file` into `self`.
+    ///
+    /// The lines are taken from the given range of `src_lines`. As many as
+    /// possible (zero or more) known lines are taken from the start of the range.
+    ///
+    /// The lines are inserted starting at (0-based) line number `dst_line`.
+    ///
+    /// On success, the function returns `(end_dst_line, remaining_range)`.
+    /// The end_dst_line indicates the next line to be added to the file.
+    /// If the remaining range is non-empty, it starts at the next known line
+    /// after the contiguous lines that were copied.
+    pub fn copy_known_lines(
+        &mut self,
+        mut dst_line: u32,
+        src_file: &File,
+        mut src_lines: Range<u32>,
+        buffer: &Buffer,
+    ) -> Result<(u32, Range<u32>)> {
+        let (mut lm, mut maybe_end_offset) = src_file.find_line(src_lines.start, buffer);
+
+        while src_lines.len() != 0 {
+            if lm.part as usize >= src_file.parts.len() {
+                src_lines.start = src_lines.end;
+                break;
+            }
+
+            let lm_part = &src_file.parts[lm.part as usize];
+            if src_lines.start < lm_part.lines.start {
+                src_lines.start = std::cmp::min(src_lines.end, lm_part.lines.start);
+                break;
+            }
+
+            let num_lines =
+                std::cmp::min(lm_part.lines.end - src_lines.start, src_lines.len() as u32);
+            let end_line = dst_line
+                .checked_add(num_lines)
+                .ok_or("Files with more than 2**32 - 1 lines are unsupported")?;
+
+            let end_offset =
+                maybe_end_offset
+                    .take()
+                    .filter(|_| src_lines.len() == 1)
+                    .unwrap_or_else(|| {
+                        if lm_part.lines.end <= src_lines.end {
+                            lm_part.text.len() as u32
+                        } else {
+                            let (lm_end, _) = src_file.find_line(src_lines.end, buffer);
+                            lm_end.offset
+                        }
+                    });
+            let text_ref = lm_part.text.slice(lm.offset as usize..end_offset as usize);
+            self.push_text_impl(buffer, dst_line..end_line, text_ref);
+            src_lines.start += num_lines;
+            dst_line += num_lines;
+
+            lm.part += 1;
+            lm.offset = 0;
+        }
+
+        Ok((dst_line, src_lines))
     }
 }
 
@@ -456,6 +687,17 @@ mod test {
         assert_eq!(file.line(999, &buffer), None);
         assert_eq!(&buffer[file.line_ref(0, &buffer).unwrap()], b"first line\n");
 
+        let mut lines = file.lines(0..7, &buffer);
+        assert_eq!(lines.len(), 7);
+        assert_eq!(&buffer[lines.next().unwrap().unwrap()], b"first line\n");
+        assert!(lines.next().unwrap().is_none());
+        assert!(lines.next().unwrap().is_none());
+        assert!(lines.next().unwrap().is_none());
+        assert!(lines.next().unwrap().is_none());
+        assert_eq!(&buffer[lines.next().unwrap().unwrap()], b"other line\n");
+        assert!(lines.next().unwrap().is_none());
+        assert!(lines.next().is_none());
+
         Ok(())
     }
 
@@ -478,6 +720,50 @@ mod test {
         assert_eq!(file.line(13, &buffer).unwrap(), b"line 13\n");
         assert_eq!(file.line(8, &buffer), None);
         assert_eq!(file.line(6, &buffer).unwrap(), b"line 6\n");
+
+        {
+            let mut lines = file.lines(7..13, &buffer);
+            assert_eq!(lines.len(), 6);
+            assert_eq!(&buffer[lines.next().unwrap().unwrap()], b"line 7\n");
+            assert!(lines.next().unwrap().is_none());
+            assert!(lines.next().unwrap().is_none());
+            assert_eq!(&buffer[lines.next().unwrap().unwrap()], b"line 10\n");
+            assert_eq!(&buffer[lines.next().unwrap().unwrap()], b"line 11\n");
+            assert_eq!(&buffer[lines.next().unwrap().unwrap()], b"line 12\n");
+            assert!(lines.next().is_none());
+        }
+
+        let mut builder = FileBuilder::new();
+        assert_eq!(
+            builder.copy_known_lines(0, &file, 6..7, &buffer)?,
+            (1, 7..7)
+        );
+        assert_eq!(
+            builder.copy_known_lines(1, &file, 7..11, &buffer)?,
+            (2, 10..11)
+        );
+        assert_eq!(
+            builder.copy_known_lines(2, &file, 7..8, &buffer)?,
+            (3, 8..8)
+        );
+        assert_eq!(
+            builder.copy_known_lines(3, &file, 7..9, &buffer)?,
+            (4, 9..9)
+        );
+        assert_eq!(
+            builder.copy_known_lines(4, &file, 10..13, &buffer)?,
+            (7, 13..13)
+        );
+        let file2 = builder.build(buffer.insert(b"filename2")?, true, &buffer);
+
+        assert_eq!(file2.num_lines(), Some(7));
+        assert_eq!(file2.line(0, &buffer).unwrap(), b"line 6\n");
+        assert_eq!(file2.line(1, &buffer).unwrap(), b"line 7\n");
+        assert_eq!(file2.line(2, &buffer).unwrap(), b"line 7\n");
+        assert_eq!(file2.line(3, &buffer).unwrap(), b"line 7\n");
+        assert_eq!(file2.line(4, &buffer).unwrap(), b"line 10\n");
+        assert_eq!(file2.line(5, &buffer).unwrap(), b"line 11\n");
+        assert_eq!(file2.line(6, &buffer).unwrap(), b"line 12\n");
 
         Ok(())
     }

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::*;
-use diff::{ChunkWriter, ChunkWriterExt};
+use diff::render::{self, ChunkWriter, ChunkWriterExt};
 use git_core::{ExecutionProvider, Range, Ref};
 use utils::Result;
 
@@ -37,7 +37,7 @@ fn diff_ranges_full_impl(
         (Some(old), Some(new)) => {
             let mut paths: HashSet<&[u8]> = HashSet::new();
             for file in base_old_diff.iter_files().chain(base_new_diff.iter_files()) {
-                if let diff::FileName::Name(name) = &file.new_name {
+                if let Some(name) = file.new.as_ref().map(|new| new.name(&buffer)) {
                     paths.insert(&name);
                 }
             }
@@ -151,14 +151,14 @@ fn diff_optional_commits_impl(
     struct DelayedMetaWriter<'a> {
         writer: &'a mut dyn ChunkWriter,
         meta_diff_buffer: &'a diff::Buffer,
-        meta_diff: Option<diff::DiffFile>,
+        meta_diff: Option<diff::FileMatch>,
     }
     impl<'a> ChunkWriter for DelayedMetaWriter<'a> {
-        fn push_chunk(&mut self, chunk: diff::Chunk) {
+        fn push_chunk(&mut self, chunk: render::Chunk) {
             if let Some(meta_diff) = self.meta_diff.take() {
                 meta_diff.render_full_body(
                     &self.meta_diff_buffer,
-                    &mut self.writer.with_context(diff::Context::CommitMessage),
+                    &mut self.writer.with_context(render::Context::CommitMessage),
                 );
             }
             self.writer.push_chunk(chunk);
@@ -186,7 +186,7 @@ fn diff_optional_commits_impl(
                 &buffer,
                 &mut delayed_meta_writer
                     .writer
-                    .with_context(diff::Context::CommitMessage),
+                    .with_context(render::Context::CommitMessage),
             );
         }
     }
@@ -252,7 +252,7 @@ pub fn diff_commits(
 
     meta_diff.render_full_body(
         &buffer,
-        &mut writer.with_context(diff::Context::CommitMessage),
+        &mut writer.with_context(render::Context::CommitMessage),
     );
     diff_ranges_full(
         repo,

@@ -83,6 +83,10 @@ impl Buffer {
             range,
         }
     }
+
+    pub fn get(&self, at: u32) -> Option<u8> {
+        self.buf.get(at as usize).copied()
+    }
 }
 
 pub struct LineIterator<'a> {
@@ -123,5 +127,12 @@ impl std::ops::Index<BufferRef> for Buffer {
 
     fn index(&self, index: BufferRef) -> &[u8] {
         &self.buf[(index.begin as usize)..(index.end as usize)]
+    }
+}
+impl std::ops::Index<u32> for Buffer {
+    type Output = u8;
+
+    fn index(&self, index: u32) -> &u8 {
+        &self.buf[index as usize]
     }
 }

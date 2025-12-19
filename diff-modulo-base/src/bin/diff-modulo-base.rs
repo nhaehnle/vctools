@@ -23,7 +23,7 @@ fn do_main() -> Result<()> {
     // println!("{:?}", &target_diff);
 
     // let result_diff = reduce_modulo_base(target_diff, &old_base_diff, &base_new_diff)?;
-    let mut writer = diff::ChunkByteBufferWriter::new();
+    let mut writer = diff::render::ChunkByteBufferWriter::new();
     diff::diff_modulo_base(
         &buffer,
         target_diff,

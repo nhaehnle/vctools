@@ -48,7 +48,7 @@ fn diff_test() -> Result<()> {
         let mut diff = diff::Diff::new(options);
         diff.add_file(file);
 
-        let mut writer = diff::ChunkByteBufferWriter::new();
+        let mut writer = diff::render::ChunkByteBufferWriter::new();
         diff.render(&buffer, &mut writer);
 
         assert_eq!(String::from_utf8(expected)?, String::from_utf8(writer.out)?);

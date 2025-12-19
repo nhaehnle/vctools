@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 use termcolor::{Color, ColorSpec};
 
 use crate::*;
-use diff::*;
+use diff::{*, render::{Context, Chunk, ChunkContents, ChunkWriter}};
 use git_core::{RangeDiffMatch, RangeDiffWriter};
 
 #[derive(Default)]
@@ -141,10 +141,8 @@ impl Writer {
                 out.write(prefix)?;
                 out.write(&[line.status.symbol_byte()])?;
                 out.write(&line.contents)?;
-                if line.no_newline {
+                if line.contents.last().is_none_or(|ch| *ch != b'\n') {
                     out.write(b"\n\\ No newline at end of file\n")?;
-                } else {
-                    out.write(b"\n")?;
                 }
             }
         }

@@ -23,8 +23,8 @@ fn compose_test() -> Result<()> {
         let second_diff = utils::read_diff(&mut buffer, path.join("second.diff"))?;
         let expected = utils::read_bytes(path.join("expected.diff"))?;
 
-        let result_diff = diff::compose(&first_diff, &second_diff)?;
-        let mut writer = diff::ChunkByteBufferWriter::new();
+        let result_diff = diff::compose(&first_diff, &second_diff, &buffer)?;
+        let mut writer = diff::render::ChunkByteBufferWriter::new();
         result_diff.render(&buffer, &mut writer);
 
         assert_eq!(expected, writer.out);

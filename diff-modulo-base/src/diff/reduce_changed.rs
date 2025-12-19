@@ -49,7 +49,12 @@
 /// in the dynamic programming table.
 ///
 /// See [`DiffAlgorithm`] for more.
-use std::collections::{hash_map::Entry, BinaryHeap, HashMap};
+use std::{
+    collections::{hash_map::Entry, BinaryHeap, HashMap},
+    ops::Range,
+};
+
+use itertools::Itertools;
 
 use crate::diff::*;
 
@@ -83,7 +88,7 @@ impl DiffAlgorithm {
         old: &[BufferRef],
         new: &[BufferRef],
         unimportant: bool,
-    ) -> Vec<Block> {
+    ) -> Vec<MatchStatusMarker> {
         match self {
             Self::GraphSearch => {
                 diff_graph_search(buffer, old_begin, new_begin, old, new, unimportant)
@@ -96,104 +101,75 @@ impl DiffAlgorithm {
     }
 }
 
+/// Collect status markers for a range of lines.
+///
+/// Status is added in reverse order using `add_unchanged`.
 #[derive(Debug)]
-struct ReverseBlockCollector<'a> {
+struct ReverseStatusCollector {
+    status_markers: Vec<MatchStatusMarker>,
     old_begin: u32,
     new_begin: u32,
-    old: &'a [BufferRef],
-    new: &'a [BufferRef],
     unimportant: bool,
-    blocks: Vec<Block>,
-    unchanged_old_offset: u32,
-    unchanged_new_offset: u32,
-    unchanged_count: u32,
 }
-impl<'a> ReverseBlockCollector<'a> {
-    fn new(
-        old_begin: u32,
-        new_begin: u32,
-        old: &'a [BufferRef],
-        new: &'a [BufferRef],
-        unimportant: bool,
-    ) -> Self {
+impl ReverseStatusCollector {
+    fn new(old_lines: Range<u32>, new_lines: Range<u32>, unimportant: bool) -> Self {
         Self {
-            old_begin,
-            new_begin,
-            old,
-            new,
+            status_markers: vec![MatchStatusMarker {
+                old_line: old_lines.end,
+                new_line: new_lines.end,
+                status: MatchStatus::Unchanged,
+            }],
+            old_begin: old_lines.start,
+            new_begin: new_lines.start,
             unimportant,
-            blocks: Vec::new(),
-            unchanged_old_offset: old.len() as u32,
-            unchanged_new_offset: new.len() as u32,
-            unchanged_count: 0,
         }
     }
 
-    fn finish(mut self) -> Vec<Block> {
-        self.commit_any_unchanged();
-        if self.unchanged_old_offset != 0 || self.unchanged_new_offset != 0 {
-            self.commit_changed(0, 0);
+    /// Produce status markers; first marker is at the beginning lines provided to `new`,
+    /// and status markers cover to infinity as unchanged.
+    fn finish(mut self) -> Vec<MatchStatusMarker> {
+        let last = self.status_markers.last().unwrap();
+        if self.old_begin != last.old_line || self.new_begin != last.new_line {
+            self.status_markers.push(MatchStatusMarker {
+                old_line: self.old_begin,
+                new_line: self.new_begin,
+                status: MatchStatus::Changed { unimportant: self.unimportant },
+            });
         }
 
-        self.blocks.reverse();
-        self.blocks
+        self.status_markers.reverse();
+        self.status_markers
     }
 
+    /// Report an unchanged region. Line numbers are 1-based relative to the range
+    /// provided to `new`.
     fn add_unchanged(&mut self, old_linenum: u32, new_linenum: u32, count: u32) {
         assert!(old_linenum >= 1);
         assert!(new_linenum >= 1);
 
-        let old_offset = old_linenum - 1;
-        let new_offset = new_linenum - 1;
+        let old_line = self.old_begin + old_linenum - 1;
+        let new_line = self.new_begin + new_linenum - 1;
 
-        assert!(old_offset + count <= self.unchanged_old_offset);
-        assert!(new_offset + count <= self.unchanged_new_offset);
+        let last = self.status_markers.last_mut().unwrap();
 
-        if old_offset + count == self.unchanged_old_offset
-            && new_offset + count == self.unchanged_new_offset
-        {
-            self.unchanged_old_offset -= count;
-            self.unchanged_new_offset -= count;
-            self.unchanged_count += count;
-            return;
+        assert!(old_line + count <= last.old_line);
+        assert!(new_line + count <= last.new_line);
+
+        if old_line + count == last.old_line && new_line + count == last.new_line {
+            last.old_line = old_line;
+            last.new_line = new_line;
+        } else {
+            self.status_markers.push(MatchStatusMarker {
+                old_line: old_line + count,
+                new_line: new_line + count,
+                status: MatchStatus::Changed { unimportant: self.unimportant },
+            });
+            self.status_markers.push(MatchStatusMarker {
+                old_line,
+                new_line,
+                status: MatchStatus::Unchanged,
+            });
         }
-
-        self.commit_any_unchanged();
-        self.commit_changed(old_offset + count, new_offset + count);
-
-        self.unchanged_old_offset = old_offset;
-        self.unchanged_new_offset = new_offset;
-        self.unchanged_count = count;
-    }
-
-    fn commit_any_unchanged(&mut self) {
-        if self.unchanged_count == 0 {
-            return;
-        }
-
-        let begin = self.unchanged_old_offset as usize;
-        let end = begin + self.unchanged_count as usize;
-        self.blocks.push(Block {
-            old_begin: self.old_begin + self.unchanged_old_offset,
-            new_begin: self.new_begin + self.unchanged_new_offset,
-            contents: BlockContents::UnchangedKnown(self.old[begin..end].into()),
-        });
-    }
-
-    fn commit_changed(&mut self, old_offset: u32, new_offset: u32) {
-        let old_count = self.unchanged_old_offset - old_offset;
-        let new_count = self.unchanged_new_offset - new_offset;
-        assert!(old_count != 0 || new_count != 0);
-
-        self.blocks.push(Block {
-            old_begin: self.old_begin + old_offset,
-            new_begin: self.new_begin + new_offset,
-            contents: BlockContents::Changed {
-                old: self.old[old_offset as usize..(old_offset + old_count) as usize].into(),
-                new: self.new[new_offset as usize..(new_offset + new_count) as usize].into(),
-                unimportant: self.unimportant,
-            },
-        });
     }
 }
 
@@ -204,7 +180,7 @@ fn diff_graph_search(
     old: &[BufferRef],
     new: &[BufferRef],
     unimportant: bool,
-) -> Vec<Block> {
+) -> Vec<MatchStatusMarker> {
     /// A node in the graph of the dynamic program, using 1-based indices into
     /// the lines array. Node(0,0) is the initial state of the search.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -432,7 +408,11 @@ fn diff_graph_search(
         }
     }
 
-    let mut collect = ReverseBlockCollector::new(old_begin, new_begin, old, new, unimportant);
+    let mut collect = ReverseStatusCollector::new(
+        old_begin..old_begin + old.len() as u32,
+        new_begin..new_begin + new.len() as u32,
+        unimportant,
+    );
     let mut current = Node(old_edges.len() as u32 - 1, new_edges.len() as u32 - 1);
 
     loop {
@@ -1223,7 +1203,7 @@ fn diff_sweep_line_exact(
     old: &[BufferRef],
     new: &[BufferRef],
     unimportant: bool,
-) -> Vec<Block> {
+) -> Vec<MatchStatusMarker> {
     let problem = DiffProblem::new(buffer, old, new, usize::MAX);
     let mut sweep_line = SweepLine::new(problem);
 
@@ -1239,7 +1219,11 @@ fn diff_sweep_line_exact(
         old.len() as u32 + 1,
         new.len() as u32 + 1,
     );
-    let mut collect = ReverseBlockCollector::new(old_begin, new_begin, old, new, unimportant);
+    let mut collect = ReverseStatusCollector::new(
+        old_begin..old_begin + old.len() as u32,
+        new_begin..new_begin + new.len() as u32,
+        unimportant
+    );
     while current_ref.num_matched != 0 {
         let node = &sweep_line.nodes[current_ref.idx as usize];
         collect.add_unchanged(node.old_linenum, node.new_linenum, current_ref.num_matched);
@@ -1255,10 +1239,14 @@ fn diff_sweep_line(
     old: &[BufferRef],
     new: &[BufferRef],
     unimportant: bool,
-) -> Vec<Block> {
+) -> Vec<MatchStatusMarker> {
     let problem = DiffProblem::new(buffer, old, new, 3);
     let mut sweep_line = SweepLine::new(problem);
-    let mut collect = ReverseBlockCollector::new(old_begin, new_begin, old, new, unimportant);
+    let mut collect = ReverseStatusCollector::new(
+        old_begin..old_begin + old.len() as u32,
+        new_begin..new_begin + new.len() as u32,
+        unimportant
+    );
 
     sweep_line.sweep_line.reserve_exact(new.len());
     sweep_line.nodes.reserve(2 * new.len());
@@ -1516,72 +1504,77 @@ fn diff_sweep_line(
 /// change remaining.
 pub fn reduce_changed_file(
     buffer: &Buffer,
-    mut file: DiffFile,
+    mut file: FileMatch,
     algorithm: DiffAlgorithm,
-) -> (DiffFile, bool) {
+) -> (FileMatch, bool) {
+    let (Some(old_file), Some(new_file)) = (&file.old, &file.new) else {
+        return (file, false);
+    };
+
     let mut have_change = false;
 
-    let BlockContents::EndOfDiff {
-        old_has_newline_at_eof,
-        new_has_newline_at_eof,
-        ..
-    } = file.blocks.last().unwrap().contents
-    else {
-        panic!()
-    };
-    let mut blocks = std::mem::take(&mut file.blocks).into_iter().peekable();
-    loop {
-        let block = blocks.next();
-        if block.is_none() {
-            break;
-        }
-        let mut block = block.unwrap();
+    let old_status_markers = std::mem::replace(&mut file.status_markers, vec![MatchStatusMarker {
+        old_line: 0,
+        new_line: 0,
+        status: MatchStatus::Unchanged,
+    }]);
 
-        if !block.contents.is_changed() {
-            file.blocks.push(block);
+    for (mut sm, mut sm_next) in old_status_markers.into_iter().tuple_windows() {
+        let MatchStatus::Changed { unimportant } = sm.status else {
+            file.status_markers.push(sm);
+            continue;
+        };
+
+        let mut have_unknown = false;
+        let old_vec = old_file
+            .lines(sm.old_line..sm_next.old_line, buffer)
+            .map(|line| {
+                line.unwrap_or_else(|| {
+                    have_unknown = true;
+                    BufferRef::default()
+                })
+            })
+            .collect::<Vec<_>>();
+        let new_vec = new_file
+            .lines(sm.new_line..sm_next.new_line, buffer)
+            .map(|line| {
+                line.unwrap_or_else(|| {
+                    have_unknown = true;
+                    BufferRef::default()
+                })
+            })
+            .collect::<Vec<_>>();
+        if have_unknown {
+            file.status_markers.push(sm);
             continue;
         }
 
-        let BlockContents::Changed {
-            old,
-            new,
-            unimportant,
-        } = block.contents
-        else {
-            panic!()
-        };
-        let mut old = &old[..];
-        let mut new = &new[..];
+        let mut old = &old_vec[..];
+        let mut new = &new_vec[..];
 
-        // First, trim back and front. This is required for correctness if
-        // the last line is at EOF and differs in newlines.
+        // First, trim back and front.
         //
         // It is always optimal in terms of number of unchanged lines that
         // are extracted, and since head and tail are likely to be merged
         // with neighboring unchanged blocks, it is likely to be best for
         // readability of the resulting diff.
-        let mut tail: Vec<Block> = Vec::new();
-
-        if old_has_newline_at_eof != new_has_newline_at_eof
-            && !old.is_empty()
-            && !new.is_empty()
-            && blocks.peek().unwrap().is_end_of_diff()
-        {
-            let old_line;
-            let new_line;
-            (old_line, old) = old.split_last().unwrap();
-            (new_line, new) = new.split_last().unwrap();
-
-            have_change = true;
-            tail.push(Block {
-                old_begin: block.old_begin + old.len() as u32,
-                new_begin: block.new_begin + new.len() as u32,
-                contents: BlockContents::Changed {
-                    old: [*old_line].into(),
-                    new: [*new_line].into(),
-                    unimportant,
-                },
+        let head_count = old
+            .iter()
+            .zip(new.iter())
+            .take_while(|(&old_ref, &new_ref)| &buffer[old_ref] == &buffer[new_ref])
+            .count();
+        if head_count > 0 {
+            file.status_markers.push(MatchStatusMarker {
+                old_line: sm.old_line,
+                new_line: sm.new_line,
+                status: MatchStatus::Unchanged,
             });
+
+            sm.old_line += head_count as u32;
+            sm.new_line += head_count as u32;
+            old = &old[head_count..];
+            new = &new[head_count..];
+            have_change = true;
         }
 
         let tail_count = old
@@ -1591,49 +1584,31 @@ pub fn reduce_changed_file(
             .take_while(|(&old_ref, &new_ref)| &buffer[old_ref] == &buffer[new_ref])
             .count();
         if tail_count > 0 {
-            let old_lines;
-            (old, old_lines) = old.split_at(old.len() - tail_count);
-            (new, _) = new.split_at(new.len() - tail_count);
+            sm_next.old_line -= tail_count as u32;
+            sm_next.new_line -= tail_count as u32;
 
-            tail.push(Block {
-                old_begin: block.old_begin + old.len() as u32,
-                new_begin: block.new_begin + new.len() as u32,
-                contents: BlockContents::UnchangedKnown(old_lines.into()),
-            });
-        }
-
-        let head_count = old
-            .iter()
-            .zip(new.iter())
-            .take_while(|(&old_ref, &new_ref)| &buffer[old_ref] == &buffer[new_ref])
-            .count();
-        if head_count > 0 {
-            let old_lines;
-            (old_lines, old) = old.split_at(head_count);
-            (_, new) = new.split_at(head_count);
-
-            file.blocks.push(Block {
-                old_begin: block.old_begin,
-                new_begin: block.new_begin,
-                contents: BlockContents::UnchangedKnown(old_lines.into()),
-            });
-            block.old_begin += head_count as u32;
-            block.new_begin += head_count as u32;
+            old = &old[..old.len() - tail_count];
+            new = &new[..new.len() - tail_count];
+            have_change = true;
         }
 
         if !old.is_empty() || !new.is_empty() {
             have_change = true;
-            file.blocks.extend(algorithm.run(
+            file.status_markers.extend(algorithm.run(
                 buffer,
-                block.old_begin,
-                block.new_begin,
+                sm.old_line,
+                sm.new_line,
                 old,
                 new,
                 unimportant,
             ));
+        } else {
+            file.status_markers.push(MatchStatusMarker {
+                old_line: sm_next.old_line,
+                new_line: sm_next.new_line,
+                status: MatchStatus::Unchanged,
+            });
         }
-
-        file.blocks.extend(tail.into_iter().rev());
     }
 
     file.simplify();

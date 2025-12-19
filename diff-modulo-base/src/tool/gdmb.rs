@@ -5,7 +5,7 @@ use std::ops::Range;
 use clap::Parser;
 
 use crate::*;
-use diff::ChunkWriter;
+use diff::render::ChunkWriter;
 use git_core::{RangeDiffWriter, Ref};
 use utils::Result;
 
