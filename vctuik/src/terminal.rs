@@ -180,7 +180,7 @@ impl Terminal {
                                 let begin = y as usize * buffer.area.width as usize;
                                 let end = (y as usize + 1) * buffer.area.width as usize;
                                 let mut line = String::new();
-                                for (x, cell) in buffer.content[begin..end].iter().enumerate() {
+                                for (_, cell) in buffer.content[begin..end].iter().enumerate() {
                                     line.push_str(cell.symbol());
                                 }
                                 debug!("{:3}: {}", y, line);

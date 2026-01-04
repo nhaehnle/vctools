@@ -688,10 +688,10 @@ fn run_helper(cache: Arc<Cache>, ctrl: Arc<HelperCtrl>, config: ClientConfig, ur
             }
 
             // Now handle requests.
-            let (request, is_backlog) = if !state.frame_requests.is_empty() {
-                (state.frame_requests.drain(0..1).next(), false)
+            let request = if !state.frame_requests.is_empty() {
+                state.frame_requests.drain(0..1).next()
             } else {
-                (state.backlog_requests.pop(), true)
+                state.backlog_requests.pop()
             };
             let Some(request) = request else {
                 state = ctrl.helper_wakeup.wait(state).unwrap();

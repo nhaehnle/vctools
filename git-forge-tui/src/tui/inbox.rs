@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use vctuik::{
-    layout::Constraint1D, prelude::*, state::Builder, table::{self, simple_table::{self, StyleId}}
+    layout::Constraint1D, prelude::*, state::Builder, table::{self, simple_table}
 };
 
 use crate::github;
